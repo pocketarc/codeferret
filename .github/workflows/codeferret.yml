@@ -1,0 +1,48 @@
+name: CodeFerret
+
+on:
+    pull_request:
+        types: [opened, synchronize, ready_for_review, reopened]
+
+jobs:
+    review:
+        # Trust gate: the job consumes CLAUDE_CODE_OAUTH_TOKEN, so a drive-by pull
+        # request must not be able to spend it. The GitHub Actions association enum
+        # has no overlapping substrings, so `contains` on a space-separated
+        # allowlist is unambiguous.
+        if: contains('OWNER MEMBER COLLABORATOR', github.event.pull_request.author_association)
+        runs-on: ubuntu-latest
+        timeout-minutes: 60
+        permissions:
+            contents: read
+            # write, not read: posting a review with inline line comments needs it.
+            # A composite action cannot grant itself permissions, so this has to be
+            # declared by every workflow that calls it.
+            pull-requests: write
+
+        steps:
+            - name: Checkout the head commit
+              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+              with:
+                  # Full history: every lens diffs against the base branch, and a
+                  # shallow clone has no merge-base to diff from.
+                  fetch-depth: 0
+                  ref: ${{ github.event.pull_request.head.sha }}
+
+            - name: Install Bun and Claude Code
+              run: npm install -g bun @anthropic-ai/claude-code
+
+            # This repository is both the action and its test fixture, so it calls the
+            # action by path. Other repositories use `pocketarc/codeferret@<ref>`.
+            - name: CodeFerret
+              uses: ./
+              with:
+                  claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+
+            - name: Keep the run for inspection
+              if: always()
+              uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+              with:
+                  name: codeferret-run
+                  path: ${{ runner.temp }}/codeferret/build/
+                  retention-days: 14

@@ -1,0 +1,77 @@
+{
+    "type": "object",
+    "required": ["findings"],
+    "additionalProperties": false,
+    "properties": {
+        "summary": {
+            "type": "string",
+            "description": "Two or three sentences on what this change does and where its risk sits. Goes at the top of the posted review."
+        },
+        "notes": {
+            "type": "string",
+            "description": "Anything about the run rather than the code: a lens that returned nothing, a skill that would not load, coverage you believe is missing. Reported to the author as caveats, so say what you could not check."
+        },
+        "lens_health": {
+            "type": "array",
+            "description": "One entry per lens you dispatched, including any that failed or returned nothing.",
+            "items": {
+                "type": "object",
+                "required": ["lens", "findings_returned", "ok"],
+                "additionalProperties": false,
+                "properties": {
+                    "lens": { "type": "string" },
+                    "findings_returned": { "type": "integer" },
+                    "ok": {
+                        "type": "boolean",
+                        "description": "False when the lens errored, could not load its skill, or returned an unusable response."
+                    },
+                    "detail": { "type": "string" }
+                }
+            }
+        },
+        "findings": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["found_by", "file", "line", "severity", "category", "title", "body"],
+                "additionalProperties": false,
+                "properties": {
+                    "found_by": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Every lens that independently reported this defect. More than one entry means it was deduplicated, which is corroboration worth surfacing."
+                    },
+                    "file": {
+                        "type": "string",
+                        "description": "Repo-relative path, no leading slash."
+                    },
+                    "line": {
+                        "type": "integer",
+                        "description": "The single most specific line the finding is about."
+                    },
+                    "end_line": {
+                        "type": "integer",
+                        "description": "Only for a genuine multi-line range."
+                    },
+                    "in_diff": {
+                        "type": "boolean",
+                        "description": "False when this line is not part of the reviewed diff. Report it anyway — it gets moved into the review body rather than dropped."
+                    },
+                    "severity": {
+                        "type": "string",
+                        "enum": ["critical", "high", "medium", "low", "nit", "question"]
+                    },
+                    "category": { "type": "string" },
+                    "title": {
+                        "type": "string",
+                        "description": "One line, no hedging."
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "The problem and the fix. When several lenses described it, keep what each added rather than flattening to the shortest version."
+                    }
+                }
+            }
+        }
+    }
+}

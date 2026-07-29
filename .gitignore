@@ -1,0 +1,9 @@
+node_modules/
+vendor/
+.env
+
+# A global gitignore excludes .claude. Un-exclude it so a repository-local lens under
+# .claude/skills/ can be committed; the action resolves lens names there as well as in
+# its own bundled lenses.
+!.claude/
+.claude/settings.local.json
