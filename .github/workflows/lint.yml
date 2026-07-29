@@ -1,0 +1,21 @@
+name: Lint
+
+on:
+    push:
+    pull_request:
+
+jobs:
+    manifests:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout
+              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+            - name: Install Bun
+              run: npm install -g bun
+
+            # GitHub validates workflow syntax on push but does not validate an action
+            # manifest until a run loads it, so a broken action.yml otherwise fails at
+            # the first step of a real review instead of here.
+            - name: Validate manifests
+              run: bun scripts/validate-manifests.ts

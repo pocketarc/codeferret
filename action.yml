@@ -39,7 +39,7 @@ inputs:
         required: false
         default: ''
     github-token:
-        description: Token used to post the review. Needs `pull-requests: write`.
+        description: "Token used to post the review. Needs `pull-requests: write` permission."
         required: false
         default: ${{ github.token }}
     pr-number:
