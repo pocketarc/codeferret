@@ -28,6 +28,7 @@ inputs:
             copilot-web-design-reviewer
             copilot-sql-code-review
             anthropic-accessibility-review
+            comment-review
     exclude-paths:
         description: |
             Newline-separated globs to keep out of the review, one per line. These become

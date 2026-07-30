@@ -2,6 +2,7 @@ local_name	repo	commit	subdir
 anthropic-accessibility-review	anthropics/knowledge-work-plugins	01a9cec39b961236e2d99fa2db9b22b534fa27a9	design/skills/accessibility-review
 anthropic-code-review	anthropics/knowledge-work-plugins	01a9cec39b961236e2d99fa2db9b22b534fa27a9	engineering/skills/code-review
 caveman-review	JuliusBrussee/caveman	0d95a81d35a9f2d123a5e9430d1cfc43d55f1bb0	skills/caveman-review
+comment-review	(first-party)	-	lenses/skills/comment-review
 copilot-security-review	github/awesome-copilot	5b6da4c588e94363078273d94f8123ea34b2e69e	skills/security-review
 copilot-sql-code-review	github/awesome-copilot	5b6da4c588e94363078273d94f8123ea34b2e69e	skills/sql-code-review
 copilot-web-design-reviewer	github/awesome-copilot	5b6da4c588e94363078273d94f8123ea34b2e69e	skills/web-design-reviewer

@@ -43,6 +43,7 @@ If a named lens has no `SKILL.md` in either place, `build-prompts.sh` fails and 
 both paths it searched.
 
 Vendor each bundled skill at a pinned upstream commit. Do not fetch skills at run time.
+A lens written here rather than vendored is marked `(first-party)` in that file.
 `lenses/skills/PROVENANCE.tsv` records the source repository, commit, and path for each
 one. A review job holds a `pull-requests: write` token, so you should be able to review
 the code it runs, and that code should not change between runs.
