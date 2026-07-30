@@ -143,9 +143,11 @@ function commentBody(f: Finding): string {
 // Resolving is a write, so a dry run reports the decision without making it.
 const toResolve = merged.resolve ?? [];
 const resolved: Array<{ reason: string }> = [];
+let resolveDenied = false;
 
 if (toResolve.length > 0 && !process.env.DRY_RUN) {
     for (const { thread_id, reason } of toResolve) {
+        if (resolveDenied) break;
         const response = await fetch("https://api.github.com/graphql", {
             method: "POST",
             headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -157,10 +159,21 @@ if (toResolve.length > 0 && !process.env.DRY_RUN) {
 
         const payload = (await response.json()) as { errors?: Array<{ message: string }> };
 
-        if (!response.ok || payload.errors) {
+        const failure = payload.errors?.map((e) => e.message).join("; ");
+
+        if (failure?.includes("not accessible by integration")) {
+            // resolveReviewThread is gated on repository write, which pull-requests:
+            // write does not grant.
+            resolveDenied = true;
             console.error(
-                `could not resolve ${thread_id}: ${payload.errors?.map((e) => e.message).join("; ") ?? response.status}`,
+                `cannot resolve threads: the token lacks contents: write.` +
+                    ` ${toResolve.length} thread(s) were judged finished and left open.`,
             );
+            continue;
+        }
+
+        if (!response.ok || failure) {
+            console.error(`could not resolve ${thread_id}: ${failure ?? response.status}`);
             continue;
         }
 
@@ -241,6 +254,14 @@ if (resolved.length > 0) {
     const body = resolved.map((r) => `- ${r.reason}`).join("\n");
     sections.push(
         `<details>\n<summary>${resolved.length} thread(s) resolved</summary>\n\n${body}\n</details>`,
+    );
+}
+
+if (resolveDenied) {
+    sections.push(
+        `> ${toResolve.length} thread(s) look finished but could not be resolved:` +
+            ` the workflow grants \`pull-requests: write\`, and \`resolveReviewThread\` needs` +
+            ` \`contents: write\`.`,
     );
 }
 

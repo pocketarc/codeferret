@@ -180,6 +180,12 @@ repository's tree untouched.
 1. Add a workflow that grants `pull-requests: write`. A composite action cannot grant
    itself permissions, so the calling workflow must declare it. Without it, the posting
    step fails with 403.
+
+   Add `contents: write` as well to let CodeFerret resolve finished threads.
+   `resolveReviewThread` is gated on repository write access, which `pull-requests: write`
+   does not give. Weigh it: the review agent runs with `bypassPermissions` and Bash, so a
+   token that can write contents is a token that can push. Without it everything else
+   works and the review says which threads it would have closed.
 2. Set `CLAUDE_CODE_OAUTH_TOKEN` as a repository secret. Create the token with
    `claude setup-token`.
 No checkout step is needed. The action checks out the pull request head with full
