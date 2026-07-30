@@ -21,6 +21,12 @@ rewrite a paragraph. An author who asked for a review did not ask for a ghostwri
 Density is the tell, so a single instance of a pattern usually passes. Report the third
 tricolon, not the first.
 
+House style is not a defence. Existing prose in the repository is evidence of habit, not
+of correctness, so a passage is no more correct for matching it. Judge every passage
+against the rules in this file alone. Report a passage the change touches whether the
+change wrote the fault or inherited it, and say plainly when the same fault runs through
+the surrounding file.
+
 Whether a comment should exist at all is a separate question, and not this lens's.
 
 ## Choose the register first

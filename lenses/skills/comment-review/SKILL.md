@@ -85,9 +85,8 @@ lead them to change the code wrongly.
   without failing a test.
 - **A rejected alternative that looks correct**, where the reader would otherwise try it
   and the failure would be silent or expensive. If the wrong path fails loudly on the next
-  test run, say nothing. This is a warning against a path, so it names the alternative and
-  the damage. A comment that reaches for the alternative to explain the code belongs in
-  the list below.
+  test run, say nothing. Warn against the path: name the alternative and the damage. A
+  comment reaching for the alternative to explain the code belongs in the list below.
 - **A domain rule the code cannot express.** Why invoices freeze an exchange rate on
   payment. Business truth, not mechanism.
 
