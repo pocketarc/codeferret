@@ -168,6 +168,10 @@ the way its author intended:
   choose `new` whenever it is unsure. If you tighten that, you trade duplicate comments
   for findings nobody sees. To audit a run, read `findings.json` in the `codeferret-run`
   artifact. It holds every finding with its status, including the hidden ones.
+- **Resolving a thread is a judgement, not a rule.** The orchestrator picks which threads
+  to close and gives a reason for each, which the review lists. `isOutdated` is evidence
+  it weighs, not a gate: a fix landing elsewhere leaves a thread current, and an unrelated
+  edit above one makes a live thread outdated. Do not turn this back into a condition.
 - **A reply cannot make a security defect safe.** `orchestrator.md` says so explicitly,
   because "this is intentional" on a vulnerability would otherwise silence it for good.
   Keep that carve-out if you touch the decline rules.

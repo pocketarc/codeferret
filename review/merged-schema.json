@@ -11,6 +11,22 @@
             "type": "string",
             "description": "Anything about the run rather than the code: a lens that returned nothing, a skill that would not load, coverage you believe is missing. Reported to the author as caveats, so say what you could not check."
         },
+        "resolve": {
+            "type": "array",
+            "description": "Threads to mark resolved. Judge each one; there is no mechanical rule behind this.",
+            "items": {
+                "type": "object",
+                "required": ["thread_id", "reason"],
+                "additionalProperties": false,
+                "properties": {
+                    "thread_id": { "type": "string" },
+                    "reason": {
+                        "type": "string",
+                        "description": "One line on why this thread is finished, shown in the review so a wrong call is visible."
+                    }
+                }
+            }
+        },
         "lens_health": {
             "type": "array",
             "description": "One entry per lens you dispatched, including any that failed or returned nothing.",

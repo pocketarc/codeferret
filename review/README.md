@@ -142,6 +142,19 @@ that six lenses spotted, while the missing index, the RSC boundary violation, an
 keyboard-access failure were each found by one. Showing "6 of 10" beside the nit tells
 the reader it is the consensus priority, which is the opposite of the truth.
 
+**The orchestrator decides which threads to close.** A thread is finished when its defect
+has left the code or when someone settled it, and neither is a question a rule answers.
+`isOutdated` says the anchored line changed, which a fix landing elsewhere does not
+produce and an unrelated edit above does; so it is evidence the orchestrator weighs
+against the diff, not a condition. It leaves open any thread a human opened, any whose
+last comment asks an unanswered question, and any it is unsure about. Each closure carries
+a reason, and the review lists them, so a wrong call is visible rather than an inbox that
+quietly empties.
+
+A resolved thread also settles its finding: `resolved: true` marks it `declined` with no
+reading of replies. That makes resolving a thread the way to dismiss a finding for good,
+and it is the gated way — resolving needs write access, where commenting does not.
+
 **`post-review.ts` anchors the findings.** Whether a line sits inside a diff hunk is
 exact, and a wrong answer is expensive: the review API is atomic, so a single bad anchor
 makes the API return 422 and create no comments at all. Lenses also self-report

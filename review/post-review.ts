@@ -36,6 +36,7 @@ interface Merged {
     summary?: string;
     notes?: string;
     lens_health?: LensHealth[];
+    resolve?: Array<{ thread_id: string; reason: string }>;
     findings: Finding[];
 }
 
@@ -139,6 +140,34 @@ function commentBody(f: Finding): string {
     return `**${f.title}**\n\n${f.body}\n\n<sub>${f.category}</sub>`;
 }
 
+// Resolving is a write, so a dry run reports the decision without making it.
+const toResolve = merged.resolve ?? [];
+const resolved: Array<{ reason: string }> = [];
+
+if (toResolve.length > 0 && !process.env.DRY_RUN) {
+    for (const { thread_id, reason } of toResolve) {
+        const response = await fetch("https://api.github.com/graphql", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+                query: `mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { thread { isResolved } } }`,
+                variables: { id: thread_id },
+            }),
+        });
+
+        const payload = (await response.json()) as { errors?: Array<{ message: string }> };
+
+        if (!response.ok || payload.errors) {
+            console.error(
+                `could not resolve ${thread_id}: ${payload.errors?.map((e) => e.message).join("; ") ?? response.status}`,
+            );
+            continue;
+        }
+
+        resolved.push({ reason });
+    }
+}
+
 const sections: string[] = ["## CodeFerret"];
 
 if (merged.summary) sections.push(merged.summary);
@@ -208,6 +237,13 @@ if (declined.length > 0) {
     );
 }
 
+if (resolved.length > 0) {
+    const body = resolved.map((r) => `- ${r.reason}`).join("\n");
+    sections.push(
+        `<details>\n<summary>${resolved.length} thread(s) resolved</summary>\n\n${body}\n</details>`,
+    );
+}
+
 if (merged.notes) sections.push(`### Caveats\n\n${merged.notes}`);
 
 let reviewBody = sections.join("\n\n");
@@ -230,7 +266,8 @@ const comments = inline.map((f) => ({
 
 console.log(
     `total=${allFindings.length} new=${findings.length} suppressed=${suppressed.length}` +
-        ` declined=${declined.length} inline=${inline.length} demoted=${demoted.length}`,
+        ` declined=${declined.length} inline=${inline.length} demoted=${demoted.length}` +
+        ` resolved=${resolved.length}/${toResolve.length}`,
 );
 
 if (findings.length === 0 && !process.env.DRY_RUN) {
@@ -240,6 +277,7 @@ if (findings.length === 0 && !process.env.DRY_RUN) {
             ? `no new findings — ${suppressed.length} already commented on, ${declined.length} declined`
             : "no findings",
     );
+    if (resolved.length > 0) console.log(`resolved ${resolved.length} thread(s)`);
     process.exit(0);
 }
 
