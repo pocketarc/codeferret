@@ -134,8 +134,6 @@ function lensLabel(lens: string): string {
     return lens.replace(/^[^:]+:/, "");
 }
 
-// A comment carries the claim alone. Severity and lens agreement live in findings.json;
-// review/README.md has the reasoning.
 function commentBody(f: Finding): string {
     return `**${f.title}**\n\n${f.body}\n\n<sub>${f.category}</sub>`;
 }

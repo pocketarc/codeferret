@@ -35,6 +35,11 @@ words as it takes.
 Judge it blind: read the code with the comment covered, decide what you can work out
 unaided, then compare that against what the comment claims.
 
+The strongest tell is a comment answering a question only the author was asking. While
+writing, an author holds the options they rejected and the bug they just fixed; the
+reader arrives with neither, sees a deliberate construct, and asks nothing. A comment
+addressed to that deliberation is written to a reader who is not there.
+
 Score each claim in a comment separately. A comment mixing one real constraint with three
 sentences of narration keeps the one.
 
