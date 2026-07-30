@@ -107,8 +107,7 @@ const allFindings = [...(merged.findings ?? [])].sort(
     (a, b) => severityRank(a.severity) - severityRank(b.severity),
 );
 
-// Counted rather than dropped, so a matcher that starts eating findings shows up as a
-// number instead of as silence.
+// Keeping a count makes a matcher that eats findings visible.
 const suppressed = allFindings.filter((f) => f.status === "already-reported");
 const findings = allFindings.filter((f) => f.status !== "already-reported");
 
@@ -135,8 +134,8 @@ function lensLabel(lens: string): string {
     return lens.replace(/^[^:]+:/, "");
 }
 
-// Severity and lens agreement stay out of the rendered comment on purpose; both are in
-// findings.json. review/README.md has the reasoning and the run that produced it.
+// Severity and lens agreement belong in findings.json, not in the comment.
+// review/README.md has the reasoning.
 function commentBody(f: Finding): string {
     return `**${f.title}**\n\n${f.body}\n\n<sub>${f.category}</sub>`;
 }

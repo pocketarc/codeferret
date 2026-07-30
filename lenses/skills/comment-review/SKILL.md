@@ -5,9 +5,9 @@ description: Review the comments a change adds or leaves behind. Finds comments 
 
 # Comment Review
 
-Most comments are written for a reader who does not exist: someone who cannot tell what
-the code does and needs the author's reasoning narrated. Review for a principal engineer
-instead. They read the code, and they check history when they want a timeline.
+Comments are written for a principal engineer. They read the code to learn what it does,
+infer what each construct is for, and check history when they want a timeline. A comment
+earns its place by carrying something that reader cannot reach.
 
 Report a comment that should not exist, or should say less, as a finding on its line.
 
@@ -29,43 +29,40 @@ For every prose comment in the diff:
 
 > Would a principal engineer, reading this code, already understand why it is there?
 
-Yes, and the comment should go. No, and only the part they could not infer should stay,
-in as few words as it takes.
+Yes, and the comment goes. No, and only the part they could not infer stays, in as few
+words as it takes.
 
-Judge it blind. Read the code with the comment covered and decide what you can work out
-unaided, *then* look at what the comment claims. Reading the comment first makes almost
-any comment feel necessary.
+Judge it blind: read the code with the comment covered, decide what you can work out
+unaided, then compare that against what the comment claims.
 
-Score each claim separately. One sentence of real constraint wrapped in three of
-narration is the usual shape, and the verdict is to keep the one.
+Score each claim in a comment separately. A comment mixing one real constraint with three
+sentences of narration keeps the one.
 
-## Code is never there for no reason
+## Every construct is deliberate
 
-A competent reader assumes every construct is deliberate. A timeout implies a timing
-problem, a retry implies flakiness, a null guard implies null arrives. None of that needs
-saying.
+The reader assumes intent. A timeout implies a timing problem, a retry implies flakiness,
+a null guard implies null arrives, a pinned version implies a bad release. None of that
+needs saying.
 
 ```ts
 // Bumped to 60s because the default 30s timed out on cold compiles.
 timeout: 60_000,
 ```
 
-The reader sees a raised timeout and infers a timing problem. `git log -S` gives them the
-commit, the date, and the message. This is the most common form of over-commenting and is
-nearly always removable. The same goes for backoff, defensive clamps, `try`/`catch` around
-a known-flaky call, generous buffers, and pinned versions.
+A raised timeout tells the reader there was a timing problem, and `git log -S` gives them
+the commit, the date, and the message.
 
 ## Enforce it before explaining it
 
 > If someone violated this, would anything fail?
 
-If nothing would, the fix is a test or a lint rule, not a comment. An invariant worth
-writing down is worth enforcing, and once enforced the comment is redundant: whoever
-breaks it finds out from the failure, which can carry the reason.
+If nothing would, the fix is a test or a lint rule. An invariant worth writing down is
+worth enforcing, and once enforced the comment is redundant: whoever breaks it finds out
+from the failure, which can carry the reason.
 
 "These two lists must stay in sync" is a test. "This must run before that" is often an
-assertion. Reach for a comment only when mechanising would cost more than it protects,
-and say so when you decide that.
+assertion. A comment is right when mechanising costs more than it protects, and saying so
+is the interesting part.
 
 ## What earns its place
 
@@ -75,27 +72,24 @@ lead them to change the code wrongly.
 - **An invariant the design rests on**, where enforcing it mechanically is impractical.
   The condition that, if it stopped holding, would make this code wrong.
 - **An external fact.** A vendor quirk, an upstream bug, a spec footnote, a wire-format
-  constraint. The reader cannot derive it by reading harder, because the cause is outside
-  the repository.
+  constraint. The cause lives outside the repository, so reading harder will not reach it.
 - **A constraint that looks arbitrary.** Ordering that must hold, a call that must not be
   hoisted, two values that must agree. The tell is that the obvious tidy-up breaks it
   without failing a test.
-- **A rejected alternative that looks correct**, but only when the reader would otherwise
-  try it and the failure would be silent or expensive. If the wrong path fails loudly on
-  the next test run, say nothing.
+- **A rejected alternative that looks correct**, where the reader would otherwise try it
+  and the failure would be silent or expensive. If the wrong path fails loudly on the next
+  test run, say nothing.
 - **A domain rule the code cannot express.** Why invoices freeze an exchange rate on
   payment. Business truth, not mechanism.
 
-Prefer the conditional form. Given a choice between explaining the decision and naming
-the condition the decision depends on, the condition is what stops someone breaking it
-later.
+Prefer the conditional form. Given a choice between explaining the decision and naming the
+condition it depends on, the condition is what stops someone breaking it later.
 
 ## What does not
 
 - Restating the code: `// increment the counter` above `count++`.
 - **Documenting an absence.** "No checkout step here because…", "we deliberately don't
-  cache this". A reader is not asking why the file lacks something. This is the same
-  error as narrating a change, aimed at code that was never written.
+  cache this". Nobody reads a file asking why it lacks something.
 - History: "this used to be", "previously we", "now that we've added". Commit messages
   hold this.
 - Reasoning a test already demonstrates. Point at the test if the link is not obvious.
@@ -105,25 +99,23 @@ later.
 - Justifying the obviously correct. Nobody needs persuading that input is validated.
 - The same point in two files. Keep it where a reader will be standing when they need it.
 
-## What a diff exposes that a file does not
+## On a diff
 
-- **Comments the change made untrue.** The code moved and the prose did not. A comment
-  describing behaviour the diff has just altered is worse than no comment, because it is
-  now actively misleading. Check every comment adjacent to a changed line, not only the
-  comments the diff adds.
-- **A comment doing a rename's work.** If the change added prose explaining what a
-  variable holds, the variable is misnamed.
-- **Comment volume rising faster than the code.** A hunk that is mostly prose usually
-  means the code is unclear, and the finding is the code, not the comment.
+- **Comments the change made untrue.** A comment describing behaviour the diff has just
+  altered misleads, so check every comment adjacent to a changed line, not only the ones
+  the diff adds.
+- **A comment doing a rename's work.** Prose explaining what a variable holds means the
+  variable is misnamed.
+- **A hunk that is mostly prose.** The finding is the code, not the comment.
 
 ## Reporting
 
-Anchor each finding on the comment's first line. Say which of the two verdicts applies:
+Anchor each finding on the comment's first line, with one of two verdicts:
 
-- **Delete.** The whole comment goes, not just its weaker sentences. Say what a reader
+- **Delete.** The whole comment goes, not just its weaker sentences. Say what the reader
   infers unaided that makes it redundant.
-- **Trim.** Give the replacement text. Do not soften a Delete into a Trim to keep a
-  sentence you like.
+- **Trim.** Give the replacement text. A Delete softened into a Trim to save a sentence
+  you liked is a wrong verdict.
 
-For a comment the change made untrue, the finding is the inaccuracy, and the fix is
-either the corrected sentence or deletion.
+For a comment the change made untrue, the finding is the inaccuracy, and the fix is the
+corrected sentence or deletion.

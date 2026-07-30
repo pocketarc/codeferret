@@ -31,8 +31,7 @@ fi
 rm -rf "$PLUGIN"
 mkdir -p "$PLUGIN/.claude-plugin" "$PLUGIN/agents" "$PLUGIN/skills" "$BUILD"
 
-# Copied rather than referenced so the generated agents and the bundled skills end up
-# in one plugin, and so under one namespace.
+# Generated agents and bundled skills must share one plugin to share a namespace.
 cp "$ACTION/lenses/.claude-plugin/plugin.json" "$PLUGIN/.claude-plugin/plugin.json"
 if [ -d "$ACTION/lenses/skills" ]; then
     cp -R "$ACTION/lenses/skills/." "$PLUGIN/skills/"
@@ -79,8 +78,8 @@ for lens in "${LENSES[@]}"; do
         -e "s|__PATHSPEC__|$PATHSPEC|g" "$ACTION/review/lens-brief.md")
     brief=${brief/__SCHEMA__/$SCHEMA}
 
-    # One lens only. Giving every lens the rulebook pulls them all toward the same
-    # generalist read; review/README.md has the run that showed it.
+    # One lens only: a rulebook given to every lens pulls them all toward the same
+    # generalist read. review/README.md has the evidence.
     if [ "$lens" = "mattpocock-code-review" ] && [ -f "$WORKSPACE/REVIEW.md" ]; then
         brief="$brief
 

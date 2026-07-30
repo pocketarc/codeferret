@@ -14,8 +14,7 @@ jobs:
             - name: Install Bun
               run: npm install -g bun
 
-            # GitHub validates workflow syntax on push but does not validate an action
-            # manifest until a run loads it, so a broken action.yml otherwise fails at
-            # the first step of a real review instead of here.
+            # GitHub validates workflow syntax on push, but an action manifest only when
+            # a run loads it.
             - name: Validate manifests
               run: bun scripts/validate-manifests.ts
