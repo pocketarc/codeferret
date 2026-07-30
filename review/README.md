@@ -102,6 +102,22 @@ findings shows up as a number rather than as silence.
 An outdated comment does not count as covering anything. GitHub collapses a comment when
 the line it referred to changes, so a defect that survived an edit still needs saying.
 
+**A comment shows the claim and nothing else.** No severity, no lens attribution, no
+count of how many lenses agreed. All three stay in `findings.json`, and severity still
+orders the findings, but none of it reaches the reader.
+
+Severity is withheld because a lens assigns it without the context that decides it. A
+missing index is critical on a large table and irrelevant on a small one, and the lens
+cannot tell which. Displaying the guess turns the lens's ignorance into the reader's
+permission to skip. The same argument rules out filtering by severity: a label too
+unreliable to show is far too unreliable to hide findings with.
+
+Agreement between lenses is withheld because it tracks how conspicuous a defect is, not
+how much it matters. On a ten-lens run the most-corroborated finding was a cache-key nit
+that six lenses spotted, while the missing index, the RSC boundary violation, and the
+keyboard-access failure were each found by one. Showing "6 of 10" beside the nit tells
+the reader it is the consensus priority, which is the opposite of the truth.
+
 **`post-review.ts` anchors the findings.** Whether a line sits inside a diff hunk is
 exact, and a wrong answer is expensive: the review API is atomic, so a single bad anchor
 makes the API return 422 and create no comments at all. Lenses also self-report
