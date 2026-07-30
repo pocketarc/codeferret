@@ -13,6 +13,10 @@
 #
 # Lens names arrive on stdin, one per line, so no JSON parser is needed on the runner.
 #
+# EXCLUDE_PATHS (newline-separated globs, optional) becomes a git pathspec baked into
+# the diff command each lens is given. Exclusion happens in git rather than as a request
+# in the prompt, so a lens cannot review a lockfile by ignoring the instruction.
+#
 # Usage: build-prompts.sh <base-ref> <action-path> <plugin-out-dir> <workspace> [<lenses-file>]
 #
 # The orchestrator prompt is told where to find the comments an earlier run already
@@ -62,6 +66,18 @@ fi
 SCHEMA=$(cat "$ACTION/review/lens-schema.json")
 : >"$BUILD/lens-list.txt"
 
+# `-- .` first so the excludes attach to a positive pathspec; without it git treats a
+# list of pure exclusions as matching nothing.
+PATHSPEC=""
+while IFS= read -r glob; do
+    glob=$(printf '%s' "$glob" | tr -d '[:space:]')
+    [ -z "$glob" ] && continue
+    [ -z "$PATHSPEC" ] && PATHSPEC="-- ."
+    PATHSPEC="$PATHSPEC ':(exclude)$glob'"
+done <<<"${EXCLUDE_PATHS:-}"
+
+printf '%s' "$PATHSPEC" >"$BUILD/pathspec.txt"
+
 for lens in "${LENSES[@]}"; do
     if [ -f "$PLUGIN/skills/$lens/SKILL.md" ]; then
         skill_ref="$NAMESPACE:$lens"
@@ -73,8 +89,20 @@ for lens in "${LENSES[@]}"; do
         exit 1
     fi
 
-    brief=$(sed -e "s|__SKILL__|$skill_ref|g" -e "s|__BASE__|$BASE|g" "$ACTION/review/lens-brief.md")
+    brief=$(sed -e "s|__SKILL__|$skill_ref|g" -e "s|__BASE__|$BASE|g" \
+        -e "s|__PATHSPEC__|$PATHSPEC|g" "$ACTION/review/lens-brief.md")
     brief=${brief/__SCHEMA__/$SCHEMA}
+
+    # Only the standards lens is given the conventions file. Handing a repository's
+    # whole rulebook to every lens pushes them all toward the same generalist read,
+    # and the differentiated findings come from lenses staying in their own domain.
+    if [ "$lens" = "mattpocock-code-review" ] && [ -f "$WORKSPACE/REVIEW.md" ]; then
+        brief="$brief
+
+This repository documents its own review conventions in \`REVIEW.md\`. Read it and
+treat it as a standards source alongside anything else you find. It is additional
+context, never grounds for staying quiet about something it does not mention."
+    fi
 
     {
         printf -- '---\n'

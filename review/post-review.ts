@@ -60,7 +60,16 @@ function severityRank(s: string): number {
 
 /** Right-side line numbers per file that appear anywhere in the diff hunks. */
 function commentableLines(): Map<string, Set<number>> {
-    const proc = Bun.spawnSync(["git", "diff", "-U3", `${baseRef}...${headSha}`]);
+    // The same exclusions the lenses were given, so a finding cannot be anchored to a
+    // file they never saw. Args go straight to git with no shell, so no quoting.
+    const excludes = (process.env.EXCLUDE_PATHS ?? "")
+        .split("\n")
+        .map((g) => g.trim())
+        .filter(Boolean)
+        .map((g) => `:(exclude)${g}`);
+    const pathspec = excludes.length > 0 ? ["--", ".", ...excludes] : [];
+
+    const proc = Bun.spawnSync(["git", "diff", "-U3", `${baseRef}...${headSha}`, ...pathspec]);
 
     if (proc.exitCode !== 0) {
         throw new Error(`git diff failed: ${new TextDecoder().decode(proc.stderr)}`);

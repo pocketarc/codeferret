@@ -7,10 +7,13 @@ on:
 jobs:
     review:
         # Trust gate: the job consumes CLAUDE_CODE_OAUTH_TOKEN, so a drive-by pull
-        # request must not be able to spend it. The GitHub Actions association enum
-        # has no overlapping substrings, so `contains` on a space-separated
-        # allowlist is unambiguous.
-        if: contains('OWNER MEMBER COLLABORATOR', github.event.pull_request.author_association)
+        # request must not be able to spend it.
+        #
+        # Array containment, not `contains('OWNER MEMBER COLLABORATOR', …)` on a
+        # string. String containment returns true when the needle is empty, so an
+        # absent or empty author_association would pass the gate. Array containment
+        # is exact equality against each element and fails closed.
+        if: contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
         runs-on: ubuntu-latest
         timeout-minutes: 60
         permissions:
@@ -28,9 +31,6 @@ jobs:
                   # shallow clone has no merge-base to diff from.
                   fetch-depth: 0
                   ref: ${{ github.event.pull_request.head.sha }}
-
-            - name: Install Bun and Claude Code
-              run: npm install -g bun @anthropic-ai/claude-code
 
             # This repository is both the action and its test fixture, so it calls the
             # action by path. Other repositories use `pocketarc/codeferret@<ref>`.

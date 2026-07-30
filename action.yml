@@ -28,6 +28,29 @@ inputs:
             copilot-web-design-reviewer
             copilot-sql-code-review
             anthropic-accessibility-review
+    exclude-paths:
+        description: |
+            Newline-separated globs to keep out of the review, one per line. These become
+            a git pathspec on the diff every lens is given, so excluded files are not
+            reviewed rather than merely discouraged. Set to an empty string to review
+            everything.
+        required: false
+        default: |
+            **/*.lock
+            **/*.lockb
+            bun.lock
+            package-lock.json
+            yarn.lock
+            composer.lock
+            node_modules/**
+            vendor/**
+            **/.next/**
+            **/dist/**
+            **/out/**
+            **/build/**
+            **/*.min.js
+            **/*.min.css
+            **/*.snap
     base-ref:
         description: Ref to diff against. Defaults to the pull request's base branch.
         required: false
@@ -57,6 +80,15 @@ inputs:
         description: Commit to anchor comments against. Defaults to the pull request head.
         required: false
         default: ''
+    install:
+        description: |
+            Whether to install the toolchain. 'auto' installs bun and claude globally via
+            npm when they are not already on PATH. 'skip' assumes the caller has provided
+            both, which is also the right choice if you would rather pin those versions
+            yourself than let a job holding your OAuth token install the latest. Ignored
+            when command-prefix is set, since that prefix owns its own toolchain.
+        required: false
+        default: auto
     post:
         description: Set to 'false' to run the review and skip posting it.
         required: false
@@ -73,6 +105,23 @@ outputs:
 runs:
     using: composite
     steps:
+        - name: Install the toolchain
+          if: inputs.install != 'skip' && inputs.command-prefix == ''
+          shell: bash
+          run: |
+              need=""
+              command -v bun >/dev/null 2>&1 || need="$need bun"
+              command -v claude >/dev/null 2>&1 || need="$need @anthropic-ai/claude-code"
+
+              if [ -z "$need" ]; then
+                  echo "bun and claude are already on PATH"
+                  exit 0
+              fi
+
+              # Unquoted so the list splits into arguments.
+              echo "installing:$need"
+              npm install -g $need
+
         - name: Resolve the review target
           id: target
           shell: bash
@@ -117,6 +166,7 @@ runs:
           env:
               LENSES: ${{ inputs.lenses }}
               BASE: ${{ steps.target.outputs.base }}
+              EXCLUDE_PATHS: ${{ inputs.exclude-paths }}
           run: |
               bash "$GITHUB_ACTION_PATH/review/build-prompts.sh" \
                   "$BASE" \
@@ -179,6 +229,7 @@ runs:
               BASE: ${{ steps.target.outputs.base }}
               PR: ${{ steps.target.outputs.pr }}
               HEAD: ${{ steps.target.outputs.head }}
+              EXCLUDE_PATHS: ${{ inputs.exclude-paths }}
           run: |
               if [ -z "$PR" ] || [ -z "$HEAD" ]; then
                   echo "pr-number and head-sha are required outside a pull_request event" >&2

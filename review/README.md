@@ -102,6 +102,22 @@ findings shows up as a number rather than as silence.
 An outdated comment does not count as covering anything. GitHub collapses a comment when
 the line it referred to changes, so a defect that survived an edit still needs saying.
 
+**Excluded paths are excluded in git, not in the prompt.** The `exclude-paths` input
+becomes a pathspec on the diff command each lens is given, so a lockfile is not in the
+diff at all rather than being something a lens was asked to ignore. `post-review.ts`
+applies the same pathspec when it works out which lines are anchorable, so a finding can
+never point at a file the lenses never saw.
+
+**Only the standards lens receives `REVIEW.md`.** A repository's own review conventions
+go to `mattpocock-code-review`, whose Standards axis already enumerates documented rules,
+and to no other lens. Handing a whole rulebook to all ten pushes them toward the same
+generalist read, and the differentiated findings come from lenses staying inside their
+own domain: on a ten-lens run the RSC boundary violation, the missing index, and the
+keyboard-access failure were each found by exactly one lens. The file is named
+`REVIEW.md` rather than reusing `CLAUDE.md` because Claude Code loads `CLAUDE.md` into
+every session automatically, which would put the conventions in front of all ten lenses
+and defeat the scoping.
+
 **A comment shows the claim and nothing else.** No severity, no lens attribution, no
 count of how many lenses agreed. All three stay in `findings.json`, and severity still
 orders the findings, but none of it reaches the reader.
@@ -147,8 +163,9 @@ repository's tree untouched.
    shallow clone has no merge-base.
 3. Set `CLAUDE_CODE_OAUTH_TOKEN` as a repository secret. Create the token with
    `claude setup-token`.
-4. Make `claude` and `bun` available. Install them on the runner, or set
-   `command-prefix` to run them in a container.
+The action installs `bun` and `claude` itself when they are not already on PATH. Set
+`install: skip` to provide them yourself, which is also how you pin their versions rather
+than letting a job that holds your OAuth token install the latest.
 
 Use `command-prefix` when the repository runs its toolchain in a container. For example,
 `docker compose exec -T -w /app devtools`. The prefix must put both binaries on PATH,
