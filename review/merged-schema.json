@@ -38,12 +38,12 @@
                 "properties": {
                     "status": {
                         "type": "string",
-                        "enum": ["new", "already-reported"],
-                        "description": "Whether an earlier run already posted a comment describing this same defect. Only 'new' findings get posted. When in doubt say 'new': a repeated comment is a small cost, a suppressed finding is one nobody sees."
+                        "enum": ["new", "already-reported", "declined"],
+                        "description": "'already-reported' when a comment on this pull request already describes the defect, whoever wrote it. 'declined' when a reply rejected it or chose not to act. Only 'new' findings get posted. When in doubt say 'new': a repeated comment is a small cost, a suppressed finding is one nobody sees."
                     },
                     "existing_comment_url": {
                         "type": "string",
-                        "description": "Required when status is 'already-reported': the url of the earlier comment that covers it."
+                        "description": "Required when status is 'already-reported' or 'declined': the url of the thread that covers it."
                     },
                     "found_by": {
                         "type": "array",

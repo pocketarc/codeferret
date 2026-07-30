@@ -21,7 +21,7 @@ interface Finding {
     title: string;
     body: string;
     in_diff?: boolean;
-    status?: "new" | "already-reported";
+    status?: "new" | "already-reported" | "declined";
     existing_comment_url?: string;
 }
 
@@ -109,7 +109,8 @@ const allFindings = [...(merged.findings ?? [])].sort(
 
 // Keeping a count makes a matcher that eats findings visible.
 const suppressed = allFindings.filter((f) => f.status === "already-reported");
-const findings = allFindings.filter((f) => f.status !== "already-reported");
+const declined = allFindings.filter((f) => f.status === "declined");
+const findings = allFindings.filter((f) => f.status !== "already-reported" && f.status !== "declined");
 
 const anchorable = commentableLines();
 
@@ -145,7 +146,8 @@ if (merged.summary) sections.push(merged.summary);
 sections.push(
     `**${findings.length} new finding${findings.length === 1 ? "" : "s"}**` +
         `${demoted.length > 0 ? ` · ${demoted.length} outside the diff, listed below` : ""}` +
-        `${suppressed.length > 0 ? ` · ${suppressed.length} already commented on above` : ""}`,
+        `${suppressed.length > 0 ? ` · ${suppressed.length} already commented on above` : ""}` +
+        `${declined.length > 0 ? ` · ${declined.length} raised before and declined` : ""}`,
 );
 
 const health = merged.lens_health ?? [];
@@ -189,7 +191,20 @@ if (suppressed.length > 0) {
         )
         .join("\n");
     sections.push(
-        `<details>\n<summary>${suppressed.length} finding(s) already commented on in an earlier run</summary>\n\n${body}\n</details>`,
+        `<details>\n<summary>${suppressed.length} finding(s) already commented on</summary>\n\n${body}\n</details>`,
+    );
+}
+
+if (declined.length > 0) {
+    const body = declined
+        .map(
+            (f) =>
+                `- \`${f.file}:${f.line}\` — ${f.title}` +
+                `${f.existing_comment_url ? ` ([thread](${f.existing_comment_url}))` : ""}`,
+        )
+        .join("\n");
+    sections.push(
+        `<details>\n<summary>${declined.length} finding(s) raised before and declined</summary>\n\n${body}\n</details>`,
     );
 }
 
@@ -215,13 +230,14 @@ const comments = inline.map((f) => ({
 
 console.log(
     `total=${allFindings.length} new=${findings.length} suppressed=${suppressed.length}` +
-        ` inline=${inline.length} demoted=${demoted.length}`,
+        ` declined=${declined.length} inline=${inline.length} demoted=${demoted.length}`,
 );
 
 if (findings.length === 0 && !process.env.DRY_RUN) {
+    const accounted = suppressed.length + declined.length;
     console.log(
-        suppressed.length > 0
-            ? `no new findings — all ${suppressed.length} were commented on in an earlier run`
+        accounted > 0
+            ? `no new findings — ${suppressed.length} already commented on, ${declined.length} declined`
             : "no findings",
     );
     process.exit(0);

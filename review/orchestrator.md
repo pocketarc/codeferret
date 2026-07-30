@@ -27,18 +27,31 @@ STEP 2 — merge. When every lens has reported:
 - Never add a finding of your own. If you think the lenses missed something, put it
   in `notes`.
 
-STEP 3 — check what has already been said. Read `__EXISTING__`. It lists the review
-comments CodeFerret posted on earlier runs of this pull request, and it may be empty.
+STEP 3 — check what has already been said. Read `__EXISTING__`. It holds every comment
+already on this pull request: `threads`, each a review comment with its `replies`, and
+`conversation` for the comments not anchored to a line. It may be empty. `mine: true`
+marks a thread an earlier CodeFerret run opened.
 
 For each merged finding, set `status`:
 
-- `already-reported` when an entry in that file describes the same defect. Copy its
-  `url` into `existing_comment_url`. The line numbers will often differ, because the
-  code moved or the earlier run anchored elsewhere; match on the defect, not the line.
+- `already-reported` when a thread describes the same defect, whoever wrote it. Copy its
+  `url` into `existing_comment_url`. Line numbers will often differ, because the code
+  moved or the earlier run anchored elsewhere; match on the defect, not the line.
+- `declined` when a reply rejects the finding, or accepts it and chooses not to act: "we
+  don't want that", "working as intended", "not for this PR". Copy the thread `url`.
 - `new` in every other case.
 
-An entry with `outdated: true` does not count as covering anything. GitHub collapses
-those, so the author cannot see them.
+A thread with `outdated: true` covers nothing. GitHub collapses those, so the author
+cannot see them.
+
+Read the replies for what they settle. A reply answering a question, agreeing, or asking
+for more detail leaves the finding as it was. Only a reply that closes the matter makes
+it `declined`.
+
+Two things a reply cannot do. It cannot make a security defect safe: a claim that
+something is intentional is not evidence that it is harmless, so raise it again as `new`
+and say in `notes` that the claim was made. And it cannot settle a finding it does not
+address; a reply about one part of a thread leaves the rest open.
 
 **When you are unsure, mark it `new`.** A repeated comment costs the author a few
 seconds. A suppressed finding is one nobody ever sees, and this is the only place that

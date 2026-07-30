@@ -162,8 +162,12 @@ the way its author intended:
   lens's review. The session denies `Edit`, `Write`, and `NotebookEdit`, and
   `review/lens-brief.md` tells each lens to report rather than repair. Keep both.
 - **Suppression can hide a real finding.** Every push re-runs the whole review, and the
-  orchestrator marks each finding `new` or `already-reported` so that only new ones get
-  posted. It is told to choose `new` whenever it is unsure. If you tighten that, you
-  trade duplicate comments for findings nobody sees. To audit a run, read
-  `findings.json` in the `codeferret-run` artifact. It holds every finding with its
-  status, including the suppressed ones.
+  orchestrator marks each finding `new`, `already-reported`, or `declined` so that only
+  new ones get posted. It reads every comment on the pull request, whoever wrote it, and
+  a reply saying "we don't want that" is what makes a finding `declined`. It is told to
+  choose `new` whenever it is unsure. If you tighten that, you trade duplicate comments
+  for findings nobody sees. To audit a run, read `findings.json` in the `codeferret-run`
+  artifact. It holds every finding with its status, including the hidden ones.
+- **A reply cannot make a security defect safe.** `orchestrator.md` says so explicitly,
+  because "this is intentional" on a vulnerability would otherwise silence it for good.
+  Keep that carve-out if you touch the decline rules.

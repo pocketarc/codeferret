@@ -1,32 +1,29 @@
 #!/usr/bin/env bun
 /**
- * Collect the review comments CodeFerret has already posted on a pull request, so a
- * later run can avoid saying the same thing twice.
+ * Collect the discussion already on a pull request: every review comment with its
+ * replies, and the conversation comments that are not anchored to a line.
  *
- * Only comments by the posting identity count. A human's comment must never suppress a
- * finding.
+ * Every author counts. A finding a human already raised does not need raising again, and
+ * a reply is where the answer to a finding lives.
  *
- * A comment whose `position` is null is outdated: GitHub collapses it because the line
- * it referred to has changed. Those are reported with `outdated: true`, because a
- * collapsed comment is invisible to the author, so a defect that survived the edit
- * still needs saying.
- *
- * Usage: bun fetch-existing.ts <pr-number> <out.json> [<author-login>]
+ * Usage: bun fetch-existing.ts <pr-number> <out.json> [<own-login>]
  * Env:   GITHUB_TOKEN, GITHUB_REPOSITORY
  */
 
-const [prNumber, outPath, authorArg] = process.argv.slice(2);
-const author = authorArg || "github-actions[bot]";
+const [prNumber, outPath, ownArg] = process.argv.slice(2);
+const own = ownArg || "github-actions[bot]";
 const token = process.env.GITHUB_TOKEN;
 const repo = process.env.GITHUB_REPOSITORY;
 
 if (!prNumber || !outPath || !token || !repo) {
-    console.error("usage: bun fetch-existing.ts <pr-number> <out.json> [<author-login>]");
+    console.error("usage: bun fetch-existing.ts <pr-number> <out.json> [<own-login>]");
     console.error("env: GITHUB_TOKEN, GITHUB_REPOSITORY");
     process.exit(2);
 }
 
 interface ApiComment {
+    id: number;
+    in_reply_to_id?: number;
     path: string;
     line: number | null;
     original_line: number | null;
@@ -36,46 +33,72 @@ interface ApiComment {
     user: { login: string };
 }
 
-const collected: ApiComment[] = [];
-
-for (let page = 1; ; page += 1) {
-    const response = await fetch(
-        `https://api.github.com/repos/${repo}/pulls/${prNumber}/comments?per_page=100&page=${page}`,
-        {
-            headers: {
-                Authorization: `Bearer ${token}`,
-                Accept: "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
-        },
-    );
-
-    if (!response.ok) {
-        // An empty list costs duplicate comments; a thrown error costs the review.
-        console.error(`could not list comments (${response.status}): ${await response.text()}`);
-        break;
-    }
-
-    const batch = (await response.json()) as ApiComment[];
-    collected.push(...batch);
-    if (batch.length < 100) break;
+interface IssueComment {
+    body: string;
+    html_url: string;
+    user: { login: string };
 }
 
-const ours = collected.filter((c) => c.user.login === author);
+async function collect<T>(path: string): Promise<T[]> {
+    const all: T[] = [];
 
-const existing = ours.map((c) => ({
-    file: c.path,
-    line: c.line ?? c.original_line,
-    outdated: c.position === null,
-    url: c.html_url,
-    body: c.body,
+    for (let page = 1; ; page += 1) {
+        const response = await fetch(
+            `https://api.github.com/repos/${repo}/${path}?per_page=100&page=${page}`,
+            {
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    Accept: "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                },
+            },
+        );
+
+        if (!response.ok) {
+            // An empty list costs duplicate comments; a thrown error costs the review.
+            console.error(`could not list ${path} (${response.status}): ${await response.text()}`);
+            return all;
+        }
+
+        const batch = (await response.json()) as T[];
+        all.push(...batch);
+        if (batch.length < 100) return all;
+    }
+}
+
+const reviewComments = await collect<ApiComment>(`pulls/${prNumber}/comments`);
+const issueComments = await collect<IssueComment>(`issues/${prNumber}/comments`);
+
+const roots = reviewComments.filter((c) => c.in_reply_to_id === undefined);
+
+const threads = roots.map((root) => ({
+    file: root.path,
+    line: root.line ?? root.original_line,
+    // GitHub collapses a comment when the line it referred to changes, so the author
+    // cannot see it.
+    outdated: root.position === null,
+    url: root.html_url,
+    author: root.user.login,
+    mine: root.user.login === own,
+    body: root.body,
+    replies: reviewComments
+        .filter((c) => c.in_reply_to_id === root.id)
+        .map((c) => ({ author: c.user.login, body: c.body, url: c.html_url })),
 }));
 
-await Bun.write(outPath, `${JSON.stringify({ existing }, null, 2)}\n`);
+const conversation = issueComments.map((c) => ({
+    author: c.user.login,
+    body: c.body,
+    url: c.html_url,
+}));
 
-const outdated = existing.filter((c) => c.outdated).length;
+await Bun.write(outPath, `${JSON.stringify({ threads, conversation }, null, 2)}\n`);
+
+const mine = threads.filter((t) => t.mine).length;
+const withReplies = threads.filter((t) => t.replies.length > 0).length;
+const outdated = threads.filter((t) => t.outdated).length;
+
 console.log(
-    `existing comments by ${author}: ${existing.length}` +
-        ` (${outdated} outdated, treated as not covering)` +
-        `${collected.length !== ours.length ? `; ignored ${collected.length - ours.length} from others` : ""}`,
+    `threads: ${threads.length} (${mine} mine, ${withReplies} answered, ${outdated} outdated)` +
+        `  conversation comments: ${conversation.length}`,
 );

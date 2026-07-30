@@ -91,8 +91,15 @@ defect is a question about meaning, so a model answers it.
 review, so without this the second push posts the same 37 comments again and the pull
 request becomes unreadable. Matching a new finding against an earlier comment is the same
 question as merging two lenses' findings: the line has often moved, and the earlier run
-may have anchored somewhere else. So the orchestrator marks each finding `new` or
-`already-reported`, and `post-review.ts` posts only the new ones.
+may have anchored somewhere else. So the orchestrator marks each finding `new`,
+`already-reported`, or `declined`, and `post-review.ts` posts only the new ones.
+
+It reads the whole discussion, every author included. A defect a human already raised
+does not need raising again, and a reply is where the answer to a finding lives: "we don't
+want that" makes a finding `declined`, which the review reports separately from the ones
+merely said before. Two things a reply cannot do, both in `orchestrator.md`: it cannot
+make a security defect safe by asserting the code is intentional, and it cannot settle a
+finding it does not address.
 
 Two rules keep that safe. The orchestrator marks a finding `new` whenever it is unsure,
 because a repeated comment costs the author seconds while a suppressed finding is one
