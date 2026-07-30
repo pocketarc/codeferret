@@ -80,6 +80,14 @@ inputs:
         description: Commit to anchor comments against. Defaults to the pull request head.
         required: false
         default: ''
+    checkout:
+        description: |
+            Whether to check the repository out. 'auto' checks out the pull request head
+            with full history, but only when the workspace has no checkout yet, so it can
+            never clean away work an earlier step produced. 'skip' never checks out; use
+            it when you check out yourself, or need submodules, LFS, or a sparse checkout.
+        required: false
+        default: auto
     install:
         description: |
             Whether to install the toolchain. 'auto' installs bun and claude globally via
@@ -105,6 +113,31 @@ outputs:
 runs:
     using: composite
     steps:
+        # Probed in a separate step so the checkout below is skipped by an `if`, rather
+        # than by actions/checkout being asked to do something conditional. An existing
+        # checkout is left alone: actions/checkout cleans by default, so running it over
+        # a workspace an earlier step wrote to would delete that work.
+        - name: Check for an existing checkout
+          id: probe
+          shell: bash
+          run: |
+              if [ -d "$GITHUB_WORKSPACE/.git" ]; then
+                  echo "present=true" >>"$GITHUB_OUTPUT"
+                  echo "workspace already contains a checkout, leaving it alone"
+              else
+                  echo "present=false" >>"$GITHUB_OUTPUT"
+              fi
+
+        - name: Check out the head commit
+          if: inputs.checkout != 'skip' && steps.probe.outputs.present == 'false'
+          uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+          with:
+              # Full history: every lens diffs against the base branch, and a shallow
+              # clone has no merge-base to diff from.
+              fetch-depth: 0
+              ref: ${{ github.event.pull_request.head.sha }}
+              token: ${{ inputs.github-token }}
+
         - name: Install the toolchain
           if: inputs.install != 'skip' && inputs.command-prefix == ''
           shell: bash

@@ -159,11 +159,14 @@ repository's tree untouched.
 1. Add a workflow that grants `pull-requests: write`. A composite action cannot grant
    itself permissions, so the calling workflow must declare it. Without it, the posting
    step fails with 403.
-2. Check out with `fetch-depth: 0`. Every lens diffs against the base branch, and a
-   shallow clone has no merge-base.
-3. Set `CLAUDE_CODE_OAUTH_TOKEN` as a repository secret. Create the token with
+2. Set `CLAUDE_CODE_OAUTH_TOKEN` as a repository secret. Create the token with
    `claude setup-token`.
-The action installs `bun` and `claude` itself when they are not already on PATH. Set
+No checkout step is needed. The action checks out the pull request head with full
+history, but only when the workspace has none, so it never cleans away work an earlier
+step produced. Check out yourself and set `checkout: skip` if you need submodules, LFS,
+or a sparse checkout.
+
+The action also installs `bun` and `claude` when they are not already on PATH. Set
 `install: skip` to provide them yourself, which is also how you pin their versions rather
 than letting a job that holds your OAuth token install the latest.
 
