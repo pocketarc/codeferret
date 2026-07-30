@@ -43,6 +43,7 @@ If a named lens has no `SKILL.md` in either place, `build-prompts.sh` fails and 
 both paths it searched.
 
 Vendor each bundled skill at a pinned upstream commit. Do not fetch skills at run time.
+A lens written here rather than vendored is marked `(first-party)` in that file.
 `lenses/skills/PROVENANCE.tsv` records the source repository, commit, and path for each
 one. A review job holds a `pull-requests: write` token, so you should be able to review
 the code it runs, and that code should not change between runs.
@@ -102,6 +103,38 @@ findings shows up as a number rather than as silence.
 An outdated comment does not count as covering anything. GitHub collapses a comment when
 the line it referred to changes, so a defect that survived an edit still needs saying.
 
+**Excluded paths are excluded in git, not in the prompt.** The `exclude-paths` input
+becomes a pathspec on the diff command each lens is given, so a lockfile is not in the
+diff at all rather than being something a lens was asked to ignore. `post-review.ts`
+applies the same pathspec when it works out which lines are anchorable, so a finding can
+never point at a file the lenses never saw.
+
+**Only the standards lens receives `REVIEW.md`.** A repository's own review conventions
+go to `mattpocock-code-review`, whose Standards axis already enumerates documented rules,
+and to no other lens. Handing a whole rulebook to all ten pushes them toward the same
+generalist read, and the differentiated findings come from lenses staying inside their
+own domain: on a ten-lens run the RSC boundary violation, the missing index, and the
+keyboard-access failure were each found by exactly one lens. The file is named
+`REVIEW.md` rather than reusing `CLAUDE.md` because Claude Code loads `CLAUDE.md` into
+every session automatically, which would put the conventions in front of all ten lenses
+and defeat the scoping.
+
+**A comment shows the claim and nothing else.** No severity, no lens attribution, no
+count of how many lenses agreed. All three stay in `findings.json`, and severity still
+orders the findings, but none of it reaches the reader.
+
+Severity is withheld because a lens assigns it without the context that decides it. A
+missing index is critical on a large table and irrelevant on a small one, and the lens
+cannot tell which. Displaying the guess turns the lens's ignorance into the reader's
+permission to skip. The same argument rules out filtering by severity: a label too
+unreliable to show is far too unreliable to hide findings with.
+
+Agreement between lenses is withheld because it tracks how conspicuous a defect is, not
+how much it matters. On a ten-lens run the most-corroborated finding was a cache-key nit
+that six lenses spotted, while the missing index, the RSC boundary violation, and the
+keyboard-access failure were each found by one. Showing "6 of 10" beside the nit tells
+the reader it is the consensus priority, which is the opposite of the truth.
+
 **`post-review.ts` anchors the findings.** Whether a line sits inside a diff hunk is
 exact, and a wrong answer is expensive: the review API is atomic, so a single bad anchor
 makes the API return 422 and create no comments at all. Lenses also self-report
@@ -127,12 +160,16 @@ repository's tree untouched.
 1. Add a workflow that grants `pull-requests: write`. A composite action cannot grant
    itself permissions, so the calling workflow must declare it. Without it, the posting
    step fails with 403.
-2. Check out with `fetch-depth: 0`. Every lens diffs against the base branch, and a
-   shallow clone has no merge-base.
-3. Set `CLAUDE_CODE_OAUTH_TOKEN` as a repository secret. Create the token with
+2. Set `CLAUDE_CODE_OAUTH_TOKEN` as a repository secret. Create the token with
    `claude setup-token`.
-4. Make `claude` and `bun` available. Install them on the runner, or set
-   `command-prefix` to run them in a container.
+No checkout step is needed. The action checks out the pull request head with full
+history, but only when the workspace has none, so it never cleans away work an earlier
+step produced. Check out yourself and set `checkout: skip` if you need submodules, LFS,
+or a sparse checkout.
+
+The action also installs `bun` and `claude` when they are not already on PATH. Set
+`install: skip` to provide them yourself, which is also how you pin their versions rather
+than letting a job that holds your OAuth token install the latest.
 
 Use `command-prefix` when the repository runs its toolchain in a container. For example,
 `docker compose exec -T -w /app devtools`. The prefix must put both binaries on PATH,

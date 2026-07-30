@@ -28,6 +28,31 @@ inputs:
             copilot-web-design-reviewer
             copilot-sql-code-review
             anthropic-accessibility-review
+            comment-review
+            writing-review
+    exclude-paths:
+        description: |
+            Newline-separated globs to keep out of the review, one per line. These become
+            a git pathspec on the diff every lens is given, so excluded files are not
+            reviewed rather than merely discouraged. Set to an empty string to review
+            everything.
+        required: false
+        default: |
+            **/*.lock
+            **/*.lockb
+            bun.lock
+            package-lock.json
+            yarn.lock
+            composer.lock
+            node_modules/**
+            vendor/**
+            **/.next/**
+            **/dist/**
+            **/out/**
+            **/build/**
+            **/*.min.js
+            **/*.min.css
+            **/*.snap
     base-ref:
         description: Ref to diff against. Defaults to the pull request's base branch.
         required: false
@@ -57,6 +82,23 @@ inputs:
         description: Commit to anchor comments against. Defaults to the pull request head.
         required: false
         default: ''
+    checkout:
+        description: |
+            Whether to check the repository out. 'auto' checks out the pull request head
+            with full history, but only when the workspace has no checkout yet, so it can
+            never clean away work an earlier step produced. 'skip' never checks out; use
+            it when you check out yourself, or need submodules, LFS, or a sparse checkout.
+        required: false
+        default: auto
+    install:
+        description: |
+            Whether to install the toolchain. 'auto' installs bun and claude globally via
+            npm when they are not already on PATH. 'skip' assumes the caller has provided
+            both, which is also the right choice if you would rather pin those versions
+            yourself than let a job holding your OAuth token install the latest. Ignored
+            when command-prefix is set, since that prefix owns its own toolchain.
+        required: false
+        default: auto
     post:
         description: Set to 'false' to run the review and skip posting it.
         required: false
@@ -73,6 +115,43 @@ outputs:
 runs:
     using: composite
     steps:
+        # actions/checkout cleans by default, deleting whatever an earlier step in the
+        # caller's job wrote.
+        - name: Check for an existing checkout
+          id: probe
+          shell: bash
+          run: |
+              if [ -d "$GITHUB_WORKSPACE/.git" ]; then
+                  echo "present=true" >>"$GITHUB_OUTPUT"
+                  echo "workspace already contains a checkout, leaving it alone"
+              else
+                  echo "present=false" >>"$GITHUB_OUTPUT"
+              fi
+
+        - name: Check out the head commit
+          if: inputs.checkout != 'skip' && steps.probe.outputs.present == 'false'
+          uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+          with:
+              fetch-depth: 0
+              ref: ${{ github.event.pull_request.head.sha }}
+              token: ${{ inputs.github-token }}
+
+        - name: Install the toolchain
+          if: inputs.install != 'skip' && inputs.command-prefix == ''
+          shell: bash
+          run: |
+              need=""
+              command -v bun >/dev/null 2>&1 || need="$need bun"
+              command -v claude >/dev/null 2>&1 || need="$need @anthropic-ai/claude-code"
+
+              if [ -z "$need" ]; then
+                  echo "bun and claude are already on PATH"
+                  exit 0
+              fi
+
+              echo "installing:$need"
+              npm install -g $need
+
         - name: Resolve the review target
           id: target
           shell: bash
@@ -93,9 +172,6 @@ runs:
                   exit 1
               fi
 
-              # Every lens diffs against the base, and a shallow clone has no merge-base
-              # to diff from. Callers should check out with fetch-depth: 0; this is the
-              # safety net for when they have not.
               if [ -f "$(git rev-parse --git-dir)/shallow" ]; then
                   git fetch --unshallow --no-tags origin || true
               fi
@@ -117,6 +193,7 @@ runs:
           env:
               LENSES: ${{ inputs.lenses }}
               BASE: ${{ steps.target.outputs.base }}
+              EXCLUDE_PATHS: ${{ inputs.exclude-paths }}
           run: |
               bash "$GITHUB_ACTION_PATH/review/build-prompts.sh" \
                   "$BASE" \
@@ -125,9 +202,6 @@ runs:
                   "$GITHUB_WORKSPACE" \
                   <<<"$LENSES"
 
-        # Runs before the review so the orchestrator can mark findings an earlier run
-        # already commented on. Failure here is not fatal: with no prior comments the
-        # run posts everything, which is the safe direction.
         - name: Collect comments from earlier runs
           if: steps.target.outputs.pr != ''
           shell: bash
@@ -150,8 +224,6 @@ runs:
           run: |
               out="$RUNNER_TEMP/codeferret/build"
 
-              # $PREFIX is deliberately unquoted so a multi-word prefix splits into argv.
-              # The prompt and schema stay single arguments because they are quoted.
               $PREFIX claude -p "$(cat "$out/orchestrator.txt")" \
                   --model "$MODEL" \
                   --output-format json \
@@ -179,6 +251,7 @@ runs:
               BASE: ${{ steps.target.outputs.base }}
               PR: ${{ steps.target.outputs.pr }}
               HEAD: ${{ steps.target.outputs.head }}
+              EXCLUDE_PATHS: ${{ inputs.exclude-paths }}
           run: |
               if [ -z "$PR" ] || [ -z "$HEAD" ]; then
                   echo "pr-number and head-sha are required outside a pull_request event" >&2

@@ -40,14 +40,6 @@ interface Merged {
 }
 
 const SEVERITY_ORDER = ["critical", "high", "medium", "low", "nit", "question"];
-const MARKER: Record<string, string> = {
-    critical: "🔴",
-    high: "🔴",
-    medium: "🟡",
-    low: "🔵",
-    nit: "🔵",
-    question: "❓",
-};
 const MAX_BODY = 60000;
 
 const [findingsPath, baseRef, headSha, prNumber] = process.argv.slice(2);
@@ -67,7 +59,16 @@ function severityRank(s: string): number {
 
 /** Right-side line numbers per file that appear anywhere in the diff hunks. */
 function commentableLines(): Map<string, Set<number>> {
-    const proc = Bun.spawnSync(["git", "diff", "-U3", `${baseRef}...${headSha}`]);
+    // Must stay the same pathspec build-prompts.sh gives the lenses, or a finding can
+    // anchor to a file they never saw.
+    const excludes = (process.env.EXCLUDE_PATHS ?? "")
+        .split("\n")
+        .map((g) => g.trim())
+        .filter(Boolean)
+        .map((g) => `:(exclude)${g}`);
+    const pathspec = excludes.length > 0 ? ["--", ".", ...excludes] : [];
+
+    const proc = Bun.spawnSync(["git", "diff", "-U3", `${baseRef}...${headSha}`, ...pathspec]);
 
     if (proc.exitCode !== 0) {
         throw new Error(`git diff failed: ${new TextDecoder().decode(proc.stderr)}`);
@@ -106,10 +107,7 @@ const allFindings = [...(merged.findings ?? [])].sort(
     (a, b) => severityRank(a.severity) - severityRank(b.severity),
 );
 
-// An earlier run already commented on the 'already-reported' ones. They stay out of the
-// posted review but are counted, so suppression is visible rather than silent: if the
-// matching goes wrong, the number is the symptom. The full set with each status is in
-// the run artifact.
+// Keeping a count makes a matcher that eats findings visible.
 const suppressed = allFindings.filter((f) => f.status === "already-reported");
 const findings = allFindings.filter((f) => f.status !== "already-reported");
 
@@ -131,57 +129,24 @@ for (const finding of findings) {
     (ok ? inline : demoted).push(finding);
 }
 
-// Lens count is read from lens_health rather than from the findings, so a lens that
-// ran and found nothing still counts towards the denominator. Otherwise a finding
-// only one lens caught would read as unanimous.
-const lensTotal = (merged.lens_health ?? []).length;
-
 /** The plugin namespace is an implementation detail, so it is dropped for display. */
 function lensLabel(lens: string): string {
     return lens.replace(/^[^:]+:/, "");
 }
 
-function attribution(f: Finding): string {
-    const lenses = f.found_by ?? [];
-    if (lenses.length === 0) return "";
-    const quorum = lensTotal > 0 ? ` · quorum ${lenses.length} of ${lensTotal}` : "";
-    return `${quorum} · ${lenses.map(lensLabel).join(", ")}`;
-}
-
 function commentBody(f: Finding): string {
-    const marker = MARKER[f.severity] ?? "•";
-    return `${marker} **${f.severity}** · ${f.category}${attribution(f)}\n\n**${f.title}**\n\n${f.body}`;
+    return `**${f.title}**\n\n${f.body}\n\n<sub>${f.category}</sub>`;
 }
-
-const counts = SEVERITY_ORDER.map((s) => [s, findings.filter((f) => f.severity === s).length])
-    .filter(([, n]) => (n as number) > 0)
-    .map(([s, n]) => `${n} ${s}`)
-    .join(", ");
 
 const sections: string[] = ["## CodeFerret"];
 
 if (merged.summary) sections.push(merged.summary);
 
 sections.push(
-    `**${findings.length} new finding${findings.length === 1 ? "" : "s"}**${counts ? ` — ${counts}` : ""}` +
+    `**${findings.length} new finding${findings.length === 1 ? "" : "s"}**` +
         `${demoted.length > 0 ? ` · ${demoted.length} outside the diff, listed below` : ""}` +
         `${suppressed.length > 0 ? ` · ${suppressed.length} already commented on above` : ""}`,
 );
-
-// Counted here rather than asked of the orchestrator. It narrates these numbers
-// inaccurately when asked, and they are exact arithmetic over the findings array.
-if (lensTotal > 1) {
-    const byQuorum = new Map<number, number>();
-    for (const f of findings) {
-        const n = (f.found_by ?? []).length;
-        byQuorum.set(n, (byQuorum.get(n) ?? 0) + 1);
-    }
-    const breakdown = [...byQuorum.entries()]
-        .sort((a, b) => b[0] - a[0])
-        .map(([n, count]) => `${count} by ${n} of ${lensTotal}`)
-        .join(", ");
-    sections.push(`Quorum: ${breakdown}.`);
-}
 
 const health = merged.lens_health ?? [];
 if (health.length > 0) {
@@ -206,8 +171,8 @@ if (demoted.length > 0) {
     const body = demoted
         .map(
             (f) =>
-                `- **\`${f.file}:${f.line}\`** ${MARKER[f.severity] ?? "•"} ${f.severity} · ${f.category}` +
-                `${attribution(f)}\n  **${f.title}**\n\n  ${f.body.replace(/\n/g, "\n  ")}`,
+                `- **\`${f.file}:${f.line}\`** — ${f.title}\n\n  ${f.body.replace(/\n/g, "\n  ")}` +
+                `\n\n  <sub>${f.category}</sub>`,
         )
         .join("\n\n");
     sections.push(
@@ -219,7 +184,7 @@ if (suppressed.length > 0) {
     const body = suppressed
         .map(
             (f) =>
-                `- \`${f.file}:${f.line}\` ${f.severity} · ${f.category} — ${f.title}` +
+                `- \`${f.file}:${f.line}\` — ${f.title}` +
                 `${f.existing_comment_url ? ` ([earlier comment](${f.existing_comment_url}))` : ""}`,
         )
         .join("\n");
@@ -253,8 +218,6 @@ console.log(
         ` inline=${inline.length} demoted=${demoted.length}`,
 );
 
-// Nothing new to say, so say nothing. Posting "0 new findings" on every push is the
-// noise this whole mechanism exists to remove.
 if (findings.length === 0 && !process.env.DRY_RUN) {
     console.log(
         suppressed.length > 0
@@ -264,9 +227,6 @@ if (findings.length === 0 && !process.env.DRY_RUN) {
     process.exit(0);
 }
 
-// DRY_RUN exists so the payload can be inspected without a live pull request. The
-// anchoring and body assembly above are the parts most likely to be wrong, and they
-// are otherwise only exercised by posting for real.
 if (process.env.DRY_RUN) {
     console.log("\n===== REVIEW BODY =====\n");
     console.log(reviewBody);
@@ -301,14 +261,17 @@ let response = await postReview({
 });
 
 if (!response.ok && comments.length > 0) {
-    // The request is all-or-nothing, so one bad anchor loses every comment. Rather
-    // than lose the review, fall back to a body-only post carrying everything.
+    // The reviews endpoint is all-or-nothing: one rejected anchor creates no comments.
     const detail = await response.text();
     console.error(`inline review rejected (${response.status}): ${detail}`);
     console.error("retrying as a body-only review so the findings still land");
 
     const appendix = inline
-        .map((f) => `- **\`${f.file}:${f.line}\`** ${f.severity} · ${f.category}\n  **${f.title}**\n\n  ${f.body.replace(/\n/g, "\n  ")}`)
+        .map(
+            (f) =>
+                `- **\`${f.file}:${f.line}\`** — ${f.title}\n\n  ${f.body.replace(/\n/g, "\n  ")}` +
+                `\n\n  <sub>${f.category}</sub>`,
+        )
         .join("\n\n");
 
     response = await postReview({

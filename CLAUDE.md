@@ -144,6 +144,19 @@ the way its author intended:
   commit to diff against, and nothing can answer in a headless run.
 - **Subagents do not inherit `--json-schema`.** Their schema comes from the prompt, so
   do not trust the shape of lens output. Only the orchestrator's output is validated.
+- **`REVIEW.md` goes to `mattpocock-code-review` and to nothing else.** A repository's
+  review conventions reach the one lens whose Standards axis enumerates documented rules.
+  Do not broaden it: giving every lens a whole rulebook pulls them toward the same
+  generalist read, and the unique findings come from lenses staying in their own domain.
+  The name is `REVIEW.md` and not `CLAUDE.md` because Claude Code auto-loads `CLAUDE.md`
+  into every session, which would reach all ten lenses.
+- **Do not put severity or lens agreement into a comment.** Both are in `findings.json`
+  and severity orders the findings, but neither is displayed, and that is deliberate. A
+  lens grades severity without the context that decides it, so the label mainly licenses
+  the reader to skip. Agreement tracks how obvious a defect is rather than how much it
+  matters: on a ten-lens run, six lenses agreed on a cache-key nit while the missing
+  index and the keyboard-access failure were each found by one. For the same reason, do
+  not add severity filtering.
 - **Lenses must not modify the working tree.** Some review skills offer to fix what they
   find, and ten lenses read the same checkout at once, so one edit corrupts every other
   lens's review. The session denies `Edit`, `Write`, and `NotebookEdit`, and

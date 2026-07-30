@@ -2,8 +2,11 @@ Review this pull request.
 
 The repository is the current working directory. The diff under review is:
 
-    git diff __BASE__...HEAD
+    git diff __BASE__...HEAD __PATHSPEC__
     git log __BASE__..HEAD --oneline
+
+Use that diff command as written. Its pathspec excludes generated files such as
+lockfiles and build output, which are not worth review.
 
 The fixed point is `__BASE__`. It is already decided. You are running headless, so
 there is nobody to answer a question — do not ask one.

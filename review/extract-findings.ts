@@ -3,9 +3,7 @@
  * Pull the merged findings out of a Claude Code run log.
  *
  * The orchestrator emits a fresh structured output each time a lens reports back, so
- * the log holds several `result` messages and only the last one is complete. Written
- * in Bun rather than jq so the runner needs no extra tooling beyond what the review
- * itself already requires.
+ * the log holds several `result` messages and only the last is complete.
  *
  * Usage: bun extract-findings.ts <run.json> <findings.json>
  */
