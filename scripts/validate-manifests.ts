@@ -65,6 +65,56 @@ if (action) {
     );
 }
 
+// Bundled lenses share one plugin namespace, so a duplicate `name` or a name that
+// disagrees with its directory makes a lens unreachable. Two upstreams ship a skill
+// called `security-review`, and both mismatches sat unnoticed until a second one
+// arrived.
+const seenSkillNames = new Map<string, string>();
+
+for (const entry of readdirSync("lenses/skills", { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+
+    const skillFile = `lenses/skills/${entry.name}/SKILL.md`;
+    const text = await Bun.file(skillFile)
+        .text()
+        .catch(() => null);
+
+    if (text === null) {
+        fail(skillFile, "bundled lens has no SKILL.md");
+        continue;
+    }
+
+    // A skill with this flag never registers as one, so its lens agent would exist with
+    // nothing to load. scripts/prepare-skill.ts strips it during vendoring.
+    if (/^user-invocable:\s*false\s*$/m.test(text)) {
+        fail(skillFile, "has `user-invocable: false`, so it will not register as a skill");
+    }
+
+    const declared = text.match(/^name:\s*(.+)$/m)?.[1]?.trim();
+
+    if (!declared) {
+        fail(skillFile, "no `name` in frontmatter");
+    } else if (declared !== entry.name) {
+        fail(skillFile, `declares name '${declared}' but its directory is '${entry.name}'`);
+    } else if (seenSkillNames.has(declared)) {
+        fail(skillFile, `name '${declared}' is already used by ${seenSkillNames.get(declared)}`);
+    } else {
+        seenSkillNames.set(declared, skillFile);
+    }
+}
+
+console.log(`✔ lenses/skills — ${seenSkillNames.size} bundled lens(es), names unique`);
+
+// Every lens named as a default must exist, or the action fails on a fresh install.
+for (const lens of String(action?.inputs?.lenses?.default ?? "")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)) {
+    if (!seenSkillNames.has(lens)) {
+        fail("action.yml", `default lens '${lens}' has no bundled skill`);
+    }
+}
+
 const workflowDir = ".github/workflows";
 for (const entry of readdirSync(workflowDir)) {
     if (!entry.endsWith(".yml") && !entry.endsWith(".yaml")) continue;

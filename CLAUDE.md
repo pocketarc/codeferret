@@ -81,7 +81,8 @@ claude -p "$(cat "$RT/codeferret/build/orchestrator.txt")" \
   --model opus --output-format json \
   --json-schema "$(cat review/merged-schema.json)" \
   --permission-mode bypassPermissions --strict-mcp-config \
-  --no-session-persistence --plugin-dir "$RT/codeferret" \
+  --no-session-persistence --disallowed-tools Edit Write NotebookEdit \
+  --plugin-dir "$RT/codeferret" \
   > "$RT/codeferret/build/run.json"
 
 bun review/extract-findings.ts \
@@ -100,15 +101,31 @@ Budget roughly 15 minutes and several dollars per run on Opus with three lenses.
 
 ## Adding a lens
 
-To bundle a skill with the action, put it under `lenses/skills/<name>/`. To use it in
-one repository only, put it under the consuming repository's own
-`.claude/skills/<name>/`. Then name the lens in the action's `lenses` input. If a named
-lens has no `SKILL.md` in either place, `build-prompts.sh` fails.
+To bundle a skill with the action, vendor it at a pinned commit:
 
-Vendor bundled skills at a pinned upstream commit and record the commit in
-`lenses/skills/PROVENANCE.tsv`. Never fetch a skill at run time: a review job holds a
-`pull-requests: write` token, so everything it executes should be reviewable and should
-not change between runs.
+```sh
+bash scripts/vendor-lens.sh <repo> <commit-sha> <in-repo-subdir> <local-name>
+```
+
+Then add `<local-name>` to the `lenses` default in `action.yml` and run
+`bun scripts/validate-manifests.ts`.
+
+To use a skill in one repository only, put it under the consuming repository's own
+`.claude/skills/<name>/` and name it in the action's `lenses` input. If a named lens has
+no `SKILL.md` in either place, `build-prompts.sh` fails.
+
+Never fetch a skill at run time: a review job holds a `pull-requests: write` token, so
+everything it executes should be reviewable and should not change between runs.
+`lenses/skills/PROVENANCE.tsv` records the upstream repository, commit, and path for
+each bundled lens.
+
+`vendor-lens.sh` rewrites two frontmatter fields, because a vendored skill is not used
+the way its author intended:
+
+- `name` becomes the local directory name. All bundled lenses share one plugin
+  namespace, and more than one upstream ships a skill called `security-review`.
+- `user-invocable: false` is removed. A skill carrying that flag never registers as a
+  skill, so its lens agent would have nothing to load.
 
 ## Things that will bite you
 
@@ -127,6 +144,10 @@ not change between runs.
   commit to diff against, and nothing can answer in a headless run.
 - **Subagents do not inherit `--json-schema`.** Their schema comes from the prompt, so
   do not trust the shape of lens output. Only the orchestrator's output is validated.
+- **Lenses must not modify the working tree.** Some review skills offer to fix what they
+  find, and ten lenses read the same checkout at once, so one edit corrupts every other
+  lens's review. The session denies `Edit`, `Write`, and `NotebookEdit`, and
+  `review/lens-brief.md` tells each lens to report rather than repair. Keep both.
 - **Suppression can hide a real finding.** Every push re-runs the whole review, and the
   orchestrator marks each finding `new` or `already-reported` so that only new ones get
   posted. It is told to choose `new` whenever it is unsure. If you tighten that, you

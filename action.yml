@@ -20,7 +20,14 @@ inputs:
         default: |
             caveman-review
             mattpocock-code-review
+            anthropic-code-review
+            wshobson-code-review-excellence
             sentry-security-review
+            copilot-security-review
+            vercel-next-best-practices
+            copilot-web-design-reviewer
+            copilot-sql-code-review
+            anthropic-accessibility-review
     base-ref:
         description: Ref to diff against. Defaults to the pull request's base branch.
         required: false
@@ -152,6 +159,7 @@ runs:
                   --permission-mode bypassPermissions \
                   --strict-mcp-config \
                   --no-session-persistence \
+                  --disallowed-tools Edit Write NotebookEdit \
                   --plugin-dir "$RUNNER_TEMP/codeferret" \
                   >"$out/run.json"
 
