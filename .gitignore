@@ -7,3 +7,8 @@ vendor/
 # its own bundled lenses.
 !.claude/
 .claude/settings.local.json
+
+# The same global gitignore excludes CLAUDE.md. This one is committed on purpose: it
+# carries the rules for working on the fixture branches, which anyone cloning the
+# repository needs.
+!CLAUDE.md
