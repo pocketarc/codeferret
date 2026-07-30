@@ -64,7 +64,7 @@ if (action) {
 }
 
 // One plugin, one namespace: a duplicated name, or one that disagrees with its
-// directory, makes a lens unreachable rather than erroring.
+// directory, leaves a lens silently unreachable.
 const seenSkillNames = new Map<string, string>();
 
 for (const entry of readdirSync("lenses/skills", { withFileTypes: true })) {

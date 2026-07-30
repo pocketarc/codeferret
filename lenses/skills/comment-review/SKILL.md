@@ -73,6 +73,8 @@ lead them to change the code wrongly.
   The condition that, if it stopped holding, would make this code wrong.
 - **An external fact.** A vendor quirk, an upstream bug, a spec footnote, a wire-format
   constraint. The cause lives outside the repository, so reading harder will not reach it.
+  Say how it bears on this line: a fact whose connection to the code is missing reads as
+  trivia, and a comment about a tool the code does not use reads as a non sequitur.
 - **A constraint that looks arbitrary.** Ordering that must hold, a call that must not be
   hoisted, two values that must agree. The tell is that the obvious tidy-up breaks it
   without failing a test.
@@ -90,6 +92,12 @@ condition it depends on, the condition is what stops someone breaking it later.
 - Restating the code: `// increment the counter` above `count++`.
 - **Documenting an absence.** "No checkout step here because…", "we deliberately don't
   cache this". Nobody reads a file asking why it lacks something.
+- **Defining by comparison.** "Uses X rather than Y", "not the Z approach", "instead of
+  …". The reader has only the code in front of them, so the discarded option is a
+  stranger to them. State the constraint that makes the chosen one necessary.
+- **A fact with no referent.** Prose about a tool, platform, or approach this code does
+  not use. Trimming often creates these: cutting the sentence that connected an external
+  fact to the line leaves the fact stranded.
 - History: "this used to be", "previously we", "now that we've added". Commit messages
   hold this.
 - Reasoning a test already demonstrates. Point at the test if the link is not obvious.
@@ -110,16 +118,17 @@ condition it depends on, the condition is what stops someone breaking it later.
 
 ## Reporting
 
-Anchor each finding on the comment's first line. Say what the code already tells a
-principal engineer, and what it does not. The author writes the replacement.
+Anchor each finding on the comment's first line. Describe the reader's position: what the
+code already tells a principal engineer, and what it withholds. The author writes the
+replacement.
 
 - **Delete.** Everything the comment claims is reachable from the code. Name what the
   reader works out unaided that makes the comment redundant.
 - **Trim.** Part is reachable and part is not. Name both: the part a principal engineer
   grasps from the code, and the fact they could not have.
 
-State it as the reader's position, not as an edit. "A principal engineer reads a raised
-timeout as a timing problem, so the first two sentences say nothing. That the vendor caps
-this at 90s is not in the code" is a finding. A rewritten comment is not.
+A finding reads like this: "A principal engineer reads a raised timeout as a timing
+problem, so the first two sentences carry nothing. The vendor's 90s ceiling is the fact
+the code withholds."
 
 For a comment the change made untrue, the finding is the inaccuracy.

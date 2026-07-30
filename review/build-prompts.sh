@@ -4,7 +4,7 @@
 # The plugin is built outside the workspace so the caller's tree stays untouched.
 #
 # EXCLUDE_PATHS (newline-separated globs) becomes a git pathspec on the diff each lens
-# is given, so an excluded file is absent rather than merely discouraged.
+# is given, so an excluded file is absent from what they review.
 #
 # Lens names arrive on stdin, one per line.
 #
@@ -98,7 +98,6 @@ context, never grounds for staying quiet about something it does not mention."
     printf -- '- `%s:%s`\n' "$NAMESPACE" "$lens" >>"$BUILD/lens-list.txt"
 done
 
-# BSD awk cannot take a multi-line value through `-v`.
 sed -e "s|__BASE__|$BASE|g" \
     -e "s|__EXISTING__|$BUILD/existing.json|g" \
     -e "/__LENS_LIST__/r $BUILD/lens-list.txt" \

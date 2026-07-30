@@ -6,9 +6,8 @@ on:
 
 jobs:
     review:
-        # `contains` over a string returns true for an empty needle, so the shorter
-        # `contains('OWNER MEMBER COLLABORATOR', …)` passes when author_association is
-        # absent. The array form is exact equality.
+        # `contains` over a string returns true for an empty needle, so a string
+        # allowlist admits an absent author_association.
         if: contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
         runs-on: ubuntu-latest
         timeout-minutes: 60

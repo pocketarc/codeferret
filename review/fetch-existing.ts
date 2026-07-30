@@ -51,7 +51,7 @@ for (let page = 1; ; page += 1) {
     );
 
     if (!response.ok) {
-        // Failing open here duplicates comments; failing closed would lose the review.
+        // An empty list costs duplicate comments; a thrown error costs the review.
         console.error(`could not list comments (${response.status}): ${await response.text()}`);
         break;
     }

@@ -114,8 +114,8 @@ outputs:
 runs:
     using: composite
     steps:
-        # actions/checkout cleans by default, so checking out unconditionally would
-        # delete whatever an earlier step in the caller's job wrote.
+        # actions/checkout cleans by default, deleting whatever an earlier step in the
+        # caller's job wrote.
         - name: Check for an existing checkout
           id: probe
           shell: bash
