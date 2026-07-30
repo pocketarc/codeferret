@@ -6,37 +6,23 @@ on:
 
 jobs:
     review:
-        # Trust gate: the job consumes CLAUDE_CODE_OAUTH_TOKEN, so a drive-by pull
-        # request must not be able to spend it.
-        #
-        # Array containment, not `contains('OWNER MEMBER COLLABORATOR', …)` on a
-        # string. String containment returns true when the needle is empty, so an
-        # absent or empty author_association would pass the gate. Array containment
-        # is exact equality against each element and fails closed.
+        # `contains` over a string returns true for an empty needle, so the shorter
+        # `contains('OWNER MEMBER COLLABORATOR', …)` passes when author_association is
+        # absent. The array form is exact equality.
         if: contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
         runs-on: ubuntu-latest
         timeout-minutes: 60
         permissions:
             contents: read
-            # write, not read: posting a review with inline line comments needs it.
-            # A composite action cannot grant itself permissions, so this has to be
-            # declared by every workflow that calls it.
             pull-requests: write
 
         steps:
-            # Consumers do not need this step — the action checks out for them. This
-            # repository does, because `uses: ./` resolves against the workspace, so the
-            # action's own files have to be on disk before the action can run at all.
             - name: Checkout the head commit
               uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
               with:
-                  # Full history: every lens diffs against the base branch, and a
-                  # shallow clone has no merge-base to diff from.
                   fetch-depth: 0
                   ref: ${{ github.event.pull_request.head.sha }}
 
-            # This repository is both the action and its test fixture, so it calls the
-            # action by path. Other repositories use `pocketarc/codeferret@<ref>`.
             - name: CodeFerret
               uses: ./
               with:

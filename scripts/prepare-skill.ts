@@ -2,16 +2,11 @@
 /**
  * Adapt a vendored skill's frontmatter for use as a lens.
  *
- * Two changes, both recorded here so the diff against upstream is explainable:
+ * `name` becomes the local directory name: one plugin means one namespace, and more
+ * than one upstream ships a skill called `security-review`.
  *
- * 1. `name` is set to the local directory name. Every bundled lens lives in one plugin
- *    and so shares one namespace, and more than one upstream ships a skill called
- *    `security-review`.
- *
- * 2. `user-invocable: false` is removed. Upstream sets it on skills meant to trigger
- *    automatically rather than by name, but a lens subagent loads its skill by name, and
- *    a skill with that flag never registers as one. `vercel-next-best-practices` shipped
- *    as an agent with no matching skill until this was stripped.
+ * `user-invocable: false` is removed. A skill carrying it never registers as a skill,
+ * and a lens subagent loads its skill by name.
  *
  * Usage: bun prepare-skill.ts <SKILL.md> <name>
  */

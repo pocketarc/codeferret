@@ -39,7 +39,6 @@ interface Merged {
     findings: Finding[];
 }
 
-// Severity orders the findings and is never displayed. See commentBody.
 const SEVERITY_ORDER = ["critical", "high", "medium", "low", "nit", "question"];
 const MAX_BODY = 60000;
 
@@ -60,8 +59,8 @@ function severityRank(s: string): number {
 
 /** Right-side line numbers per file that appear anywhere in the diff hunks. */
 function commentableLines(): Map<string, Set<number>> {
-    // The same exclusions the lenses were given, so a finding cannot be anchored to a
-    // file they never saw. Args go straight to git with no shell, so no quoting.
+    // Must stay the same pathspec build-prompts.sh gives the lenses, or a finding can
+    // anchor to a file they never saw.
     const excludes = (process.env.EXCLUDE_PATHS ?? "")
         .split("\n")
         .map((g) => g.trim())
@@ -108,10 +107,8 @@ const allFindings = [...(merged.findings ?? [])].sort(
     (a, b) => severityRank(a.severity) - severityRank(b.severity),
 );
 
-// An earlier run already commented on the 'already-reported' ones. They stay out of the
-// posted review but are counted, so suppression is visible rather than silent: if the
-// matching goes wrong, the number is the symptom. The full set with each status is in
-// the run artifact.
+// Counted rather than dropped, so a matcher that starts eating findings shows up as a
+// number instead of as silence.
 const suppressed = allFindings.filter((f) => f.status === "already-reported");
 const findings = allFindings.filter((f) => f.status !== "already-reported");
 
@@ -138,17 +135,8 @@ function lensLabel(lens: string): string {
     return lens.replace(/^[^:]+:/, "");
 }
 
-// A comment carries the claim and nothing about its provenance or ranking.
-//
-// Severity is deliberately not shown. A lens assigns it without the context that
-// decides it — a missing index is critical on a large table and irrelevant on a small
-// one — so the label mostly gives the reader permission to skip. It is kept in the data
-// for ordering and in findings.json for auditing, and never rendered.
-//
-// Quorum and per-finding attribution are not shown either. Agreement between lenses
-// tracks how conspicuous a defect is, not how much it matters: with ten lenses the
-// most-corroborated finding was a cache-key nit while the missing index, the RSC
-// boundary violation and the keyboard-access failure were each found by one lens.
+// Severity and lens agreement stay out of the rendered comment on purpose; both are in
+// findings.json. review/README.md has the reasoning and the run that produced it.
 function commentBody(f: Finding): string {
     return `**${f.title}**\n\n${f.body}\n\n<sub>${f.category}</sub>`;
 }
@@ -157,8 +145,6 @@ const sections: string[] = ["## CodeFerret"];
 
 if (merged.summary) sections.push(merged.summary);
 
-// A count, with no severity breakdown. The breakdown invites the same skipping that
-// per-finding severity does, on the same miscalibrated numbers.
 sections.push(
     `**${findings.length} new finding${findings.length === 1 ? "" : "s"}**` +
         `${demoted.length > 0 ? ` · ${demoted.length} outside the diff, listed below` : ""}` +
@@ -235,8 +221,6 @@ console.log(
         ` inline=${inline.length} demoted=${demoted.length}`,
 );
 
-// Nothing new to say, so say nothing. Posting "0 new findings" on every push is the
-// noise this whole mechanism exists to remove.
 if (findings.length === 0 && !process.env.DRY_RUN) {
     console.log(
         suppressed.length > 0
@@ -246,9 +230,6 @@ if (findings.length === 0 && !process.env.DRY_RUN) {
     process.exit(0);
 }
 
-// DRY_RUN exists so the payload can be inspected without a live pull request. The
-// anchoring and body assembly above are the parts most likely to be wrong, and they
-// are otherwise only exercised by posting for real.
 if (process.env.DRY_RUN) {
     console.log("\n===== REVIEW BODY =====\n");
     console.log(reviewBody);
@@ -283,8 +264,7 @@ let response = await postReview({
 });
 
 if (!response.ok && comments.length > 0) {
-    // The request is all-or-nothing, so one bad anchor loses every comment. Rather
-    // than lose the review, fall back to a body-only post carrying everything.
+    // The reviews endpoint is all-or-nothing: one rejected anchor creates no comments.
     const detail = await response.text();
     console.error(`inline review rejected (${response.status}): ${detail}`);
     console.error("retrying as a body-only review so the findings still land");

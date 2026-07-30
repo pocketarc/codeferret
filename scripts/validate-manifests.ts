@@ -46,8 +46,7 @@ if (action) {
     if (steps.length === 0) fail("action.yml", "runs.steps is empty");
 
     for (const [i, step] of steps.entries()) {
-        // A composite `run` step without `shell` is accepted by the YAML parser and
-        // rejected by the runner, so it is worth catching here.
+        // A composite `run` step without `shell` parses, then fails at run time.
         if (!step.uses && !step.shell) {
             fail("action.yml", `step ${i + 1} (${step.name ?? "unnamed"}) has no \`shell\``);
         }
@@ -65,10 +64,8 @@ if (action) {
     );
 }
 
-// Bundled lenses share one plugin namespace, so a duplicate `name` or a name that
-// disagrees with its directory makes a lens unreachable. Two upstreams ship a skill
-// called `security-review`, and both mismatches sat unnoticed until a second one
-// arrived.
+// One plugin, one namespace: a duplicated name, or one that disagrees with its
+// directory, makes a lens unreachable rather than erroring.
 const seenSkillNames = new Map<string, string>();
 
 for (const entry of readdirSync("lenses/skills", { withFileTypes: true })) {
@@ -84,8 +81,8 @@ for (const entry of readdirSync("lenses/skills", { withFileTypes: true })) {
         continue;
     }
 
-    // A skill with this flag never registers as one, so its lens agent would exist with
-    // nothing to load. scripts/prepare-skill.ts strips it during vendoring.
+    // A skill carrying this flag never registers as a skill, leaving its lens agent
+    // with nothing to load.
     if (/^user-invocable:\s*false\s*$/m.test(text)) {
         fail(skillFile, "has `user-invocable: false`, so it will not register as a skill");
     }
@@ -105,7 +102,6 @@ for (const entry of readdirSync("lenses/skills", { withFileTypes: true })) {
 
 console.log(`✔ lenses/skills — ${seenSkillNames.size} bundled lens(es), names unique`);
 
-// Every lens named as a default must exist, or the action fails on a fresh install.
 for (const lens of String(action?.inputs?.lenses?.default ?? "")
     .split("\n")
     .map((l) => l.trim())

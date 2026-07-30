@@ -51,8 +51,7 @@ for (let page = 1; ; page += 1) {
     );
 
     if (!response.ok) {
-        // A missing or inaccessible pull request is not fatal: with no prior comments
-        // the run posts everything, which is the safe direction.
+        // Failing open here duplicates comments; failing closed would lose the review.
         console.error(`could not list comments (${response.status}): ${await response.text()}`);
         break;
     }
