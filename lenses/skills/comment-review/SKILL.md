@@ -1,6 +1,6 @@
 ---
 name: comment-review
-description: Review the comments a change adds or leaves behind. Finds comments that restate the code, narrate history, or document an absence, and comments the change has made untrue. Use when reviewing a diff for whether its prose earns its place.
+description: Review the comments a change adds or leaves behind: comments that restate the code, narrate history, or document an absence, and comments the change made untrue. Use when reviewing a diff for whether its prose earns its place.
 ---
 
 # Comment Review
@@ -33,7 +33,7 @@ Yes, and the comment goes. No, and only the part they could not infer stays, in 
 words as it takes.
 
 Judge it blind: read the code with the comment covered, decide what you can work out
-unaided, then compare that against what the comment claims.
+unaided, then compare that against the comment.
 
 The strongest tell is a comment answering a question only the author was asking. While
 writing, an author holds the options they rejected and the bug they just fixed; the
@@ -41,7 +41,7 @@ reader arrives with neither, sees a deliberate construct, and asks nothing. A co
 addressed to that deliberation is written to a reader who is not there.
 
 Score each claim in a comment separately. A comment mixing one real constraint with three
-sentences of narration keeps the one.
+sentences of narration keeps the constraint.
 
 ## Every construct is deliberate
 
@@ -54,8 +54,8 @@ needs saying.
 timeout: 60_000,
 ```
 
-A raised timeout tells the reader there was a timing problem, and `git log -S` gives them
-the commit, the date, and the message.
+The reader takes a raised timeout as a timing problem, and `git log -S` shows them the
+commit, the date, and the message.
 
 ## Enforce it before explaining it
 
@@ -66,8 +66,8 @@ worth enforcing, and once enforced the comment is redundant: whoever breaks it f
 from the failure, which can carry the reason.
 
 "These two lists must stay in sync" is a test. "This must run before that" is often an
-assertion. A comment is right when mechanising costs more than it protects, and saying so
-is the interesting part.
+assertion. A comment is right when mechanising costs more than it protects, and that
+trade-off is what belongs in the comment.
 
 ## What earns its place
 
@@ -77,31 +77,33 @@ lead them to change the code wrongly.
 - **An invariant the design rests on**, where enforcing it mechanically is impractical.
   The condition that, if it stopped holding, would make this code wrong.
 - **An external fact.** A vendor quirk, an upstream bug, a spec footnote, a wire-format
-  constraint. The cause lives outside the repository, so reading harder will not reach it.
-  Say how it bears on this line: a fact whose connection to the code is missing reads as
-  trivia, and a comment about a tool the code does not use reads as a non sequitur.
+  constraint. The cause lives outside the repository, so the reader cannot reach it by
+  reading harder. Say how it bears on this line: without that connection the fact is
+  trivia, and a comment about a tool the code does not use is a non sequitur.
 - **A constraint that looks arbitrary.** Ordering that must hold, a call that must not be
   hoisted, two values that must agree. The tell is that the obvious tidy-up breaks it
   without failing a test.
 - **A rejected alternative that looks correct**, where the reader would otherwise try it
   and the failure would be silent or expensive. If the wrong path fails loudly on the next
-  test run, say nothing.
+  test run, say nothing. This is a warning against a path, so it names the alternative and
+  the damage. A comment that reaches for the alternative to explain the code belongs in
+  the list below.
 - **A domain rule the code cannot express.** Why invoices freeze an exchange rate on
   payment. Business truth, not mechanism.
 
 Prefer the conditional form. Given a choice between explaining the decision and naming the
-condition it depends on, the condition is what stops someone breaking it later.
+condition it depends on, the condition is what stops the next reader breaking the code.
 
 ## What does not
 
 - Restating the code: `// increment the counter` above `count++`.
-- **Documenting an absence.** "No checkout step here because…", "we deliberately don't
+- Documenting an absence: "No checkout step here because...", "we deliberately don't
   cache this". Nobody reads a file asking why it lacks something.
-- **Defining by comparison.** "Uses X rather than Y", "not the Z approach", "instead of
-  …". The reader has only the code in front of them, so the discarded option is a
+- Defining by comparison: "Uses X rather than Y", "not the Z approach", "instead of
+  ...". The reader has only the code in front of them, so the discarded option is a
   stranger to them. State the constraint that makes the chosen one necessary.
-- **A fact with no referent.** Prose about a tool, platform, or approach this code does
-  not use. Trimming often creates these: cutting the sentence that connected an external
+- A fact with no referent: prose about a tool, platform, or approach this code does not
+  use. Trimming often creates one, when cutting the sentence that connected an external
   fact to the line leaves the fact stranded.
 - History: "this used to be", "previously we", "now that we've added". Commit messages
   hold this.
@@ -114,25 +116,25 @@ condition it depends on, the condition is what stops someone breaking it later.
 
 ## On a diff
 
-- **Comments the change made untrue.** A comment describing behaviour the diff has just
-  altered misleads, so check every comment adjacent to a changed line, not only the ones
-  the diff adds.
-- **A comment doing a rename's work.** Prose explaining what a variable holds means the
-  variable is misnamed.
-- **A hunk that is mostly prose.** The finding is the code, not the comment.
+- Comments the change made untrue. A comment describing behaviour the diff has just
+  altered is now false, so check every comment adjacent to a changed line, not only the
+  ones the diff adds.
+- A comment doing a rename's work. If prose explains what a variable holds, the variable
+  is misnamed.
+- A hunk that is mostly prose. The finding is the code, not the comment.
 
 ## Reporting
 
-Anchor each finding on the comment's first line. Describe the reader's position: what the
-code already tells a principal engineer, and what it withholds. The author writes the
-replacement.
+Anchor each finding on the comment's first line. Describe the reader's position: what a
+principal engineer already understands from the code, and what the code withholds. The
+author writes the replacement.
 
-- **Delete.** Everything the comment claims is reachable from the code. Name what the
-  reader works out unaided that makes the comment redundant.
+- **Delete.** Everything in the comment is reachable from the code. Name what the reader
+  works out unaided; that is what makes the comment redundant.
 - **Trim.** Part is reachable and part is not. Name both: the part a principal engineer
   grasps from the code, and the fact they could not have.
 
-A finding reads like this: "A principal engineer reads a raised timeout as a timing
+Write the finding like this: "A principal engineer reads a raised timeout as a timing
 problem, so the first two sentences carry nothing. The vendor's 90s ceiling is the fact
 the code withholds."
 
