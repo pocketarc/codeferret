@@ -14,6 +14,9 @@
 # Lens names arrive on stdin, one per line, so no JSON parser is needed on the runner.
 #
 # Usage: build-prompts.sh <base-ref> <action-path> <plugin-out-dir> <workspace> [<lenses-file>]
+#
+# The orchestrator prompt is told where to find the comments an earlier run already
+# posted, so it can mark findings that have been said before.
 set -euo pipefail
 
 BASE=${1:?usage: build-prompts.sh <base-ref> <action-path> <plugin-out-dir> <workspace>}
@@ -87,9 +90,14 @@ done
 # sed's `r` reads the list in after the marker line and `d` removes the marker.
 # Passing a multi-line value through `awk -v` instead breaks on BSD awk.
 sed -e "s|__BASE__|$BASE|g" \
+    -e "s|__EXISTING__|$BUILD/existing.json|g" \
     -e "/__LENS_LIST__/r $BUILD/lens-list.txt" \
     -e "/__LENS_LIST__/d" \
     "$ACTION/review/orchestrator.md" >"$BUILD/orchestrator.txt"
+
+# The fetch step writes this before the review runs. An empty list keeps the
+# orchestrator's read from failing when there is no pull request context.
+[ -f "$BUILD/existing.json" ] || printf '{"existing": []}\n' >"$BUILD/existing.json"
 
 echo "built ${#LENSES[@]} lens(es): ${LENSES[*]}"
 echo "  plugin: $PLUGIN"

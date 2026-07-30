@@ -86,6 +86,22 @@ damage happens. If you deduplicate by file and line, you miss those. If you wide
 tolerance, you merge genuinely separate findings. Whether two findings are the same
 defect is a question about meaning, so a model answers it.
 
+**The orchestrator also decides what has been said before.** Every push re-runs the whole
+review, so without this the second push posts the same 37 comments again and the pull
+request becomes unreadable. Matching a new finding against an earlier comment is the same
+question as merging two lenses' findings: the line has often moved, and the earlier run
+may have anchored somewhere else. So the orchestrator marks each finding `new` or
+`already-reported`, and `post-review.ts` posts only the new ones.
+
+Two rules keep that safe. The orchestrator marks a finding `new` whenever it is unsure,
+because a repeated comment costs the author seconds while a suppressed finding is one
+nobody ever sees. And suppression is visible: the review body carries the count and the
+run artifact carries every finding with its status, so a matcher that starts eating
+findings shows up as a number rather than as silence.
+
+An outdated comment does not count as covering anything. GitHub collapses a comment when
+the line it referred to changes, so a defect that survived an edit still needs saying.
+
 **`post-review.ts` anchors the findings.** Whether a line sits inside a diff hunk is
 exact, and a wrong answer is expensive: the review API is atomic, so a single bad anchor
 makes the API return 422 and create no comments at all. Lenses also self-report

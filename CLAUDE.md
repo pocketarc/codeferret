@@ -127,3 +127,9 @@ not change between runs.
   commit to diff against, and nothing can answer in a headless run.
 - **Subagents do not inherit `--json-schema`.** Their schema comes from the prompt, so
   do not trust the shape of lens output. Only the orchestrator's output is validated.
+- **Suppression can hide a real finding.** Every push re-runs the whole review, and the
+  orchestrator marks each finding `new` or `already-reported` so that only new ones get
+  posted. It is told to choose `new` whenever it is unsure. If you tighten that, you
+  trade duplicate comments for findings nobody sees. To audit a run, read
+  `findings.json` in the `codeferret-run` artifact. It holds every finding with its
+  status, including the suppressed ones.

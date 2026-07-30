@@ -66,12 +66,16 @@ outputs:
 runs:
     using: composite
     steps:
-        - name: Resolve the base ref
-          id: base
+        - name: Resolve the review target
+          id: target
           shell: bash
           env:
               BASE_REF: ${{ inputs.base-ref }}
               DEFAULT_BASE: ${{ github.event.pull_request.base.ref }}
+              PR_NUMBER: ${{ inputs.pr-number }}
+              HEAD_SHA: ${{ inputs.head-sha }}
+              DEFAULT_PR: ${{ github.event.pull_request.number }}
+              DEFAULT_HEAD: ${{ github.event.pull_request.head.sha }}
           run: |
               if [ -n "$BASE_REF" ]; then
                   base="$BASE_REF"
@@ -98,12 +102,14 @@ runs:
               fi
 
               echo "base=$base" >>"$GITHUB_OUTPUT"
+              echo "pr=${PR_NUMBER:-$DEFAULT_PR}" >>"$GITHUB_OUTPUT"
+              echo "head=${HEAD_SHA:-$DEFAULT_HEAD}" >>"$GITHUB_OUTPUT"
 
         - name: Assemble the lens plugin and prompts
           shell: bash
           env:
               LENSES: ${{ inputs.lenses }}
-              BASE: ${{ steps.base.outputs.base }}
+              BASE: ${{ steps.target.outputs.base }}
           run: |
               bash "$GITHUB_ACTION_PATH/review/build-prompts.sh" \
                   "$BASE" \
@@ -111,6 +117,21 @@ runs:
                   "$RUNNER_TEMP/codeferret" \
                   "$GITHUB_WORKSPACE" \
                   <<<"$LENSES"
+
+        # Runs before the review so the orchestrator can mark findings an earlier run
+        # already commented on. Failure here is not fatal: with no prior comments the
+        # run posts everything, which is the safe direction.
+        - name: Collect comments from earlier runs
+          if: steps.target.outputs.pr != ''
+          shell: bash
+          env:
+              GITHUB_TOKEN: ${{ inputs.github-token }}
+              GITHUB_REPOSITORY: ${{ github.repository }}
+              PREFIX: ${{ inputs.command-prefix }}
+              PR: ${{ steps.target.outputs.pr }}
+          run: |
+              $PREFIX bun "$GITHUB_ACTION_PATH/review/fetch-existing.ts" \
+                  "$PR" "$RUNNER_TEMP/codeferret/build/existing.json" || true
 
         - name: Run the review
           id: review
@@ -147,20 +168,15 @@ runs:
               GITHUB_TOKEN: ${{ inputs.github-token }}
               GITHUB_REPOSITORY: ${{ github.repository }}
               PREFIX: ${{ inputs.command-prefix }}
-              BASE: ${{ steps.base.outputs.base }}
-              PR_NUMBER: ${{ inputs.pr-number }}
-              HEAD_SHA: ${{ inputs.head-sha }}
-              DEFAULT_PR: ${{ github.event.pull_request.number }}
-              DEFAULT_HEAD: ${{ github.event.pull_request.head.sha }}
+              BASE: ${{ steps.target.outputs.base }}
+              PR: ${{ steps.target.outputs.pr }}
+              HEAD: ${{ steps.target.outputs.head }}
           run: |
-              pr="${PR_NUMBER:-$DEFAULT_PR}"
-              head="${HEAD_SHA:-$DEFAULT_HEAD}"
-
-              if [ -z "$pr" ] || [ -z "$head" ]; then
+              if [ -z "$PR" ] || [ -z "$HEAD" ]; then
                   echo "pr-number and head-sha are required outside a pull_request event" >&2
                   exit 1
               fi
 
               $PREFIX bun "$GITHUB_ACTION_PATH/review/post-review.ts" \
                   "$RUNNER_TEMP/codeferret/build/findings.json" \
-                  "$BASE" "$head" "$pr"
+                  "$BASE" "$HEAD" "$PR"

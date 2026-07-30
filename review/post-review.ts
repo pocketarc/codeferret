@@ -21,6 +21,8 @@ interface Finding {
     title: string;
     body: string;
     in_diff?: boolean;
+    status?: "new" | "already-reported";
+    existing_comment_url?: string;
 }
 
 interface LensHealth {
@@ -100,9 +102,17 @@ function commentableLines(): Map<string, Set<number>> {
 }
 
 const merged: Merged = JSON.parse(await Bun.file(findingsPath).text());
-const findings = [...(merged.findings ?? [])].sort(
+const allFindings = [...(merged.findings ?? [])].sort(
     (a, b) => severityRank(a.severity) - severityRank(b.severity),
 );
+
+// An earlier run already commented on the 'already-reported' ones. They stay out of the
+// posted review but are counted, so suppression is visible rather than silent: if the
+// matching goes wrong, the number is the symptom. The full set with each status is in
+// the run artifact.
+const suppressed = allFindings.filter((f) => f.status === "already-reported");
+const findings = allFindings.filter((f) => f.status !== "already-reported");
+
 const anchorable = commentableLines();
 
 const inline: Finding[] = [];
@@ -153,8 +163,9 @@ const sections: string[] = ["## CodeFerret"];
 if (merged.summary) sections.push(merged.summary);
 
 sections.push(
-    `**${findings.length} finding${findings.length === 1 ? "" : "s"}**${counts ? ` — ${counts}` : ""}` +
-        `${demoted.length > 0 ? ` · ${demoted.length} outside the diff, listed below` : ""}`,
+    `**${findings.length} new finding${findings.length === 1 ? "" : "s"}**${counts ? ` — ${counts}` : ""}` +
+        `${demoted.length > 0 ? ` · ${demoted.length} outside the diff, listed below` : ""}` +
+        `${suppressed.length > 0 ? ` · ${suppressed.length} already commented on above` : ""}`,
 );
 
 // Counted here rather than asked of the orchestrator. It narrates these numbers
@@ -204,6 +215,19 @@ if (demoted.length > 0) {
     );
 }
 
+if (suppressed.length > 0) {
+    const body = suppressed
+        .map(
+            (f) =>
+                `- \`${f.file}:${f.line}\` ${f.severity} · ${f.category} — ${f.title}` +
+                `${f.existing_comment_url ? ` ([earlier comment](${f.existing_comment_url}))` : ""}`,
+        )
+        .join("\n");
+    sections.push(
+        `<details>\n<summary>${suppressed.length} finding(s) already commented on in an earlier run</summary>\n\n${body}\n</details>`,
+    );
+}
+
 if (merged.notes) sections.push(`### Caveats\n\n${merged.notes}`);
 
 let reviewBody = sections.join("\n\n");
@@ -224,7 +248,21 @@ const comments = inline.map((f) => ({
         : { line: f.line }),
 }));
 
-console.log(`findings=${findings.length} inline=${inline.length} demoted=${demoted.length}`);
+console.log(
+    `total=${allFindings.length} new=${findings.length} suppressed=${suppressed.length}` +
+        ` inline=${inline.length} demoted=${demoted.length}`,
+);
+
+// Nothing new to say, so say nothing. Posting "0 new findings" on every push is the
+// noise this whole mechanism exists to remove.
+if (findings.length === 0 && !process.env.DRY_RUN) {
+    console.log(
+        suppressed.length > 0
+            ? `no new findings — all ${suppressed.length} were commented on in an earlier run`
+            : "no findings",
+    );
+    process.exit(0);
+}
 
 // DRY_RUN exists so the payload can be inspected without a live pull request. The
 // anchoring and body assembly above are the parts most likely to be wrong, and they

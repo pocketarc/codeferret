@@ -27,7 +27,24 @@ STEP 2 — merge. When every lens has reported:
 - Never add a finding of your own. If you think the lenses missed something, put it
   in `notes`.
 
-STEP 3 — account for every lens. Fill `lens_health` with one entry per lens you
+STEP 3 — check what has already been said. Read `__EXISTING__`. It lists the review
+comments CodeFerret posted on earlier runs of this pull request, and it may be empty.
+
+For each merged finding, set `status`:
+
+- `already-reported` when an entry in that file describes the same defect. Copy its
+  `url` into `existing_comment_url`. The line numbers will often differ, because the
+  code moved or the earlier run anchored elsewhere; match on the defect, not the line.
+- `new` in every other case.
+
+An entry with `outdated: true` does not count as covering anything. GitHub collapses
+those, so the author cannot see them.
+
+**When you are unsure, mark it `new`.** A repeated comment costs the author a few
+seconds. A suppressed finding is one nobody ever sees, and this is the only place that
+can happen. Bias every close call towards posting.
+
+STEP 4 — account for every lens. Fill `lens_health` with one entry per lens you
 dispatched, including any that errored, could not load its skill, or returned
 nothing usable. A lens that returns zero findings is more likely broken than
 satisfied, so mark `ok: false` and say what you saw. This is the only place a dead
