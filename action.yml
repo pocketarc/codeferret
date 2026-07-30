@@ -223,7 +223,6 @@ runs:
           run: |
               out="$RUNNER_TEMP/codeferret/build"
 
-              # Unquoted so a multi-word prefix splits into argv.
               $PREFIX claude -p "$(cat "$out/orchestrator.txt")" \
                   --model "$MODEL" \
                   --output-format json \

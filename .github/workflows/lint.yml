@@ -14,7 +14,5 @@ jobs:
             - name: Install Bun
               run: npm install -g bun
 
-            # GitHub validates workflow syntax on push, but an action manifest only when
-            # a run loads it.
             - name: Validate manifests
               run: bun scripts/validate-manifests.ts

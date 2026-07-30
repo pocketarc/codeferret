@@ -46,7 +46,6 @@ if (action) {
     if (steps.length === 0) fail("action.yml", "runs.steps is empty");
 
     for (const [i, step] of steps.entries()) {
-        // A composite `run` step without `shell` parses, then fails at run time.
         if (!step.uses && !step.shell) {
             fail("action.yml", `step ${i + 1} (${step.name ?? "unnamed"}) has no \`shell\``);
         }

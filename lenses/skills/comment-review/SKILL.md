@@ -110,12 +110,16 @@ condition it depends on, the condition is what stops someone breaking it later.
 
 ## Reporting
 
-Anchor each finding on the comment's first line, with one of two verdicts:
+Anchor each finding on the comment's first line. Say what the code already tells a
+principal engineer, and what it does not. The author writes the replacement.
 
-- **Delete.** The whole comment goes, not just its weaker sentences. Say what the reader
-  infers unaided that makes it redundant.
-- **Trim.** Give the replacement text. A Delete softened into a Trim to save a sentence
-  you liked is a wrong verdict.
+- **Delete.** Everything the comment claims is reachable from the code. Name what the
+  reader works out unaided that makes the comment redundant.
+- **Trim.** Part is reachable and part is not. Name both: the part a principal engineer
+  grasps from the code, and the fact they could not have.
 
-For a comment the change made untrue, the finding is the inaccuracy, and the fix is the
-corrected sentence or deletion.
+State it as the reader's position, not as an edit. "A principal engineer reads a raised
+timeout as a timing problem, so the first two sentences say nothing. That the vendor caps
+this at 90s is not in the code" is a finding. A rewritten comment is not.
+
+For a comment the change made untrue, the finding is the inaccuracy.
