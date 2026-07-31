@@ -8,6 +8,8 @@
  * Usage: bun extract-findings.ts <run.json> <findings.json>
  */
 
+import { dirname, join } from "node:path";
+
 const [runPath, outPath] = process.argv.slice(2);
 
 if (!runPath || !outPath) {
@@ -50,7 +52,7 @@ if (!structured || !Array.isArray(structured.findings)) {
 
 await Bun.write(outPath, `${JSON.stringify(structured, null, 2)}\n`);
 
-const countPath = `${outPath.replace(/\/[^/]*$/, "")}/findings-count`;
+const countPath = join(dirname(outPath), "findings-count");
 await Bun.write(countPath, String(structured.findings.length));
 
 const health = structured.lens_health ?? [];

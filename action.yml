@@ -238,6 +238,9 @@ runs:
               $PREFIX bun "$GITHUB_ACTION_PATH/review/extract-findings.ts" \
                   "$out/run.json" "$out/findings.json"
 
+              $PREFIX bun "$GITHUB_ACTION_PATH/review/check-findings.ts" \
+                  "$out/findings.json"
+
               echo "findings-file=$out/findings.json" >>"$GITHUB_OUTPUT"
               echo "findings-count=$(cat "$out/findings-count")" >>"$GITHUB_OUTPUT"
 
