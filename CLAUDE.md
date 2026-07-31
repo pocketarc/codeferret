@@ -127,6 +127,24 @@ the way its author intended:
 - `user-invocable: false` is removed. A skill carrying that flag never registers as a
   skill, so its lens agent would have nothing to load.
 
+## Releasing
+
+Consumers pin `pocketarc/codeferret@v1`. GitHub resolves that as a plain git ref, not a
+semver range, so `v1` is a mutable tag this repository moves on every release. Skip the
+move and every consumer stays on the previous revision with no sign anything happened.
+
+```sh
+git push origin main
+git tag -a v1.2.0 -m "CodeFerret 1.2.0"
+git tag -f v1 -m "CodeFerret v1"
+git push origin v1.2.0
+git push --force origin v1
+```
+
+A change that breaks a consumer's workflow — a new required input, a permission they now
+have to grant, work moved out of the action and into their job — needs `v2` and a `v2`
+tag, because `@v1` carries it to everyone the moment the tag moves.
+
 ## Things that will bite you
 
 - **A lens's `in_diff` field is unreliable.** On every run so far, a lens reported an

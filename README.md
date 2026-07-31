@@ -8,10 +8,19 @@ finding records which lenses found it, so agreement between them is visible rath
 than collapsed.
 
 ```yaml
-- uses: pocketarc/codeferret@v1
-  with:
-      claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+permissions:
+    contents: write # resolveReviewThread needs it; contents: read disables thread resolution
+    pull-requests: write
+
+steps:
+    - uses: pocketarc/codeferret@v1
+      with:
+          claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 ```
+
+That is the whole setup. The action checks the repository out and installs what it needs.
+
+`@v1` moves with each 1.x release. Pin a full version, `@v1.0.0`, to hold a revision.
 
 See [`review/README.md`](review/README.md) for the inputs, how to add a lens, and why
 each part is built the way it is.
