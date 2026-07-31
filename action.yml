@@ -128,6 +128,11 @@ runs:
                   echo "present=false" >>"$GITHUB_OUTPUT"
               fi
 
+        # With persist-credentials on, actions/checkout would write github-token into
+        # .git/config as an http.extraheader, inside the tree that the review agent
+        # then reads with Bash under bypassPermissions. The token is still used for
+        # this fetch, and fetch-depth: 0 fetches every branch, so a later step can
+        # resolve the base ref without the token.
         - name: Check out the head commit
           if: inputs.checkout != 'skip' && steps.probe.outputs.present == 'false'
           uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -135,6 +140,7 @@ runs:
               fetch-depth: 0
               ref: ${{ github.event.pull_request.head.sha }}
               token: ${{ inputs.github-token }}
+              persist-credentials: false
 
         - name: Install the toolchain
           if: inputs.install != 'skip' && inputs.command-prefix == ''
