@@ -136,6 +136,10 @@ function lensLabel(lens: string): string {
     return lens.replace(/^[^:]+:/, "");
 }
 
+function plural(n: number, word: string): string {
+    return `${n} ${word}${n === 1 ? "" : "s"}`;
+}
+
 function commentBody(f: Finding): string {
     return `**${f.title}**\n\n${f.body}\n\n<sub>${f.category}</sub>`;
 }
@@ -167,7 +171,7 @@ if (toResolve.length > 0 && !process.env.DRY_RUN) {
             resolveDenied = true;
             console.error(
                 `cannot resolve threads: the token lacks contents: write.` +
-                    ` ${toResolve.length} thread(s) were judged finished and left open.`,
+                    ` ${plural(toResolve.length, "thread")} were judged finished and left open.`,
             );
             continue;
         }
@@ -186,7 +190,7 @@ const sections: string[] = ["## CodeFerret"];
 if (merged.summary) sections.push(merged.summary);
 
 sections.push(
-    `**${findings.length} new finding${findings.length === 1 ? "" : "s"}**` +
+    `**${plural(findings.length, "new finding")}**` +
         `${demoted.length > 0 ? ` · ${demoted.length} outside the diff, listed below` : ""}` +
         `${suppressed.length > 0 ? ` · ${suppressed.length} already commented on above` : ""}` +
         `${declined.length > 0 ? ` · ${declined.length} raised before and declined` : ""}`,
@@ -194,21 +198,33 @@ sections.push(
 
 const health = merged.lens_health ?? [];
 if (health.length > 0) {
-    const rows = health
-        .map(
-            (h) =>
-                `| \`${lensLabel(h.lens)}\` | ${h.findings_returned} | ${h.ok ? "ok" : "**needs attention**"} |` +
-                ` ${h.detail ?? ""} |`,
-        )
-        .join("\n");
-    sections.push(`| Lens | Findings | Status | Detail |\n|---|---|---|---|\n${rows}`);
-
     const broken = health.filter((h) => !h.ok);
+
+    // A list, not a table: GitHub gives a wide column the container and starves the
+    // rest, and most lenses report no detail at all.
+    const items = health
+        .map((h) => {
+            const name = lensLabel(h.lens);
+            const flag = h.ok ? "" : " · **needs attention**";
+            const detail = h.detail ? `\n  ${h.detail.replace(/\n+/g, " ")}` : "";
+            return `- **${name}** · ${plural(h.findings_returned, "finding")}${flag}${detail}`;
+        })
+        .join("\n");
+
     if (broken.length > 0) {
         sections.push(
-            `> ${broken.length} lens(es) did not report normally, so this review is less complete than it looks.`,
+            `> ${broken.length} of ${health.length} lenses did not report normally, so this review covers less than it appears to.`,
         );
     }
+
+    const heading =
+        broken.length > 0
+            ? `${health.length} lenses ran, ${broken.length} needing attention`
+            : `${health.length} lenses ran, all reporting`;
+
+    sections.push(
+        `<details${broken.length > 0 ? " open" : ""}>\n<summary>${heading}</summary>\n\n${items}\n</details>`,
+    );
 }
 
 if (demoted.length > 0) {
@@ -233,7 +249,7 @@ if (suppressed.length > 0) {
         )
         .join("\n");
     sections.push(
-        `<details>\n<summary>${suppressed.length} finding(s) already commented on</summary>\n\n${body}\n</details>`,
+        `<details>\n<summary>${plural(suppressed.length, "finding")} already commented on</summary>\n\n${body}\n</details>`,
     );
 }
 
@@ -246,20 +262,20 @@ if (declined.length > 0) {
         )
         .join("\n");
     sections.push(
-        `<details>\n<summary>${declined.length} finding(s) raised before and declined</summary>\n\n${body}\n</details>`,
+        `<details>\n<summary>${plural(declined.length, "finding")} raised before and declined</summary>\n\n${body}\n</details>`,
     );
 }
 
 if (resolved.length > 0) {
     const body = resolved.map((r) => `- ${r.reason}`).join("\n");
     sections.push(
-        `<details>\n<summary>${resolved.length} thread(s) resolved</summary>\n\n${body}\n</details>`,
+        `<details>\n<summary>${plural(resolved.length, "thread")} resolved</summary>\n\n${body}\n</details>`,
     );
 }
 
 if (resolveDenied) {
     sections.push(
-        `> ${toResolve.length} thread(s) look finished but could not be resolved:` +
+        `> ${plural(toResolve.length, "thread")} look finished but could not be resolved:` +
             ` the workflow grants \`pull-requests: write\`, and \`resolveReviewThread\` needs` +
             ` \`contents: write\`.`,
     );
@@ -298,7 +314,7 @@ if (findings.length === 0 && !process.env.DRY_RUN) {
             ? `no new findings — ${suppressed.length} already commented on, ${declined.length} declined`
             : "no findings",
     );
-    if (resolved.length > 0) console.log(`resolved ${resolved.length} thread(s)`);
+    if (resolved.length > 0) console.log(`resolved ${plural(resolved.length, "thread")}`);
     process.exit(0);
 }
 
