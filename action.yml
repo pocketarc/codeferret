@@ -128,10 +128,11 @@ runs:
                   echo "present=false" >>"$GITHUB_OUTPUT"
               fi
 
-        # persist-credentials would leave github-token in .git/config as an
-        # http.extraheader, inside the tree the review agent then reads with Bash under
-        # bypassPermissions. The token is still used for this fetch, and fetch-depth: 0
-        # brings every branch down with it, so the base ref resolves later without it.
+        # With persist-credentials on, actions/checkout would write github-token into
+        # .git/config as an http.extraheader, inside the tree that the review agent
+        # then reads with Bash under bypassPermissions. The token is still used for
+        # this fetch, and fetch-depth: 0 fetches every branch, so a later step can
+        # resolve the base ref without the token.
         - name: Check out the head commit
           if: inputs.checkout != 'skip' && steps.probe.outputs.present == 'false'
           uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
