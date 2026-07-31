@@ -109,9 +109,19 @@ for lens in "${LENSES[@]}"; do
     fi
 done
 
+# A two-dot range against a commit diffs the working tree, so uncommitted work is in
+# scope; three dots against HEAD is committed work alone. The action only ever reviews
+# what is pushed, but a session is usually looking at a branch that is still being
+# written.
+if [ -n "${INCLUDE_WORKING_TREE:-}" ]; then
+    RANGE="$BASE"
+else
+    RANGE="$BASE...HEAD"
+fi
+
 # Indent the dispatch prompt so it reads as a block inside the orchestrator's prompt,
 # leaving blank lines free of trailing whitespace.
-sed -e "s|__BASE__|$BASE|g" -e "s|__PATHSPEC__|$PATHSPEC|g" \
+sed -e "s|__BASE__|$BASE|g" -e "s|__RANGE__|$RANGE|g" -e "s|__PATHSPEC__|$PATHSPEC|g" \
     "$ACTION/review/lens-dispatch.md" |
     sed -e 's|^.|    &|' >"$BUILD/dispatch.txt"
 

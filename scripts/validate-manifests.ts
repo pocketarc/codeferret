@@ -183,14 +183,36 @@ for (const entry of readdirSync("lenses/skills", { withFileTypes: true })) {
 
 console.log(`✔ lenses/skills — ${seenSkillNames.size} bundled lens(es), names unique`);
 
-for (const lens of String(action?.inputs?.lenses?.default ?? "")
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean)) {
+function entries(value: unknown): string[] {
+    return String(value ?? "")
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+}
+
+for (const lens of entries(action?.inputs?.lenses?.default)) {
     if (!seenSkillNames.has(lens)) {
         fail("action.yml", `default lens '${lens}' has no bundled skill`);
     }
 }
+
+// A session cannot read a YAML default, so these lists exist for it to cat. action.yml
+// stays the documented one. Comparing entries rather than text keeps a reindent of the
+// block scalar from failing the build over a non-difference.
+for (const [input, file] of [
+    ["lenses", "review/defaults/lenses.txt"],
+    ["exclude-paths", "review/defaults/exclude-paths.txt"],
+] as const) {
+    const documented = entries(action?.inputs?.[input]?.default);
+    const shipped = entries(await Bun.file(file).text());
+
+    if (documented.join("\n") !== shipped.join("\n")) {
+        fail(file, `does not match the \`${input}\` default in action.yml`);
+    } else {
+        console.log(`✔ ${file} — ${shipped.length} entries, matching action.yml`);
+    }
+}
+
 
 // agents/ is generated from review/lens-brief.md, and re-rendering it is the only thing
 // that notices an edit somebody made to a generated file by hand.

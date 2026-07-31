@@ -1,0 +1,15 @@
+**/*.lock
+**/*.lockb
+bun.lock
+package-lock.json
+yarn.lock
+composer.lock
+node_modules/**
+vendor/**
+**/.next/**
+**/dist/**
+**/out/**
+**/build/**
+**/*.min.js
+**/*.min.css
+**/*.snap
