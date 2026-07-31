@@ -1,20 +1,17 @@
 Review this pull request.
 
-The repository is the current working directory. The diff under review is:
+The repository is the current working directory. The instruction that follows names the
+diff under review and the ref it is taken against. Run those commands as written. Their
+pathspec excludes generated files such as lockfiles and build output, which are not worth
+review.
 
-    git diff __BASE__...HEAD __PATHSPEC__
-    git log __BASE__..HEAD --oneline
+The base ref is already decided. You are a subagent, so there is nobody to answer a
+question — do not ask one.
 
-Use that diff command as written. Its pathspec excludes generated files such as
-lockfiles and build output, which are not worth review.
+__SKILL_LINE__
 
-The fixed point is `__BASE__`. It is already decided. You are running headless, so
-there is nobody to answer a question — do not ask one.
-
-Load the `__SKILL__` skill and have at it.
-
-Every finding goes through the JSON below, whatever presentation the skill
-describes. A finding you only write as prose is a finding nobody receives.
+Every finding goes through the JSON below, whatever presentation the skill describes. A
+finding you only write as prose is a finding nobody receives.
 
 Be exhaustive. Read every changed file end to end and follow the data. Nothing
 downstream catches what you miss.

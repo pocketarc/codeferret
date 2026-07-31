@@ -8,9 +8,12 @@ reports come back to you inline rather than as deferred notifications.
 __LENS_LIST__
 
 Each lens already knows its methodology and output contract from its own system
-prompt, so your prompt to each one is just:
+prompt, so the prompt you pass it is:
 
-    Review the diff `git diff __BASE__...HEAD` in the current repository.
+__DISPATCH__
+
+Where an entry above carries an "Also tell it" line, add that to the prompt for that
+lens alone.
 
 STEP 2 — merge. When every lens has reported:
 
@@ -78,11 +81,15 @@ Three threads to leave open:
 
 A thread already carrying `resolved: true` needs no entry.
 
-STEP 5 — account for every lens. Fill `lens_health` with one entry per lens you
-dispatched, including any that errored, could not load its skill, or returned
-nothing usable. A lens that returns zero findings is more likely broken than
-satisfied, so mark `ok: false` and say what you saw. This is the only place a dead
-lens becomes visible, so do not tidy it away.
+STEP 5 — account for every lens. Fill `lens_health` with one entry per lens in the list
+above, including any that errored, could not load its skill, or returned nothing usable.
+A lens that returns zero findings is more likely broken than satisfied, so mark
+`ok: false` and say what you saw. This is the only place a dead lens becomes visible, so
+do not tidy it away.
+
+A lens that never started needs an entry too. A session that has hit a budget or
+concurrency limit refuses to launch further agents while the ones already running report
+as usual, which leaves a review that looks whole and covers two thirds of what it claims.
 
 Write `summary` for the author: what the change does and where its risk sits. Use
 `notes` for what you could not check, and for merge decisions a reader might want to

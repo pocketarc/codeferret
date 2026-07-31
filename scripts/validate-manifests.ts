@@ -103,15 +103,6 @@ if (manifest) {
     console.log(`✔ ${manifestFile} — plugin '${manifest.name}' ${manifest.version}`);
 }
 
-// build-prompts.sh greps this one for the namespace it builds `codeferret:<lens>` refs
-// from. Two manifests until the run plugin stops copying it, so they must agree.
-const runManifestFile = "lenses/.claude-plugin/plugin.json";
-const runManifest = (await parseJson(runManifestFile)) as { name?: string } | null;
-
-if (runManifest && runManifest.name !== namespace) {
-    fail(runManifestFile, `declares '${runManifest.name}', but ${manifestFile} declares '${namespace}'`);
-}
-
 const marketplaceFile = ".claude-plugin/marketplace.json";
 const marketplace = (await parseJson(marketplaceFile)) as {
     name?: string;
@@ -199,6 +190,29 @@ for (const lens of String(action?.inputs?.lenses?.default ?? "")
     if (!seenSkillNames.has(lens)) {
         fail("action.yml", `default lens '${lens}' has no bundled skill`);
     }
+}
+
+// agents/ is generated from review/lens-brief.md, and re-rendering it is the only thing
+// that notices an edit somebody made to a generated file by hand.
+const agents = Bun.spawnSync(["bun", "scripts/build-lens-agents.ts", "--check"]);
+process.stdout.write(new TextDecoder().decode(agents.stdout));
+
+if (agents.exitCode !== 0) {
+    process.stderr.write(new TextDecoder().decode(agents.stderr));
+    failures += 1;
+}
+
+// A command with no description never surfaces in the slash menu, so the feature ships
+// and nobody can find it.
+for (const entry of existsSync("commands") ? readdirSync("commands") : []) {
+    if (!entry.endsWith(".md")) continue;
+
+    const file = `commands/${entry}`;
+    const text = await Bun.file(file).text();
+
+    if (!/^---$/m.test(text)) fail(file, "has no frontmatter");
+    else if (!/^description:\s*\S/m.test(text)) fail(file, "has no `description` in frontmatter");
+    else console.log(`✔ ${file}`);
 }
 
 const workflowDir = ".github/workflows";

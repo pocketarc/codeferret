@@ -8,6 +8,9 @@
 #
 # Lens names arrive on stdin, one per line.
 #
+# Set PROMPTS_ONLY=1 to render the prompts and skip building the plugin. A Claude Code
+# session already has the lenses loaded, so it needs the prompts and nothing else.
+#
 # Usage: build-prompts.sh <base-ref> <action-path> <plugin-out-dir> <workspace> [<lenses-file>]
 set -euo pipefail
 
@@ -18,9 +21,10 @@ WORKSPACE=${4:?missing workspace}
 LENSES_FILE=${5:-}
 
 BUILD="$PLUGIN/build"
+PROMPTS_ONLY=${PROMPTS_ONLY:-}
 
 NAMESPACE=codeferret
-MANIFEST="$ACTION/lenses/.claude-plugin/plugin.json"
+MANIFEST="$ACTION/.claude-plugin/plugin.json"
 
 if ! grep -q "\"name\"[[:space:]]*:[[:space:]]*\"$NAMESPACE\"" "$MANIFEST"; then
     echo "plugin namespace '$NAMESPACE' does not match the name in $MANIFEST" >&2
@@ -28,12 +32,22 @@ if ! grep -q "\"name\"[[:space:]]*:[[:space:]]*\"$NAMESPACE\"" "$MANIFEST"; then
 fi
 
 rm -rf "$PLUGIN"
-mkdir -p "$PLUGIN/.claude-plugin" "$PLUGIN/agents" "$PLUGIN/skills" "$BUILD"
+mkdir -p "$BUILD"
 
-# Generated agents and bundled skills must share one plugin to share a namespace.
-cp "$ACTION/lenses/.claude-plugin/plugin.json" "$PLUGIN/.claude-plugin/plugin.json"
-if [ -d "$ACTION/lenses/skills" ]; then
-    cp -R "$ACTION/lenses/skills/." "$PLUGIN/skills/"
+if [ -z "$PROMPTS_ONLY" ]; then
+    mkdir -p "$PLUGIN/.claude-plugin" "$PLUGIN/agents" "$PLUGIN/skills"
+
+    # The shipped manifest points `skills` at the repository's own layout, which is not
+    # this one. All the run plugin needs from it is a name to namespace by.
+    printf '{"name": "%s", "version": "0.0.0", "description": "CodeFerret run plugin."}\n' \
+        "$NAMESPACE" >"$PLUGIN/.claude-plugin/plugin.json"
+
+    # Agents and skills must share one plugin to share a namespace.
+    cp -R "$ACTION/agents/." "$PLUGIN/agents/"
+
+    if [ -d "$ACTION/lenses/skills" ]; then
+        cp -R "$ACTION/lenses/skills/." "$PLUGIN/skills/"
+    fi
 fi
 
 LENSES=()
@@ -47,7 +61,6 @@ if [ "${#LENSES[@]}" -eq 0 ]; then
     exit 1
 fi
 
-SCHEMA=$(cat "$ACTION/review/lens-schema.json")
 : >"$BUILD/lens-list.txt"
 
 # `-- .` first so the excludes attach to a positive pathspec; without it git treats a
@@ -63,49 +76,57 @@ done <<<"${EXCLUDE_PATHS:-}"
 printf '%s' "$PATHSPEC" >"$BUILD/pathspec.txt"
 
 for lens in "${LENSES[@]}"; do
-    if [ -f "$PLUGIN/skills/$lens/SKILL.md" ]; then
-        skill_ref="$NAMESPACE:$lens"
+    if [ -f "$ACTION/lenses/skills/$lens/SKILL.md" ]; then
+        if [ ! -f "$ACTION/agents/$lens.md" ]; then
+            echo "lens '$lens' is bundled but has no agent." >&2
+            echo "run: bun scripts/build-lens-agents.ts" >&2
+            exit 1
+        fi
+
+        printf -- '- `%s:%s`\n' "$NAMESPACE" "$lens" >>"$BUILD/lens-list.txt"
     elif [ -f "$WORKSPACE/.claude/skills/$lens/SKILL.md" ]; then
-        skill_ref="$lens"
+        # A lens the action does not bundle has no agent of its own, so the generic one
+        # takes the skill name at dispatch instead.
+        {
+            printf -- '- `%s:lens`\n' "$NAMESPACE"
+            printf '  Also tell it: Load the `%s` skill and have at it.\n' "$lens"
+        } >>"$BUILD/lens-list.txt"
     else
         echo "lens '$lens' has no SKILL.md in the action's bundled lenses or in" >&2
         echo "$WORKSPACE/.claude/skills/$lens/" >&2
         exit 1
     fi
 
-    brief=$(sed -e "s|__SKILL__|$skill_ref|g" -e "s|__BASE__|$BASE|g" \
-        -e "s|__PATHSPEC__|$PATHSPEC|g" "$ACTION/review/lens-brief.md")
-    brief=${brief/__SCHEMA__/$SCHEMA}
-
     # One lens only: a rulebook given to every lens pulls them all toward the same
     # generalist read. review/README.md has the evidence.
     if [ "$lens" = "mattpocock-code-review" ] && [ -f "$WORKSPACE/REVIEW.md" ]; then
-        brief="$brief
-
-This repository documents its own review conventions in \`REVIEW.md\`. Read it and
-treat it as a standards source alongside anything else you find. It is additional
-context, never grounds for staying quiet about something it does not mention."
+        {
+            printf '  Also tell it: This repository documents its own review conventions in\n'
+            printf '  `REVIEW.md`. Read it and treat it as a standards source alongside anything\n'
+            printf '  else you find. It is additional context, never grounds for staying quiet\n'
+            printf '  about something it does not mention.\n'
+        } >>"$BUILD/lens-list.txt"
     fi
-
-    {
-        printf -- '---\n'
-        printf 'name: %s\n' "$lens"
-        printf 'description: Reviews the diff under the %s lens.\n' "$lens"
-        printf -- '---\n\n'
-        printf '%s\n' "$brief"
-    } >"$PLUGIN/agents/$lens.md"
-
-    printf -- '- `%s:%s`\n' "$NAMESPACE" "$lens" >>"$BUILD/lens-list.txt"
 done
+
+# Indent the dispatch prompt so it reads as a block inside the orchestrator's prompt,
+# leaving blank lines free of trailing whitespace.
+sed -e "s|__BASE__|$BASE|g" -e "s|__PATHSPEC__|$PATHSPEC|g" \
+    "$ACTION/review/lens-dispatch.md" |
+    sed -e 's|^.|    &|' >"$BUILD/dispatch.txt"
 
 sed -e "s|__BASE__|$BASE|g" \
     -e "s|__EXISTING__|$BUILD/existing.json|g" \
     -e "/__LENS_LIST__/r $BUILD/lens-list.txt" \
     -e "/__LENS_LIST__/d" \
+    -e "/__DISPATCH__/r $BUILD/dispatch.txt" \
+    -e "/__DISPATCH__/d" \
     "$ACTION/review/orchestrator.md" >"$BUILD/orchestrator.txt"
 
 [ -f "$BUILD/existing.json" ] || printf '{"existing": []}\n' >"$BUILD/existing.json"
 
 echo "built ${#LENSES[@]} lens(es): ${LENSES[*]}"
-echo "  plugin: $PLUGIN"
+if [ -z "$PROMPTS_ONLY" ]; then
+    echo "  plugin: $PLUGIN"
+fi
 echo "  prompt: $BUILD/orchestrator.txt"
