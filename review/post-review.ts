@@ -42,6 +42,7 @@ interface Merged {
 
 const SEVERITY_ORDER = ["critical", "high", "medium", "low", "nit", "question"];
 const MAX_BODY = 60000;
+const RETRY_AFTER_MS = 60_000;
 
 const [findingsPath, baseRef, headSha, prNumber] = process.argv.slice(2);
 const token = process.env.GITHUB_TOKEN;
@@ -355,6 +356,31 @@ if (!response.ok && comments.length > 0) {
     // The reviews endpoint is all-or-nothing: one rejected anchor creates no comments.
     const detail = await response.text();
     console.error(`inline review rejected (${response.status}): ${detail}`);
+
+    // A secondary rate limit is GitHub asking for a pause, not refusing the review. A
+    // 90-finding run tripped it on 82 comments and fell straight through to the body,
+    // which turns every anchored finding into a line in a wall of text over a wait
+    // GitHub was willing to grant.
+    if (response.status === 403 && /secondary rate limit/i.test(detail)) {
+        console.error(`waiting ${RETRY_AFTER_MS / 1000}s, then trying the inline review once more`);
+        await Bun.sleep(RETRY_AFTER_MS);
+
+        response = await postReview({
+            commit_id: headSha,
+            body: reviewBody,
+            event: "COMMENT",
+            comments,
+        });
+
+        if (response.ok) {
+            const created = (await response.json()) as { html_url?: string };
+            console.log(`posted: ${created.html_url ?? "(no url returned)"}`);
+            process.exit(0);
+        }
+
+        console.error(`inline review rejected again (${response.status})`);
+    }
+
     console.error("retrying as a body-only review so the findings still land");
 
     const appendix = inline
