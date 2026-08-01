@@ -43,6 +43,7 @@ interface Merged {
 const SEVERITY_ORDER = ["critical", "high", "medium", "low", "nit", "question"];
 const MAX_BODY = 60000;
 const RETRY_AFTER_MS = 60_000;
+const MAX_INLINE = 40;
 
 const [findingsPath, baseRef, headSha, prNumber] = process.argv.slice(2);
 const token = process.env.GITHUB_TOKEN;
@@ -132,6 +133,14 @@ for (const finding of findings) {
     (ok ? inline : demoted).push(finding);
 }
 
+// GitHub counts every comment in a review as content created, and refuses a review
+// carrying too many of them under a secondary rate limit. Ninety-five was refused twice,
+// sixty seconds apart, and the whole review fell back to a wall of text. Waiting does not
+// fix it, so the batch stays under the limit and the rest go where an unanchorable
+// finding already goes: the body. Findings are sorted by severity, so what keeps its
+// anchor is what matters most.
+const overflow = inline.splice(MAX_INLINE);
+
 /** The plugin namespace is an implementation detail, so it is dropped for display. */
 function lensLabel(lens: string): string {
     return lens.replace(/^[^:]+:/, "");
@@ -193,6 +202,7 @@ if (merged.summary) sections.push(merged.summary);
 sections.push(
     `**${plural(findings.length, "new finding")}**` +
         `${demoted.length > 0 ? ` · ${demoted.length} outside the diff, listed below` : ""}` +
+        `${overflow.length > 0 ? ` · ${overflow.length} listed below rather than anchored` : ""}` +
         `${suppressed.length > 0 ? ` · ${suppressed.length} already commented on above` : ""}` +
         `${declined.length > 0 ? ` · ${declined.length} raised before and declined` : ""}`,
 );
@@ -238,6 +248,19 @@ if (demoted.length > 0) {
         .join("\n\n");
     sections.push(
         `### Findings outside the diff\n\nThese sit on lines this pull request did not change, so GitHub cannot anchor a comment to them.\n\n${body}`,
+    );
+}
+
+if (overflow.length > 0) {
+    const body = overflow
+        .map(
+            (f) =>
+                `- **\`${f.file}:${f.line}\`** — ${f.title}\n\n  ${f.body.replace(/\n/g, "\n  ")}` +
+                `\n\n  <sub>${f.category}</sub>`,
+        )
+        .join("\n\n");
+    sections.push(
+        `### ${plural(overflow.length, "further finding")}\n\nGitHub refuses a review carrying more than a few dozen comments, so these are here rather than on their lines. They are the lower-severity end of the same list.\n\n${body}`,
     );
 }
 
