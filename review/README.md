@@ -17,10 +17,11 @@ A run is one orchestrator and N lens subagents. The orchestrator merges the find
 
 There are two ways in, and both call `run.sh`, which is the whole sequence: build the
 prompts, read what has already been said, run the orchestrator, check what comes back.
-The action calls it in a CI job. `/codeferret:review` calls it from a Claude Code session,
-against the branch in front of you. What differs between them are arguments to that
-script — a session reviews uncommitted work if you ask, closes no threads, and runs under
-a permission mode that refuses what a lens has no business doing.
+The action calls it in a CI job. `/codeferret:review` calls it through `local-run.sh`,
+from a Claude Code session, against the branch in front of you. What differs between them
+are arguments to that script: a session reviews uncommitted work if you ask, closes no
+threads, and runs under a permission mode that passes a lens's reads and has the
+classifier refuse everything else.
 
 ## Adding a lens
 
@@ -50,31 +51,35 @@ If a named lens has no `SKILL.md` in either place, `build-prompts.sh` fails and 
 both paths it searched.
 
 Vendor each bundled skill at a pinned upstream commit. Do not fetch skills at run time.
-A lens written here rather than vendored is marked `(first-party)` in that file.
 `lenses/skills/PROVENANCE.tsv` records the source repository, commit, and path for each
-one. A review job holds a `pull-requests: write` token, so you should be able to review
-the code it runs, and that code should not change between runs.
+one, and marks a lens written here rather than vendored as `(first-party)`. A review job
+holds a `pull-requests: write` token, so you should be able to review the code it runs,
+and that code should not change between runs.
 
 ## Files
 
 | File | Role |
 |---|---|
-| `../action.yml` | The composite action: its inputs, and the steps of a run. |
+| `../action.yml` | The composite action: its inputs, and the steps of a run. The one place a default is written. |
 | `../.claude-plugin/` | The plugin and marketplace manifests. The repository root is the plugin. |
 | `../commands/` | `/codeferret:review` and `/codeferret:install-workflow`. |
-| `../agents/` | One agent per bundled lens, and a generic one for a lens that is not bundled. Generated. |
+| `../agents/` | One agent per bundled lens. Generated. |
 | `../lenses/skills/` | The bundled skills, one directory per lens. |
 | `../templates/` | The workflow `/codeferret:install-workflow` writes into a repository. |
-| `lens-brief.md` | The half of a lens's prompt that never varies, and the body of every agent. `__SKILL_LINE__` and `__SCHEMA__` are substituted. |
-| `lens-dispatch.md` | The half that does: which diff to read. `__BASE__`, `__HEAD__`, and `__DIFF_SCRIPT__` are substituted. |
+| `lens-brief.md` | The half of a lens's prompt that never varies, and the body of every agent. `__SKILL_LINE__`, `__EXTRAS__` and `__SCHEMA__` are substituted. |
+| `lens-extras/<lens>.md` | Text for one named lens, appended to that lens's system prompt. |
+| `lens-dispatch.md` | The half that does: which diff to read. `__BASE__`, `__HEAD__`, `__DIFF_SCRIPT__` and `__DIFF_ARGS__` are substituted. |
+| `lens-dispatch-extras/<lens>.md` | Per-run text for one named lens, passed at dispatch. `__BUILD__` is substituted. |
 | `lens-schema.json` | The shape each lens returns. Prompted but not enforced, because subagents do not inherit `--json-schema`. |
 | `orchestrator.md` | The orchestrator's prompt template. |
+| `resolve-judge.md`, `resolve-none.md` | The two thread-resolution policies. One fills `__RESOLVE__`. |
 | `merged-schema.json` | The shape the orchestrator returns. Enforced, because a script parses it. |
 | `run.sh` | One review, start to finish. Both front doors call this. |
-| `tools/` | Static analysis run before the review. Each writes `build/tool-<name>.json`. |
+| `tools/` | Static analysis run before the review. Each writes `build/tool-<name>.json`, in the shape `tools/report.ts` declares. |
 | `build-prompts.sh` | Assembles the run's plugin and the orchestrator prompt. |
 | `local-preflight.sh` | Works out from the checkout what the workflow event would otherwise supply. |
-| `defaults/` | The `lenses`, `exclude-paths` and `tools` defaults as plain lists, for a session that cannot read a YAML default. |
+| `local-run.sh`, `local-post.sh` | What `/codeferret:review` runs, so a session pastes no paths. |
+| `defaults/` | The `lenses`, `exclude-paths` and `tools` defaults as plain lists, for a session that cannot read a YAML default. Generated from action.yml. |
 | `fetch-existing.ts` | Reads the discussion already on the pull request, for the orchestrator to match findings against. |
 | `extract-findings.ts` | Reads the merged findings out of the run log. |
 | `check-findings.ts` | Checks those findings against the shape `post-review.ts` reads. |
@@ -96,7 +101,8 @@ pass.
 
 For some skills, the subagent asks the user which commit to diff against. Nothing can
 answer in a headless run, so the subagent stalls. `lens-dispatch.md` carries the ref
-itself; `lens-brief.md` says it is already decided and that there is nobody to ask.
+itself, and `lens-brief.md` carries both facts: the ref is decided, and there is nobody
+to ask.
 
 ### Only the orchestrator's output is enforced
 
@@ -140,15 +146,16 @@ the line it referred to changes, so a defect that survived an edit still needs s
 ### Excluded paths are excluded in git
 
 The `exclude-paths` input becomes a pathspec on the diff command each lens is given, so
-a lockfile is not in the diff at all rather than being something a lens was asked to
-ignore. `post-review.ts` applies the same pathspec when it works out which lines are
-anchorable, so a finding can never point at a file the lenses never saw.
+a lockfile is not in the diff at all. `build-prompts.sh` writes that pathspec to
+`build/diff-args`, and `post-review.ts` reads the same file back when it works out which
+lines are anchorable, so a finding can never point at a file the lenses never saw. Two
+constructions of the same pathspec drifted once and produced exactly that.
 
-### Only the standards lens receives `REVIEW.md`
+### Text for one lens goes in that lens's own prompt
 
 A repository's own review conventions go to `mattpocock-code-review`, whose Standards
 axis already enumerates documented rules, and to no other lens. Handing a whole rulebook
-to all ten pushes them toward the same generalist read, and the differentiated findings
+to every lens pushes them toward the same generalist read, and the differentiated findings
 come from lenses staying inside their own domain: on a ten-lens run the RSC boundary
 violation, the missing index, and the keyboard-access failure were each found by exactly
 one lens. The file is named `REVIEW.md` rather than reusing `CLAUDE.md` because Claude
@@ -156,11 +163,19 @@ Code loads `CLAUDE.md` into every session automatically, which would put the con
 in front of every lens and defeat the scoping.
 
 It reaches that lens through `review/lens-extras/mattpocock-code-review.md`, which
-`scripts/build-lens-agents.ts` appends to that one agent's system prompt. It used to
+`scripts/build-lens-agents.ts` renders into that one agent's system prompt. It used to
 travel as a line in the orchestrator's prompt saying who to hand it to, which made the
 scoping a judgement remade on every run, with nothing downstream able to tell when it went
-to the wrong lens or to all of them. Anything else meant for a single lens belongs in
-`lens-extras/` for the same reason.
+to the wrong lens or to all of them.
+
+Everything else meant for one lens lives there too, and the directory now carries what a
+vendored skill assumes and this run cannot provide: that there is no browser and no
+running site for `copilot-web-design-reviewer`, that four of the accessibility lens's five
+testing approaches need a rendered page, and that `mattpocock-code-review` has no slash
+command to run and no `Agent` tool to fan out with. Where the text depends on the run
+rather than the lens, `review/lens-dispatch-extras/<lens>.md` carries it instead and it
+travels with the dispatch: `static-analysis` gets the path to this run's tool reports that
+way.
 
 ### A comment shows the claim and nothing else
 
@@ -183,16 +198,26 @@ the reader it is the consensus priority, which is the opposite of the truth.
 ### The orchestrator decides which threads to close
 
 A thread is finished when its defect has left the code or when someone settled it, and
-neither is a question a rule answers. `isOutdated` says the anchored line changed, which
-a fix landing elsewhere does not produce and an unrelated edit above does; so it is
-evidence the orchestrator weighs against the diff, not a condition. It leaves open any
-thread a human opened, any whose last comment asks an unanswered question, and any it is
-unsure about. Each closure carries a reason, and the review lists them, so a wrong call
-is visible rather than an inbox that quietly empties.
+neither is a question a rule answers. `isOutdated: true` means the anchored line changed,
+which a fix landing elsewhere does not produce and an unrelated edit above does, so the
+orchestrator weighs it against the diff rather than treating it as a condition. It leaves
+open any thread a human opened, any whose last comment asks an unanswered question, and
+any it is unsure about. Each closure carries a reason, and the review lists them, so a
+wrong call is visible rather than an inbox that empties with no reason recorded.
+
+Which threads are the run's own is decided by two things together: the login the review
+posts under, and a hidden marker `post-review.ts` writes into every comment.
+`github-actions[bot]` is the login of every workflow posting with `github.token`, so the
+login alone would put another workflow's threads on the list this run may close.
 
 A resolved thread also settles its finding: `resolved: true` marks it `declined` with no
 reading of replies. That makes resolving a thread the way to dismiss a finding for good.
 It also takes write access, which commenting does not.
+
+Outside CI the review posts under a person's own account, so `RESOLVE_THREADS=0` renders
+`resolve-none.md` in place of `resolve-judge.md` and the orchestrator closes nothing. The
+two are separate files rather than one policy followed by its retraction, so that the
+prompt states one policy whichever way the run goes.
 
 ### `post-review.ts` anchors the findings
 
@@ -209,11 +234,15 @@ clean run. That is survivable at three lenses and invisible at twenty.
 
 Zero findings is treated as a failure, with one exception: a lens that returns nothing
 and names a checkable reason for it, which the orchestrator reads against the diff before
-accepting. The exception exists because the rule was marking correctly-empty lenses as
-broken. Half the default set is domain lenses, and a tooling diff leaves the SQL, Next.js,
-accessibility and web design ones with nothing in their domain; three warnings on a healthy
-run teach a reader to skip the line, and the line is the only place a lens that really did
-die shows up. A lens that returns nothing and says nothing is still a failure.
+accepting. The exception exists because the earlier rule left correctly-empty domain
+lenses filed as broken. Half the default set is domain lenses, and a tooling diff leaves
+the SQL, Next.js, accessibility and web design ones with nothing in their domain; three
+warnings on a healthy run teach a reader to skip the line, and the line is the only place
+a lens that really did die shows up. A lens that returns nothing and says nothing is still
+a failure.
+
+A run in which nothing survives still posts. Zero findings and a failed lens is the shape
+of a review that never happened, and posting nothing leaves a pull request looking clean.
 
 ### MCP servers are disabled
 
@@ -226,9 +255,14 @@ What changes between runs is the base ref and the pathspec, and both reach a len
 through the message the orchestrator sends: the ref as text, the pathspec as the path to
 a generated `diff.sh`. What does not change (which skill to load, the output schema,
 report-do-not-repair) is the agent's own system prompt, so `agents/` is rendered once by
-`scripts/build-lens-agents.ts` and checked in. That split is what lets a session run the
-same lenses the action does: Claude Code loads a plugin's agents when the session
-starts, and nothing can add more halfway through.
+`scripts/build-lens-agents.ts` and checked in. That split lets a session run the same
+lenses the action does: Claude Code loads a plugin's agents when the session starts, and
+nothing can add more halfway through.
+
+A lens the plugin does not bundle has no agent to check in, so `build-prompts.sh` renders
+one into the run's plugin with the same script. It used to dispatch the generic agent and
+tell the orchestrator which skill to pass on, and a lens that never received that line
+returned a competent general review under its name with no skill loaded.
 
 ### The action assembles its plugin in `RUNNER_TEMP`
 
@@ -240,23 +274,20 @@ already.
 
 ### A static analysis tool reports to a lens
 
-A tool finding is a rule identifier, a file, a line, and a message written for whoever
-wrote the rule. It is evidence that a pattern matched. Whether anything is wrong here is
-a separate question, and posting the finding untriaged is what makes an automated review
-unreadable. So `review/tools/*` run before the dispatch and write their reports into
-`build/`, and the `static-analysis` lens reads each finding against the code and drops
-what does not hold. What it keeps becomes the comment the rule could not write: the
-input, the path it takes, and the fix.
+A tool finding is evidence that a pattern matched, and whether anything is wrong here is
+a separate question; the `static-analysis` lens's own prompt has the argument. So
+`review/tools/*` run before the dispatch and write their reports into `build/`, and that
+lens reads each finding against the code and drops what does not hold. What it keeps
+becomes the comment the rule could not write: the input, the path it takes, and the fix.
 
-### Each tool decides which files it reads
+### Each tool has its own pathspec
 
 `exclude-paths` keeps lockfiles out of the review because nobody wants a reviewer
 reading one, and a lockfile is exactly what `osv-scanner` needs: it is the only thing
 here that can say a dependency has an advisory against it, which is the one job no lens
-can do at all. So a tool takes the range from the run's own diff — the same commits
-every lens reads — and decides its own pathspec. `semgrep` keeps the review's;
-`osv-scanner` drops it. `exclude-paths` is about what deserves a reader's attention, not
-a machine's.
+can do at all. So each tool takes the range from the run's own diff (the same commits
+every lens reads) and sets its own pathspec. `semgrep` keeps the review's; `osv-scanner`
+drops it. `exclude-paths` is about what deserves a reader's attention, not a machine's.
 
 Nothing else changes shape. The orchestrator still merges N lens reports and still
 deduplicates on what the defect is, so a rule and two lenses that spot the same thing
@@ -269,6 +300,11 @@ orchestrator marks an uncertain finding `new`: a wrong keep costs a reader secon
 a wrong drop is a finding that will be raised and discarded on every run without anybody
 seeing it. It reports how many it dropped, and the raw tool report stays in the run
 artifact, so its judgement can be checked rather than trusted.
+
+Each report caps what it hands the lens, and it caps the low end: semgrep's findings are
+sorted `ERROR` first and osv-scanner's by CVSS score before either is cut. A cap in
+emission order would drop a hundred `INFO` hits' worth of real ones. Both report how many
+went, and everything raised stays in `build/tool-*.json`.
 
 ### The orchestrator runs in its own process
 
@@ -283,10 +319,10 @@ else.
 
 CI passes `bypassPermissions`: the runner is disposable, and a classifier that refused a
 lens halfway would narrow a review that cost $36 to produce. `/codeferret:review` passes
-`auto`, which lets a lens run `git diff`, `git log` and `rg` and turns down the rest —
-measured, not assumed. Either way `permission_denials` is counted out of the run log and
-reported, so a mode that starts refusing commands a lens needs shows up as a number
-rather than as a thinner review.
+`auto`. Under `auto`, a lens can run `git diff`, `git log` and `rg`, and the classifier
+refuses the rest; that was measured on a real dispatch rather than assumed. Either way
+`permission_denials` is counted out of the run log and reported, so a mode that starts
+refusing commands a lens needs shows up as a number rather than as a thinner review.
 
 ### A bundled lens's `description` is rewritten
 
@@ -305,26 +341,30 @@ Code does not recognise is dropped in silence, and so is one that conflicts with
 name in the same list. `Grep`, `Glob`, and `TodoWrite` were all in the list and none
 reached the agent: `TodoWrite` is not a name on 2.1.220, and `Grep` and `Glob` are
 refused to any agent that also asks for `Bash`, which every lens needs for `git diff`.
-That pair is mutually exclusive by design, and the harness says so to the agent alone:
-"Grep is not available in this session — search file contents with grep via the Bash
-tool instead." So the list has to be checked against a real dispatch whenever it
-changes.
+That pair is mutually exclusive by design, and Claude Code returns the explanation to the
+agent and to nobody else: "Grep is not available in this session — search file contents
+with grep via the Bash tool instead." So the list has to be checked against a real
+dispatch whenever it changes.
 
 ## Using the action in another repository
 
 1. Add a workflow that grants `pull-requests: write`. A composite action cannot grant
-itself permissions, so the calling workflow must declare it. Without it, the posting
-step fails with 403.
+   itself permissions, so the calling workflow must declare it. Without it, the posting
+   step fails with 403.
 
-Add `contents: write` as well to let CodeFerret resolve finished threads.
-`resolveReviewThread` is gated on repository write access, which `pull-requests: write`
-does not give. Weigh it: the review agent runs with `bypassPermissions` and Bash, so a
-token that can write contents is a token that can push. Without it everything else works
-and the review says which threads it would have closed. 2. Set `CLAUDE_CODE_OAUTH_TOKEN`
-as a repository secret. Create the token with `claude setup-token`. No checkout step is
-needed. The action checks out the pull request head with full history, but only when the
-workspace has none, so it never cleans away work an earlier step produced. Check out
-yourself and set `checkout: skip` if you need submodules, LFS, or a sparse checkout.
+   Add `contents: write` as well to let CodeFerret resolve finished threads.
+   `resolveReviewThread` is gated on repository write access, which `pull-requests: write`
+   does not give. Weigh it: the review agent runs with `bypassPermissions` and Bash, so a
+   token that can write contents is a token that can push. Without it everything else
+   works and the review says which threads it would have closed.
+
+2. Set `CLAUDE_CODE_OAUTH_TOKEN` as a repository secret. Create the token with
+   `claude setup-token`.
+
+No checkout step is needed. The action checks out the pull request head with full history,
+but only when the workspace has none, so it never cleans away work an earlier step
+produced. Check out yourself and set `checkout: skip` if you need submodules, LFS, or a
+sparse checkout.
 
 The action also installs `bun` and `claude` when they are not already on PATH. Set
 `install: skip` to provide them yourself, which is also how you pin their versions
@@ -335,4 +375,6 @@ Use `command-prefix` when the repository runs its toolchain in a container. For 
 mount the checkout, and start in the repository root, because the review reads the
 working tree and runs `git diff`.
 
-Actions provides `GITHUB_TOKEN`, so `github-token` only needs setting to override it.
+Actions provides `GITHUB_TOKEN`, so `github-token` only needs setting to override it. Set
+`own-login` with it: a run tells its own review threads from a person's by the login they
+were posted under, and a token that is not the default posts under a different one.

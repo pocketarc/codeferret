@@ -34,12 +34,26 @@ inputs:
             writing-review
     tools:
         description: |
-            Space-separated static analysis tools to run before the review, naming files
-            in the action's review/tools/. Their reports go to the `static-analysis`
-            lens, which reads each finding against the code and decides which hold, so
-            name that lens in `lenses` as well. A tool runs from the runner's own binary
-            if there is one and a pinned container otherwise; with neither, it records
-            that and is skipped. Set it to an empty string to run none.
+            Newline-separated static analysis tools to run before the review, one per
+            line, naming files in the action's review/tools/. Their reports go to the
+            `static-analysis` lens, which reads each finding against the code and decides
+            which hold, so name that lens in `lenses` as well. Set it to an empty string
+            to run none.
+
+            A tool runs from the runner's own binary if there is one and a pinned
+            container otherwise; with neither, it records that and is skipped. So a runner
+            without docker and without the binaries gets two skipped reports, and one with
+            docker pulls two images, semgrep's being around 420MB on the first run.
+
+            Both tools reach the network. semgrep fetches its `p/default` ruleset from
+            semgrep's registry unless SEMGREP_CONFIG names a repository-relative one, and
+            osv-scanner sends the package names and versions from each changed lockfile to
+            osv.dev. Run neither if a private repository's dependency list should not
+            leave the runner.
+
+            The tools run under `command-prefix` when one is set, and they need git and
+            docker rather than the repository's own toolchain. Set this to an empty string
+            and drop `static-analysis` from `lenses` if that prefix has neither.
         required: false
         default: |
             semgrep
@@ -50,8 +64,16 @@ inputs:
             a git pathspec on the diff every lens reads, so an excluded file is not in the
             diff at all. A glob matches the whole path from the repository root, so
             `build/**` covers a top-level build directory and `**/build/**` covers one at
-            any depth, the top-level one included. The second form also matches an App
-            Router `app/build/` route. Set to an empty string to review everything.
+            any depth, the top-level one included. Set to an empty string to review
+            everything.
+
+            The defaults below split on a name's second career as a source directory.
+            `.next`, `dist`, the lockfiles and the minified and snapshot files are matched
+            at any depth. `out` and `build` are matched at the repository root alone,
+            because both are legal App Router route segments and the any-depth form hides
+            `app/build/` from every lens. The cost of that choice is a workspace build
+            directory, `apps/web/out/`, which stays in the diff: add your own layout's
+            form to this list if you have one.
         required: false
         default: |
             **/*.lock
@@ -98,6 +120,15 @@ inputs:
         description: "Token used to post the review. Needs `pull-requests: write` permission."
         required: false
         default: ${{ github.token }}
+    own-login:
+        description: |
+            The GitHub login the review posts under, which is how a run tells its own
+            threads from a person's and so which ones it may resolve. Empty means
+            `github-actions`, which is right for the default `github-token`. Set it to
+            match whenever `github-token` is a personal access token or a GitHub App,
+            or every thread reads as somebody else's and none is ever resolved.
+        required: false
+        default: ''
     pr-number:
         description: Pull request to review. Defaults to the one that triggered the run.
         required: false
@@ -180,6 +211,8 @@ runs:
               fi
 
               echo "installing:$need"
+
+              # shellcheck disable=SC2086 # unquoted, so the list splits into arguments
               npm install -g $need
 
         - name: Resolve the review target
@@ -214,9 +247,11 @@ runs:
                   exit 1
               fi
 
-              echo "base=$base" >>"$GITHUB_OUTPUT"
-              echo "pr=${PR_NUMBER:-$DEFAULT_PR}" >>"$GITHUB_OUTPUT"
-              echo "head=${HEAD_SHA:-$DEFAULT_HEAD}" >>"$GITHUB_OUTPUT"
+              {
+                  echo "base=$base"
+                  echo "pr=${PR_NUMBER:-$DEFAULT_PR}"
+                  echo "head=${HEAD_SHA:-$DEFAULT_HEAD}"
+              } >>"$GITHUB_OUTPUT"
 
         - name: Run the review
           id: review
@@ -233,6 +268,7 @@ runs:
               EXCLUDE_PATHS: ${{ inputs.exclude-paths }}
               BASE: ${{ steps.target.outputs.base }}
               PR: ${{ steps.target.outputs.pr }}
+              OWN_LOGIN: ${{ inputs.own-login }}
               PERMISSION_MODE: bypassPermissions
           run: |
               out="$RUNNER_TEMP/codeferret/build"
@@ -268,62 +304,30 @@ runs:
               emit findings-count
               emit cost-usd
               emit output-tokens
+              emit findings-checked
 
-              # extract-findings.ts writes the cost before it writes the findings count, so
-              # a run that produced none arrives here with some of these files missing. A
-              # blank cell reads as a zero, and `ms=$(...)` below is a bare assignment,
-              # which under `set -e` would take the step down before either warning is
-              # written.
-              val() {
-                  if [ -f "$out/$1" ]; then cat "$out/$1"; else printf 'n/a'; fi
-              }
+              # The table is rendered by extract-findings.ts, where the numbers are, so
+              # that nothing here has to reformat a duration or guard a missing file.
+              if [ -f "$out/summary.md" ]; then
+                  cat "$out/summary.md" >>"$GITHUB_STEP_SUMMARY"
+              elif [ "$status" != "0" ]; then
+                  printf '### CodeFerret\n\nThe review failed before it could report what it had spent.\n' >>"$GITHUB_STEP_SUMMARY"
+              fi
 
-              if [ -f "$out/cost-usd" ]; then
-                  # extract-findings.ts prints the same figure to one decimal, and two
-                  # surfaces disagreeing over one run's duration read as two runs. The
-                  # guard is for val's own `n/a`, which bash reads as n divided by a and
-                  # then refuses to divide by zero.
-                  clock=n/a
-                  ms=$(val duration-ms)
-                  case $ms in
-                  '' | *[!0-9]*) ;;
-                  *)
-                      tenths=$(( (ms * 10 + 30000) / 60000 ))
-                      clock="$(( tenths / 10 )).$(( tenths % 10 ))"
-                      ;;
-                  esac
-
-                  denied=0
-                  if [ -f "$out/permission-denials" ]; then
-                      denied=$(cat "$out/permission-denials")
-                  fi
-
-                  {
-                      printf '### CodeFerret\n\n'
-                      printf '| Measure | Value |\n|---|---|\n'
-                      printf '| Findings | %s |\n' "$(val findings-count)"
-                      printf '| Cost | $%s |\n' "$(val cost-usd)"
-                      printf '| Output tokens | %s |\n' "$(val output-tokens)"
-                      printf '| Wall clock | %s min |\n' "$clock"
-
-                      if [ "$denied" != "0" ]; then
-                          printf '\n> [!WARNING]\n> %s tool call(s) were refused, so a lens reviewed less than it appears to.\n' "$denied"
-                      fi
-
-                      if [ "$status" != "0" ]; then
-                          printf '\n> [!WARNING]\n> The review failed after this point. Read the step log.\n'
-                      fi
-                  } >>"$GITHUB_STEP_SUMMARY"
+              if [ "$status" != "0" ]; then
+                  printf '\n> [!WARNING]\n> The review failed. Read the step log.\n' >>"$GITHUB_STEP_SUMMARY"
               fi
 
               exit "$status"
 
         - name: Post the review
-          # The step above fails on anything run.sh could not finish, and the findings
-          # shape check is the last thing it runs. A review that is already written and
-          # already paid for is worth posting even then, so the condition here is the
-          # findings file rather than the exit code. The run still ends red.
-          if: ${{ !cancelled() && inputs.post != 'false' && steps.review.outputs.findings-file != '' }}
+          # The step above fails on anything run.sh could not finish. A review that is
+          # already written and already paid for is worth posting even then, so the
+          # condition is not that step's exit code. It is check-findings.ts having passed,
+          # because a findings file that failed the shape check posts a comment with no
+          # line on it and GitHub rejects the whole review with a 422. The run still ends
+          # red either way.
+          if: ${{ !cancelled() && inputs.post != 'false' && steps.review.outputs.findings-checked == 'ok' }}
           shell: bash
           env:
               GITHUB_TOKEN: ${{ inputs.github-token }}
@@ -332,7 +336,6 @@ runs:
               BASE: ${{ steps.target.outputs.base }}
               PR: ${{ steps.target.outputs.pr }}
               HEAD: ${{ steps.target.outputs.head }}
-              EXCLUDE_PATHS: ${{ inputs.exclude-paths }}
           run: |
               if [ -z "$PR" ] || [ -z "$HEAD" ]; then
                   echo "pr-number and head-sha are required outside a pull_request event" >&2

@@ -22,10 +22,9 @@
  *
  * Two things are deliberately left alone. `allowed-tools` is inert here, because an
  * agent's `tools:` list is a hard boundary a skill cannot widen: sentry-security-review
- * asking for `Bash, Task` gets it nothing. And upstream's prose style stays as written,
- * Title Case headings and all, even where CodeFerret's own writing-review lens flags it.
- * The commit in PROVENANCE.tsv is only worth pinning while the vendored copy still
- * matches it.
+ * asking for `Bash, Task` gets it nothing. And upstream's prose stays as written, Title
+ * Case headings and all, because the commit in PROVENANCE.tsv is only worth pinning while
+ * the vendored copy still matches it.
  *
  * Frontmatter is edited a line at a time rather than parsed and re-emitted, unlike
  * validate-manifests.ts, which parses it. A YAML round-trip reformats every key this
@@ -112,10 +111,35 @@ if (descriptionIndex === -1) {
 // palette](../shared/palette.md), 4.5:1 for body text" takes the threshold with it.
 const ABOVE_SKILL_LINK = /\[([^\]]*)\]\((?:\.\.\/)+[^)]*\)/g;
 
+const DIRECTIVE = /\b(?:see|read|check|consult|refer to)\b/i;
+const LIST_ITEM = /^\s*(?:>\s*)?[-*+]\s/;
+
+/**
+ * Whether a line, once its dead link has become plain text, is nothing but a pointer at a
+ * file that is not here.
+ *
+ * Keeping the text of every stripped link leaves instructions to read files that were
+ * never vendored. Two lenses opened their review by hunting for CONNECTORS.md, and one
+ * reported the hunt as the first finding of the review it was dispatched for.
+ */
+function isPointerOnly(line: string, linkTexts: string[]): boolean {
+    const bare = line.replace(/^\s*(?:>\s*)?(?:[-*+]\s+)?/, "").trim();
+
+    if (linkTexts.some((text) => bare === text || bare === `${text}.`)) return true;
+    if (LIST_ITEM.test(line) && linkTexts.some((text) => bare.startsWith(text))) return true;
+
+    return DIRECTIVE.test(bare) && linkTexts.some((text) => bare.includes(text));
+}
+
 // What a slash command would have substituted, in a run where nothing does. Left in,
 // `Audit for accessibility: @$1` reaches the model as `Audit for accessibility: @`, an
 // instruction naming nothing. The dispatch names the diff, so the replacement does too.
-const ARGUMENT_PLACEHOLDER = /@?\$(?:ARGUMENTS|[1-9])\b/g;
+//
+// `@` is required. The bare `$1` through `$9` are PostgreSQL and node-postgres bind
+// placeholders, and they turn up in exactly the prose a SQL or a security skill is
+// vendored for: "WHERE id = $1" would become "WHERE id = the diff under review", which is
+// a broken illustration of the one defence against SQL injection.
+const ARGUMENT_PLACEHOLDER = /(?:@\$(?:ARGUMENTS|[1-9])|\$ARGUMENTS)\b/g;
 const TARGET = "the diff under review";
 
 // Anthropic's knowledge-work plugins end a skill with a section conditioned on the
@@ -154,18 +178,32 @@ function rewriteMarkdown(label: string, markdown: string): string {
             continue;
         }
 
+        const deadLinkTexts: string[] = [];
+
         const rewritten = fenced
             ? line
-            : line.replace(ABOVE_SKILL_LINK, (_, linkText: string) => linkText).replace(ARGUMENT_PLACEHOLDER, TARGET);
+            : line
+                  .replace(ABOVE_SKILL_LINK, (_, linkText: string) => {
+                      deadLinkTexts.push(linkText);
+                      return linkText;
+                  })
+                  .replace(ARGUMENT_PLACEHOLDER, TARGET);
 
         if (rewritten !== line) {
-            // A line that was nothing but a dead link leaves a blank line behind.
             if (rewritten.trim() === "") {
                 notes.push(`  ${label}: dropped a line that was only a link reaching above the skill directory`);
                 continue;
             }
 
-            notes.push(`  ${label}: rewrote ${rewritten.trim()}`);
+            if (deadLinkTexts.length > 0 && isPointerOnly(rewritten, deadLinkTexts)) {
+                notes.push(`  ${label}: dropped a line pointing at a file that was not vendored: ${line.trim()}`);
+                continue;
+            }
+
+            // The original as well, so that a rewrite can be checked at vendor time
+            // rather than found in a lens's review months later.
+            notes.push(`  ${label}: rewrote ${line.trim()}`);
+            notes.push(`  ${label}:      to ${rewritten.trim()}`);
         }
 
         out.push(rewritten);

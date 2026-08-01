@@ -11,15 +11,16 @@ Both parts are optional, so decide by looking. A word is a lens when a directory
 name sits under `<plugin>/lenses/skills/` or `.claude/skills/`, and the base ref
 otherwise. `/codeferret:review caveman-review` names a lens, not a ref.
 
-Throughout, `<plugin>` is `${CLAUDE_PLUGIN_ROOT}`, and the rest come from step 1.
-`<toplevel>`, `<base>`, `<head>` and `<pr>` are the values of the keys they name;
-`<git-dir>` is the value of `repo=`. Substitute them yourself rather than relying on a
-shell variable: each command runs in its own shell, so nothing you export survives.
+Throughout, `<plugin>` is `${CLAUDE_PLUGIN_ROOT}`, and `<base>` and `<pr>` are values
+step 1 prints. Substitute them yourself rather than relying on a shell variable: each
+command runs in its own shell, so nothing you export survives. Put double quotes around
+each one.
 
-Put double quotes around every one of them when you do. `<base>` in particular is
-whatever the user typed, and it lands on a command line before anything gets to check it.
-`build-prompts.sh` rejects a ref that is not a plain one, but only once the shell has
-already run what you wrote.
+Quoting is not what makes a substituted value safe, so do not treat it as though it were:
+`$(...)`, a backtick and `${...}` all still expand inside double quotes. What makes it
+safe is that `local-preflight.sh` prints `base=unsafe` rather than a ref holding any
+character outside `A-Za-z0-9._/-`. Stop if you see that, and stop as well if the user
+hands you a ref carrying `$`, a backtick, a quote or a semicolon. Do not pass it on.
 
 ## 1. Find out what this checkout supports
 
@@ -41,8 +42,10 @@ Stop when you see any of these, and name every one you saw:
 - `bun=missing`. The review cannot read its own findings back. Install Bun from
   https://bun.sh.
 - `base_resolves=no`. Name the ref that failed. When `base=none` there was nothing to
-  infer one from, so ask for it: `/codeferret:review origin/main`. Otherwise the ref is
-  not in this checkout, and `git fetch origin` usually settles it.
+  infer one from, so ask for it: `/codeferret:review origin/main`. When `base=unsafe` or
+  `branch=unsafe`, a ref name holds a character that would run as shell where the review
+  builds its commands; say which and stop. Otherwise the ref is not in this checkout, and
+  `git fetch origin` usually settles it.
 - `shallow=yes`. A shallow clone has no merge base to diff against. `git fetch
   --unshallow` fixes it, but the fetch goes to the network, so ask first.
 - `merge_base=none`. `<base>` and `HEAD` share no history, which is what a grafted or
@@ -72,13 +75,14 @@ Say so if they pick it.
 
 ## 3. Settle the lenses
 
-Use the lenses named in `$ARGUMENTS`. Otherwise use every line of
-`<plugin>/review/defaults/lenses.txt`, which is the set the action runs.
+Use the lenses named in `$ARGUMENTS`. Otherwise the run uses every line of
+`<plugin>/review/defaults/lenses.txt`, which is the set the action runs. Read that file to
+say how many that is.
 
-Before running, say how many lenses that is and what it costs: twelve took 19 minutes and
-$31.80 on Opus over a 47-file diff, and the bill scales with the number of lenses rather
-than the wait. Then stop and wait for the user to agree, in a turn of their own. A bare
-`/codeferret:review` is the whole default set, and someone typing it to see what the
+Before running, say how many lenses it is and what it costs: fourteen took 20m46s and
+$36.00 on Opus and returned 97 findings, and the bill scales with the number of lenses
+rather than the wait. Then stop and wait for the user to agree, in a turn of their own. A
+bare `/codeferret:review` is the whole default set, and someone typing it to see what the
 command does has not agreed to that.
 
 ## 4. Run it
@@ -90,40 +94,35 @@ editor, shell and MCP servers, and there is no reason to introduce the two.
 Run it in the background. It takes tens of minutes, which is longer than a foreground
 command is allowed.
 
-Change the command below where these apply:
-
-- When the user named lenses, set `LENSES` to those instead, one per line.
-- To review uncommitted work as well, pass the `merge_base` value in place of `<base>`
-  and add `INCLUDE_WORKING_TREE=1`.
-- When `pr` is `none`, or `gh` is unavailable, leave the `PR`, `OWN_LOGIN`,
-  `GITHUB_TOKEN` and `GITHUB_REPOSITORY` lines out entirely. Without them, the review
-  cannot skip a finding somebody has already answered.
-
 ```sh
-LENSES="$(cat "<plugin>/review/defaults/lenses.txt")" \
-  EXCLUDE_PATHS="$(cat "<plugin>/review/defaults/exclude-paths.txt")" \
-  TOOLS="$(cat "<plugin>/review/defaults/tools.txt")" \
-  MODEL=opus \
-  PERMISSION_MODE=auto \
-  RESOLVE_THREADS=0 \
-  PR="<pr>" \
-  OWN_LOGIN="$(gh api user --jq .login)" \
-  GITHUB_TOKEN="$(gh auth token)" \
-  GITHUB_REPOSITORY="$(gh repo view --json nameWithOwner --jq .nameWithOwner)" \
-  bash "<plugin>/review/run.sh" "<base>" "<plugin>" "<git-dir>/codeferret/run" "<toplevel>"
+bash "<plugin>/review/local-run.sh" "<plugin>" "<base>"
 ```
 
-Under `PERMISSION_MODE=auto`, Claude Code's permission classifier passes the reads a lens
-needs and refuses the rest. The action uses `bypassPermissions` because a runner is
-disposable and this machine is not.
+`local-run.sh` works out the run directory, the defaults, and the gh credentials itself.
+Add to that command line where these apply:
 
-Everything the run writes lands in `<git-dir>/codeferret/run/build/`, and the findings in
-`findings.json` beside `run.json`.
+- The lenses the user named, as further arguments. Naming any lens but `static-analysis`
+  also drops the static analysis tools, whose reports only that lens reads.
+- To review uncommitted work as well, pass the `merge_base` value in place of `<base>`
+  and put `INCLUDE_WORKING_TREE=1` in front of the command.
+- `EFFORT=low` (or `medium`, `high`, `xhigh`, `max`) in front of the command to set
+  reasoning effort. Leave it out for the model's own default. Nobody has measured what a
+  lower effort does to a review here, so treat it as a change to review quality and not
+  only to the bill.
+
+Everything the run writes lands in `<git-dir>/codeferret/run/build/`, where `<git-dir>` is
+the `repo=` value from step 1, and the findings in `findings.json` beside `run.json`.
 
 ## 5. Print what they found
 
-Read `<git-dir>/codeferret/run/build/findings.json`. Group its findings by file, in diff
-order, and by line within a file:
+When the run exited non-zero, there may be no `findings.json` at all: a lens with no
+`SKILL.md`, a run directory the delete check would not touch, or an orchestrator that
+died. Say what the last lines of its output were, and print whatever
+`<git-dir>/codeferret/run/build/` does hold: `cost-usd`, `duration-ms` and
+`permission-denials` are written before the findings are. Then stop.
+
+Otherwise read `<git-dir>/codeferret/run/build/findings.json`. Group its findings by file,
+in diff order, and by line within a file:
 
 ```
 path/to/file.ts:42: One-line title
@@ -163,18 +162,11 @@ find them, so the lines they report might not be the pushed commit's.
 Ask before posting. It writes to a pull request other people are reading.
 
 ```sh
-GITHUB_TOKEN="$(gh auth token)" \
-  GITHUB_REPOSITORY="$(gh repo view --json nameWithOwner --jq .nameWithOwner)" \
-  EXCLUDE_PATHS="$(cat "<plugin>/review/defaults/exclude-paths.txt")" \
-  bun "<plugin>/review/post-review.ts" \
-      "<git-dir>/codeferret/run/build/findings.json" "<base>" "<head>" "<pr>"
+bash "<plugin>/review/local-post.sh" "<plugin>" "<base>" "<pr>"
 ```
 
-`<base>` here is always the ref step 1 reported, even when step 4 used `merge_base`.
-`post-review.ts` anchors against `<base>...<head>`, which is the diff GitHub holds.
+`<base>` here is always the ref step 1 reported, even when step 4 used `merge_base`. The
+review anchors against `<base>` and the pushed head, which is the diff GitHub holds.
 
-`EXCLUDE_PATHS` has to be the list the lenses were given, or a finding can anchor to a
-file they never saw.
-
-Add `DRY_RUN=1` to that environment to print the review instead of posting it. Without
-it, the command posts.
+Put `DRY_RUN=1` in front of that command to print the review instead of posting it.
+Without it, the command posts.

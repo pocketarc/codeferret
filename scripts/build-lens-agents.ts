@@ -12,6 +12,11 @@
  * the checked-in agents have drifted.
  *
  * Usage: bun scripts/build-lens-agents.ts [--check]
+ *        bun scripts/build-lens-agents.ts --one <lens-name> <out-path>
+ *
+ * `--one` renders a single agent for a lens the plugin does not bundle, which lives in
+ * the reviewed repository's own .claude/skills/ and so cannot have an agent checked in.
+ * build-prompts.sh calls it while assembling the run's plugin.
  */
 
 import { existsSync, readdirSync } from "node:fs";
@@ -40,7 +45,7 @@ process.chdir(join(import.meta.dir, ".."));
 // will do their passes one after another instead.
 //
 // `WebFetch` and `WebSearch` are absent for the matching reason on the way out. A lens
-// reads a diff written by whoever opened the pull request, and `Bash` hands it
+// reads a diff written by whoever opened the pull request, and a lens with `Bash` can read
 // CLAUDE_CODE_OAUTH_TOKEN out of the environment it inherits and the git credential out
 // of the checkout. Egress is what turns reading those into losing them. A lens that
 // wants a CVE looked up says so in its finding instead.
@@ -70,15 +75,48 @@ async function extrasFor(lens: string): Promise<string> {
     return existsSync(path) ? `\n${(await Bun.file(path).text()).trim()}\n` : "";
 }
 
-function render(skillLine: string): string {
+/**
+ * The extras go where lens-brief.md puts `__EXTRAS__`, above the closing instruction to
+ * return the schema. Below it, a standing instruction reads as a continuation of the
+ * output format, which is what everything else the lens must remember sits above.
+ */
+function render(skillLine: string, extras: string): string {
     // Replacer functions, because `replace` reads `$&`, `` $` `` and `$1` in a
     // replacement *string* as substitutions, and JSON Schema's whole vocabulary is
     // `$schema`, `$ref`, `$defs`.
-    return brief.replace("__SKILL_LINE__", () => skillLine).replace("__SCHEMA__", () => schema);
+    return brief
+        .replace("__SKILL_LINE__", () => skillLine)
+        .replace("__EXTRAS__", () => extras)
+        .replace("__SCHEMA__", () => schema);
 }
 
 function agent(name: string, description: string, body: string): string {
     return `---\nname: ${name}\ndescription: ${description}\ntools: ${TOOLS}\n---\n\n${body}`;
+}
+
+const one = process.argv.indexOf("--one");
+
+if (one !== -1) {
+    const [lens, outPath] = process.argv.slice(one + 1);
+
+    if (!lens || !outPath) {
+        console.error("usage: bun scripts/build-lens-agents.ts --one <lens-name> <out-path>");
+        process.exit(2);
+    }
+
+    // Bare, not namespaced: this skill sits in the reviewed repository's own
+    // .claude/skills/, which Claude Code loads outside the plugin's namespace.
+    await Bun.write(
+        outPath,
+        agent(
+            lens,
+            `CodeFerret's ${lens} lens, from this repository's own .claude/skills/. Dispatched by /codeferret:review; not for general use.`,
+            render(`Load the \`${lens}\` skill and review the diff under it.`, await extrasFor(lens)),
+        ),
+    );
+
+    console.log(`OK ${outPath}: agent for the unbundled lens '${lens}'`);
+    process.exit(0);
 }
 
 const wanted = new Map<string, string>();
@@ -87,35 +125,18 @@ for (const entry of readdirSync("lenses/skills", { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     if (!existsSync(`lenses/skills/${entry.name}/SKILL.md`)) continue;
 
-    // The generic agent below takes this name and is written last, so a lens called
-    // `lens` would silently get the generic agent instead of its own.
-    if (entry.name === "lens") {
-        console.error("a lens cannot be named `lens`: the generic dispatch agent has that name");
-        process.exit(1);
-    }
-
     wanted.set(
         `${AGENTS_DIR}/${entry.name}.md`,
         agent(
             entry.name,
             `CodeFerret's ${entry.name} lens. Dispatched by /codeferret:review; not for general use.`,
-            render(`Load the \`${namespace}:${entry.name}\` skill and have at it.`) +
-                (await extrasFor(entry.name)),
+            render(
+                `Load the \`${namespace}:${entry.name}\` skill and review the diff under it.`,
+                await extrasFor(entry.name),
+            ),
         ),
     );
 }
-
-// A lens the plugin does not bundle lives in the reviewed repository's own
-// .claude/skills/, so no agent can name its skill ahead of time. This one takes the
-// name at dispatch instead.
-wanted.set(
-    `${AGENTS_DIR}/lens.md`,
-    agent(
-        "lens",
-        "CodeFerret review lens for a skill named at dispatch, for a lens the plugin does not bundle. Dispatched by /codeferret:review; not for general use.",
-        render("Load the skill named in the instruction below and have at it."),
-    ),
-);
 
 let problems = 0;
 

@@ -52,11 +52,11 @@ jobs:
             # already answered is in findings.json and nowhere else, so without this
             # artifact a mistaken mark costs a real finding and nobody ever knows.
             #
-            # The same upload includes run.json, the whole orchestrator session: every tool
-            # call every lens made, and everything it got back, including the contents of
-            # any file a lens read. On a public repository anyone can download the
-            # artifact. Point `path` at findings.json alone if the session should stay
-            # private.
+            # The same upload includes run.json, which is the orchestrator's final result
+            # object: its summary, every merged finding, and what the run cost. It is not
+            # a transcript, so no lens's tool calls and no file contents are in it. It is
+            # not secret-masked either, and the orchestrator's own prose quotes the diff,
+            # so on a public repository point `path` at findings.json alone.
             - name: Keep the run for inspection
               if: always()
               uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

@@ -2,9 +2,9 @@
 
 Like CodeRabbit, but it uses your Claude subscription, and goes even deeper.
 
-CodeFerret reviews a diff through several independent code review skills at once, then
+CodeFerret reviews a diff through fourteen independent code review skills at once, then
 merges their findings into a single review with inline comments. Each finding records
-which lenses found it, so agreement between them is visible rather than collapsed.
+which of the fourteen found it, so agreement between them stays visible.
 
 There are two ways to run it: as a GitHub action on every pull request, or as a Claude
 Code plugin on the branch in front of you.
@@ -17,7 +17,7 @@ to:
 
 ```yaml
 permissions:
-    contents: read # write instead to let it resolve finished threads, at the cost below
+    contents: read # write instead to let it resolve finished threads
     pull-requests: write
 
 steps:
@@ -26,20 +26,27 @@ steps:
           claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 ```
 
+`contents: write` costs something. The review runs an agent with Bash, so a token that
+can write contents is a token that can push. On `read`, everything else works and the
+review lists the threads it would have closed.
+
 The rest of that file is:
 
 - A concurrency group, so three pushes in a row do not buy three full reviews.
 - A gate on drafts, so a push to unfinished work costs nothing. The review runs when the
   author marks the pull request ready.
 - A gate on forks, which cannot read the secret.
-- A gate on author association, which is what limits who can spend the budget to an
-  owner, a member or a collaborator.
+- A gate on author association, limiting who can spend the budget to an owner, a member
+  or a collaborator.
 - A 60-minute timeout.
 - A step that uploads the run directory as an artifact and keeps it for 14 days. It holds
   `findings.json`, which carries every finding including the ones the review suppressed,
   so whoever can read the repository's artifacts can read those too.
 
-The action checks the repository out and installs what it needs.
+The action checks the repository out and installs what it needs. It also runs semgrep and
+osv-scanner before the review, from the runner's binaries if they are there and from
+pinned containers otherwise, which means a container pull on the first run and a lookup
+against osv.dev for each changed lockfile. Set `tools: ''` to run neither.
 
 `@v1` moves with each 1.x release. Pin a full version, `@v1.0.0`, to hold a revision.
 
@@ -54,21 +61,25 @@ It needs `bash` and `bun`, which on Windows means WSL or Git Bash. Without `gh` 
 review still runs and prints, but it cannot read what has already been said on a pull
 request and it cannot post.
 
+The plugin follows this repository's default branch rather than a tag, so `/plugin update`
+gives you whatever last landed on `main`. The action's `@v1` moves only on a release, so
+the two can be a release apart.
+
 Then, in any repository:
 
 ```
 /codeferret:review
 ```
 
-It works out what to diff against (the base of your open pull request, or the default
-branch), dispatches the lenses, and prints what they found as `path:line` you can click.
-It can include uncommitted work if you ask. It offers to post the review when three
+The command works out what to diff against (the base of your open pull request, or the
+default branch), dispatches the lenses, and prints what they found as `path:line` you can
+click. Ask, and it includes uncommitted work. It offers to post the review when three
 things hold: the branch has an open pull request, your commits are pushed, and your
 working tree is clean. Otherwise the findings stay in the terminal. A comment is anchored
 to a line GitHub holds, and a file you have edited since is a file whose lines have moved.
 
 Posting uses your `gh` credential, which is usually scoped to everything you can reach.
-Export a fine-grained token as `GITHUB_TOKEN` if you would rather it were not — `gh` takes
+Export a fine-grained token as `GITHUB_TOKEN` if you would rather it were not: `gh` takes
 that in preference to its own.
 
 `/codeferret:install-workflow` writes the action's workflow into the repository you are
@@ -76,9 +87,8 @@ in, for when you would rather have this run on every pull request.
 
 Lenses run in parallel, so fourteen of them take about as long as three and cost a good
 deal more. One fourteen-lens run came to $36.00 and 20m46s on Opus, and returned 97
-findings.
-`/codeferret:review` says how many lenses it is about to dispatch, and waits; the action
-reports what each run cost in the job summary.
+findings. `/codeferret:review` says how many lenses it is about to dispatch, and waits;
+the action reports what each run cost in the job summary.
 
 ## Where things are
 

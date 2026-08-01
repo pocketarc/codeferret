@@ -11,6 +11,9 @@
  * Env:   GITHUB_TOKEN, GITHUB_REPOSITORY
  */
 
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+
 interface Finding {
     found_by?: string[];
     file: string;
@@ -43,11 +46,12 @@ interface Merged {
 const SEVERITY_ORDER = ["critical", "high", "medium", "low", "nit", "question"];
 const MAX_BODY = 60000;
 const RETRY_AFTER_MS = 60_000;
-
-// GitHub is trusted about how long to wait, up to a point. A minute of runner time is
-// cheap next to losing the review; an hour of it, on a review nobody is waiting on, is not.
 const MAX_RETRY_AFTER_MS = 300_000;
 const MAX_INLINE = 40;
+
+// The orchestrator writes both of these, and nothing bounds what a model produces. Left
+// unbounded, a runaway summary eats the length the findings need.
+const MAX_PROSE = 4000;
 
 const [findingsPath, baseRef, headSha, prNumber] = process.argv.slice(2);
 const token = process.env.GITHUB_TOKEN;
@@ -65,15 +69,23 @@ function severityRank(s: string): number {
 }
 
 /** Right-side line numbers per file that appear anywhere in the diff hunks. */
-function commentableLines(): Map<string, Set<number>> {
-    // Must stay the same pathspec build-prompts.sh gives the lenses, or a finding can
-    // anchor to a file they never saw.
-    const excludes = (process.env.EXCLUDE_PATHS ?? "")
-        .split("\n")
-        .map((g) => g.trim())
-        .filter(Boolean)
-        .map((g) => `:(exclude)${g}`);
-    const pathspec = excludes.length > 0 ? ["--", ".", ...excludes] : [];
+async function commentableLines(): Promise<Map<string, Set<number>>> {
+    // The pathspec is read back from the argv build-prompts.sh wrote for the lenses,
+    // rather than built a second time here. Two constructions of it drift, and once they
+    // do this map covers files no lens read, so a finding can be anchored inline against
+    // a file nothing reviewed. Element one is the range, which this script takes from its
+    // own arguments; everything after it is the pathspec.
+    const argsFile = join(dirname(findingsPath), "diff-args");
+
+    if (!existsSync(argsFile)) {
+        console.error(
+            `no ${argsFile}. findings.json has to sit in the build directory of the run that produced it,` +
+                " beside the diff arguments its lenses read under.",
+        );
+        process.exit(1);
+    }
+
+    const pathspec = (await Bun.file(argsFile).text()).split("\0").filter(Boolean).slice(1);
 
     const proc = Bun.spawnSync(["git", "diff", "-U3", `${baseRef}...${headSha}`, ...pathspec]);
 
@@ -119,7 +131,7 @@ const suppressed = allFindings.filter((f) => f.status === "already-reported");
 const declined = allFindings.filter((f) => f.status === "declined");
 const findings = allFindings.filter((f) => f.status !== "already-reported" && f.status !== "declined");
 
-const anchorable = commentableLines();
+const anchorable = await commentableLines();
 
 const inline: Finding[] = [];
 const demoted: Finding[] = [];
@@ -139,10 +151,9 @@ for (const finding of findings) {
 
 // GitHub counts every comment in a review as content created, and refuses a review
 // carrying too many of them under a secondary rate limit. Ninety-five was refused twice,
-// sixty seconds apart, and the whole review fell back to a wall of text. Waiting does not
-// fix it, so the batch stays under the limit and the rest go where an unanchorable
-// finding already goes: the body. Findings are sorted by severity, so what keeps its
-// anchor is what matters most.
+// sixty seconds apart, and every comment was lost. Waiting does not fix it, so the batch
+// stays under the limit and the rest go where an unanchorable finding already goes: the
+// body. Findings are sorted by severity, so the ones that keep an anchor matter most.
 const overflow = inline.splice(MAX_INLINE);
 
 /** The plugin namespace is an implementation detail, so it is dropped for display. */
@@ -154,8 +165,38 @@ function plural(n: number, word: string): string {
     return `${n} ${word}${n === 1 ? "" : "s"}`;
 }
 
+// `github-actions[bot]` is the login of every workflow posting with `github.token`, so a
+// later run cannot tell its own threads from another workflow's by author. This marker
+// renders as nothing and is what fetch-existing.ts matches on.
+const MARKER = "<!-- codeferret -->";
+
 function commentBody(f: Finding): string {
-    return `**${f.title}**\n\n${f.body}\n\n<sub>${f.category}</sub>`;
+    return `**${f.title}**\n\n${f.body}\n\n_${f.category}_\n\n${MARKER}`;
+}
+
+/**
+ * One finding as a bullet, for the sections of the body that list findings rather than
+ * anchor them.
+ *
+ * The continuation indent is two spaces. Four after a blank line is an indented code
+ * block in markdown, which takes the formatting out of the body and stops it wrapping.
+ */
+function bullet(f: Finding): string {
+    const span = f.end_line && f.end_line !== f.line ? `${f.line}-${f.end_line}` : `${f.line}`;
+    const body = f.body.replace(/\n/g, "\n  ");
+
+    return `- **${f.title}**\n\n  \`${f.file}:${span}\`\n\n  ${body}\n\n  _${f.category}_`;
+}
+
+/** One finding as a single line, for the sections that only say a finding was seen. */
+function mention(f: Finding, link: string): string {
+    const url = f.existing_comment_url ? ` ([${link}](${f.existing_comment_url}))` : "";
+    return `- ${f.title} (\`${f.file}:${f.line}\`)${url}`;
+}
+
+/** Prose the orchestrator wrote, cut to a length the findings can still fit around. */
+function clamp(prose: string): string {
+    return prose.length <= MAX_PROSE ? prose : `${prose.slice(0, MAX_PROSE)}\n\n_(cut for length)_`;
 }
 
 // Resolving is a write, so a dry run reports the decision without making it.
@@ -199,22 +240,86 @@ if (toResolve.length > 0 && !process.env.DRY_RUN) {
     }
 }
 
-const sections: string[] = ["## CodeFerret"];
+/** A heading, a reason, and findings listed under it. The only sections that can run long. */
+interface Listing {
+    heading: string;
+    lead: string;
+    items: Finding[];
+}
 
-if (merged.summary) sections.push(merged.summary);
+type Section = string | Listing;
 
-sections.push(
-    `**${plural(findings.length, "new finding")}**` +
-        `${demoted.length > 0 ? ` · ${demoted.length} outside the diff, listed below` : ""}` +
-        `${overflow.length > 0 ? ` · ${overflow.length} listed below rather than anchored` : ""}` +
-        `${suppressed.length > 0 ? ` · ${suppressed.length} already commented on above` : ""}` +
-        `${declined.length > 0 ? ` · ${declined.length} raised before and declined` : ""}`,
-);
+function isListing(section: Section): section is Listing {
+    return typeof section !== "string";
+}
+
+/**
+ * Join the sections into one body no longer than GitHub accepts.
+ *
+ * Everything except the finding listings is short, and it is the part that makes the
+ * review honest: the counts, the lens health, what was suppressed, and the caveats saying
+ * what the run could not check. So the listings get whatever length the rest leaves, and
+ * they lose whole findings from the end rather than being cut at a character offset. An
+ * offset lands inside a `<details>`, a fenced block, or a finding's own markup, and
+ * GitHub renders the wreckage. What did not fit is counted and pointed at the artifact.
+ *
+ * Listings are filled in the order given, so put the one that matters most first.
+ */
+function assemble(sections: Section[]): string {
+    const fixed = sections.filter((s) => !isListing(s)) as string[];
+    let budget = MAX_BODY - fixed.reduce((total, s) => total + s.length + 2, 0);
+
+    const rendered = sections.map((section) => {
+        if (!isListing(section)) return section;
+
+        const frame = `### ${section.heading}\n\n${section.lead}\n\n`;
+        // Reserved for the omission line, so saying what went missing cannot itself be
+        // the thing that does not fit.
+        budget -= frame.length + 200;
+
+        const kept: string[] = [];
+        for (const finding of section.items) {
+            const text = bullet(finding);
+            if (text.length + 2 > budget) break;
+            kept.push(text);
+            budget -= text.length + 2;
+        }
+
+        const missing = section.items.length - kept.length;
+        const omission =
+            missing > 0
+                ? `\n\n- _${plural(missing, "further finding")} left out for length. Every one of them is in \`findings.json\` in the \`codeferret-run\` artifact._`
+                : "";
+
+        return `${frame}${kept.join("\n\n")}${omission}`;
+    });
+
+    const body = rendered.join("\n\n");
+
+    // Reached only when the short sections alone exceed the limit, which takes a
+    // lens_health list or a suppressed list of a size nothing here has seen.
+    return body.length > MAX_BODY ? `${body.slice(0, MAX_BODY)}\n\n_(cut for length)_` : body;
+}
 
 const health = merged.lens_health ?? [];
-if (health.length > 0) {
-    const broken = health.filter((h) => !h.ok);
+const brokenLenses = health.filter((h) => !h.ok);
 
+const counts = [`**${plural(findings.length, "new finding")}**`];
+if (demoted.length > 0) counts.push(`${demoted.length} outside the diff, listed below`);
+if (overflow.length > 0) counts.push(`${overflow.length} listed below rather than anchored`);
+if (suppressed.length > 0) counts.push(`${suppressed.length} already commented on above`);
+if (declined.length > 0) counts.push(`${declined.length} raised before and declined`);
+
+const head: Section[] = ["## CodeFerret"];
+
+if (merged.summary) head.push(clamp(merged.summary));
+
+// One clause reads as a sentence. Five joined by a separator wrap wherever GitHub's
+// column ends, and a screen reader speaks the separator as nothing, so the counts run
+// into each other. Past one, they are a list.
+head.push(counts.length === 1 ? counts[0] : counts.map((c) => `- ${c}`).join("\n"));
+
+if (health.length > 0) {
     // A list, not a table: GitHub gives a wide column the container and starves the
     // rest, and most lenses report no detail at all.
     const items = health
@@ -226,95 +331,72 @@ if (health.length > 0) {
         })
         .join("\n");
 
-    if (broken.length > 0) {
-        sections.push(
-            `> ${broken.length} of ${health.length} lenses did not report normally, so this review covers less than it appears to.`,
+    if (brokenLenses.length > 0) {
+        head.push(
+            `> ${brokenLenses.length} of ${health.length} lenses did not report normally, so this review covers less than it appears to.`,
         );
     }
 
     const heading =
-        broken.length > 0
-            ? `${health.length} lenses ran, ${broken.length} needing attention`
+        brokenLenses.length > 0
+            ? `${health.length} lenses ran, ${brokenLenses.length} needing attention`
             : `${health.length} lenses ran, all reporting`;
 
-    sections.push(
-        `<details${broken.length > 0 ? " open" : ""}>\n<summary>${heading}</summary>\n\n${items}\n</details>`,
+    head.push(
+        `<details${brokenLenses.length > 0 ? " open" : ""}>\n<summary>${heading}</summary>\n\n${items}\n</details>`,
     );
 }
 
-if (demoted.length > 0) {
-    const body = demoted
-        .map(
-            (f) =>
-                `- **\`${f.file}:${f.line}\`** — ${f.title}\n\n  ${f.body.replace(/\n/g, "\n  ")}` +
-                `\n\n  <sub>${f.category}</sub>`,
-        )
-        .join("\n\n");
-    sections.push(
-        `### Findings outside the diff\n\nThese sit on lines this pull request did not change, so GitHub cannot anchor a comment to them.\n\n${body}`,
-    );
-}
-
-if (overflow.length > 0) {
-    const body = overflow
-        .map(
-            (f) =>
-                `- **\`${f.file}:${f.line}\`** — ${f.title}\n\n  ${f.body.replace(/\n/g, "\n  ")}` +
-                `\n\n  <sub>${f.category}</sub>`,
-        )
-        .join("\n\n");
-    sections.push(
-        `### ${plural(overflow.length, "further finding")}\n\nGitHub refuses a review carrying more than a few dozen comments, so these are here rather than on their lines. They are the lower-severity end of the same list.\n\n${body}`,
-    );
-}
+const tail: Section[] = [];
 
 if (suppressed.length > 0) {
-    const body = suppressed
-        .map(
-            (f) =>
-                `- \`${f.file}:${f.line}\` — ${f.title}` +
-                `${f.existing_comment_url ? ` ([earlier comment](${f.existing_comment_url}))` : ""}`,
-        )
-        .join("\n");
-    sections.push(
+    const body = suppressed.map((f) => mention(f, "earlier comment")).join("\n");
+    tail.push(
         `<details>\n<summary>${plural(suppressed.length, "finding")} already commented on</summary>\n\n${body}\n</details>`,
     );
 }
 
 if (declined.length > 0) {
-    const body = declined
-        .map(
-            (f) =>
-                `- \`${f.file}:${f.line}\` — ${f.title}` +
-                `${f.existing_comment_url ? ` ([thread](${f.existing_comment_url}))` : ""}`,
-        )
-        .join("\n");
-    sections.push(
+    const body = declined.map((f) => mention(f, "thread")).join("\n");
+    tail.push(
         `<details>\n<summary>${plural(declined.length, "finding")} raised before and declined</summary>\n\n${body}\n</details>`,
     );
 }
 
 if (resolved.length > 0) {
     const body = resolved.map((r) => `- ${r.reason}`).join("\n");
-    sections.push(
+    tail.push(
         `<details>\n<summary>${plural(resolved.length, "thread")} resolved</summary>\n\n${body}\n</details>`,
     );
 }
 
 if (resolveDenied) {
-    sections.push(
+    tail.push(
         `> ${plural(toResolve.length, "thread")} look finished but could not be resolved:` +
             ` the workflow grants \`pull-requests: write\`, and \`resolveReviewThread\` needs` +
             ` \`contents: write\`.`,
     );
 }
 
-if (merged.notes) sections.push(`### Caveats\n\n${merged.notes}`);
+if (merged.notes) tail.push(`### Caveats\n\n${clamp(merged.notes)}`);
 
-let reviewBody = sections.join("\n\n");
-if (reviewBody.length > MAX_BODY) {
-    reviewBody = `${reviewBody.slice(0, MAX_BODY)}\n\n_(truncated)_`;
-}
+const outsideDiff: Listing = {
+    heading: "Findings outside the diff",
+    lead: "These sit on lines this pull request did not change, so GitHub cannot anchor a comment to them.",
+    items: demoted,
+};
+
+const beyondTheLimit: Listing = {
+    heading: `Findings beyond GitHub's comment limit`,
+    lead: `A review carrying more than about ${MAX_INLINE} comments is refused outright, so these are here rather than on their lines.`,
+    items: overflow,
+};
+
+const listings: Listing[] = [];
+if (demoted.length > 0) listings.push(outsideDiff);
+if (overflow.length > 0) listings.push(beyondTheLimit);
+
+const reviewBody = assemble([...head, ...listings, ...tail]);
 
 const comments = inline.map((f) => ({
     path: f.file,
@@ -332,14 +414,17 @@ const comments = inline.map((f) => ({
 console.log(
     `total=${allFindings.length} new=${findings.length} suppressed=${suppressed.length}` +
         ` declined=${declined.length} inline=${inline.length} demoted=${demoted.length}` +
-        ` resolved=${resolved.length}/${toResolve.length}`,
+        ` overflow=${overflow.length} resolved=${resolved.length}/${toResolve.length}`,
 );
 
-if (findings.length === 0 && !process.env.DRY_RUN) {
+// A run where every lens died also produces no findings, and posting nothing leaves the
+// pull request looking reviewed and clean. So a failed lens is enough on its own to post:
+// the body carries lens_health, which is the only place that failure becomes visible.
+if (findings.length === 0 && brokenLenses.length === 0 && !process.env.DRY_RUN) {
     const accounted = suppressed.length + declined.length;
     console.log(
         accounted > 0
-            ? `no new findings — ${suppressed.length} already commented on, ${declined.length} declined`
+            ? `no new findings. ${suppressed.length} already commented on, ${declined.length} declined`
             : "no findings",
     );
     if (resolved.length > 0) console.log(`resolved ${plural(resolved.length, "thread")}`);
@@ -355,16 +440,14 @@ if (process.env.DRY_RUN) {
         console.log(c.body);
         console.log();
     }
-    console.log(`(dry run — nothing posted; ${comments.length} inline comment(s))`);
+    console.log(`(dry run: nothing posted, ${plural(comments.length, "inline comment")})`);
     process.exit(0);
 }
 
 interface Posted {
     ok: boolean;
     status: number;
-    /** Read once here: a response body cannot be read twice, and several branches below need it. */
     detail: string;
-    /** How long GitHub asked us to wait, when the response was a rate limit. */
     retryAfterMs: number | null;
 }
 
@@ -405,7 +488,6 @@ async function postReview(payload: unknown): Promise<Posted> {
     };
 }
 
-/** Post, and if GitHub asked for a pause rather than refusing, wait it out and try once more. */
 async function postWaitingOutALimit(payload: unknown, what: string): Promise<Posted> {
     const first = await postReview(payload);
 
@@ -426,31 +508,25 @@ async function postWaitingOutALimit(payload: unknown, what: string): Promise<Pos
 
 const inlineReview = { commit_id: headSha, body: reviewBody, event: "COMMENT", comments };
 
-// Falling straight through to the body would turn every anchored finding into a line in a
-// wall of text, over a wait GitHub was willing to grant.
 let response = await postWaitingOutALimit(inlineReview, "inline review");
 
 if (!response.ok && comments.length > 0) {
     // The reviews endpoint is all-or-nothing: one rejected anchor creates no comments.
     console.error("retrying as a body-only review so the findings still land");
 
-    const appendix = inline
-        .map(
-            (f) =>
-                `- **\`${f.file}:${f.line}\`** — ${f.title}\n\n  ${f.body.replace(/\n/g, "\n  ")}` +
-                `\n\n  <sub>${f.category}</sub>`,
-        )
-        .join("\n\n");
+    // The rescued findings are assembled first, so the length goes to them before it goes
+    // to anything else. Appending them to a body already at the limit is how the one path
+    // that exists to save them was what dropped them.
+    const rescued: Listing = {
+        heading: "Findings",
+        lead: "GitHub rejected the inline anchors for this review, so these are listed here instead.",
+        items: inline,
+    };
 
-    // This is the findings' last chance, and it goes out moments after a limit may have
-    // been tripped, so it waits one out too.
     response = await postWaitingOutALimit(
         {
             commit_id: headSha,
-            body: `${reviewBody}\n\n### Findings\n\nGitHub rejected the inline anchors for this review, so they are listed here instead.\n\n${appendix}`.slice(
-                0,
-                MAX_BODY,
-            ),
+            body: assemble([...head, rescued, ...listings, ...tail]),
             event: "COMMENT",
         },
         "body-only review",
@@ -462,5 +538,13 @@ if (!response.ok) {
     process.exit(1);
 }
 
-const created = JSON.parse(response.detail) as { html_url?: string };
+// The review is posted by this point, so a body that is not the JSON we expect costs a
+// URL in the log and nothing else. Throwing here would turn a landed review into a red job.
+let created: { html_url?: string } = {};
+try {
+    created = JSON.parse(response.detail);
+} catch {
+    console.error(`the review posted, but its response body was not JSON: ${response.detail.slice(0, 200)}`);
+}
+
 console.log(`posted: ${created.html_url ?? "(no url returned)"}`);

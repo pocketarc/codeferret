@@ -10,17 +10,21 @@
  * a thread nor whether it is already resolved.
  *
  * Usage: bun fetch-existing.ts <pr-number> <out.json> [<own-login>]
- * Env:   GITHUB_TOKEN, GITHUB_REPOSITORY
+ * Env:   GITHUB_TOKEN (or the token on stdin), GITHUB_REPOSITORY
  */
 
 const [prNumber, outPath, ownArg] = process.argv.slice(2);
 const own = (ownArg || "github-actions").replace(/\[bot\]$/, "");
-const token = process.env.GITHUB_TOKEN;
 const repo = process.env.GITHUB_REPOSITORY;
+
+// Stdin is how run.sh passes it, so that the token is in no process's argument list.
+// The environment variable is for running this by hand.
+const token =
+    process.env.GITHUB_TOKEN || (process.stdin.isTTY ? "" : (await Bun.stdin.text()).trim());
 
 if (!prNumber || !outPath || !token || !repo) {
     console.error("usage: bun fetch-existing.ts <pr-number> <out.json> [<own-login>]");
-    console.error("env: GITHUB_TOKEN, GITHUB_REPOSITORY");
+    console.error("env: GITHUB_TOKEN (or the token on stdin), GITHUB_REPOSITORY");
     process.exit(2);
 }
 
@@ -129,6 +133,8 @@ async function fetchConversation(): Promise<IssueComment[]> {
 }
 
 const raw: GqlThread[] = [];
+let failure: string | null = null;
+
 try {
     let cursor: string | null = null;
     do {
@@ -137,9 +143,19 @@ try {
         cursor = page.next;
     } while (cursor);
 } catch (error) {
-    // An empty list costs duplicate comments; a thrown error costs the review.
-    console.error(`could not list review threads: ${error instanceof Error ? error.message : error}`);
+    // Throwing here would cost the review, so the run carries on with what it has. The
+    // failure is recorded in the file instead: an empty thread list and a clean exit is
+    // indistinguishable from a pull request nobody has commented on, and the orchestrator
+    // would then mark every finding new and repost the lot.
+    failure = error instanceof Error ? error.message : String(error);
+    console.error(`could not list review threads: ${failure}`);
 }
+
+// post-review.ts ends every inline comment with this. The login is not enough on its own:
+// `github-actions[bot]` is the identity of every workflow posting with `github.token`, so
+// matching on it alone puts another workflow's threads on the list of ones this run may
+// resolve, and resolving takes that workflow's words off the page.
+const MARKER = "<!-- codeferret -->";
 
 const threads = raw.map((t) => {
     const root = t.comments.nodes[0];
@@ -150,7 +166,9 @@ const threads = raw.map((t) => {
         file: root?.path ?? "",
         line: root?.line ?? root?.originalLine ?? null,
         url: root?.url ?? "",
-        mine: (root?.author?.login ?? "").replace(/\[bot\]$/, "") === own,
+        mine:
+            (root?.author?.login ?? "").replace(/\[bot\]$/, "") === own &&
+            (root?.body ?? "").includes(MARKER),
         comments: t.comments.nodes.map((c) => ({
             author: c.author?.login ?? "unknown",
             association: c.authorAssociation,
@@ -166,7 +184,10 @@ const conversation = (await fetchConversation()).map((c) => ({
     url: c.html_url,
 }));
 
-await Bun.write(outPath, `${JSON.stringify({ threads, conversation }, null, 2)}\n`);
+await Bun.write(
+    outPath,
+    `${JSON.stringify({ threads, conversation, ...(failure ? { error: failure } : {}) }, null, 2)}\n`,
+);
 
 const mine = threads.filter((t) => t.mine).length;
 const resolved = threads.filter((t) => t.resolved).length;
@@ -176,3 +197,5 @@ console.log(
     `threads: ${threads.length} (${mine} mine, ${resolved} resolved, ${answered} answered)` +
         `  conversation comments: ${conversation.length}`,
 );
+
+if (failure) process.exit(1);

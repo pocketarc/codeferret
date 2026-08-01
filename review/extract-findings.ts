@@ -34,7 +34,7 @@ const results = messages.filter((m) => m.type === "result");
 const last = results[results.length - 1];
 
 if (!last) {
-    console.error("no result message in the run log — the session produced no terminal output");
+    console.error("no result message in the run log. The session produced no terminal output.");
     process.exit(1);
 }
 
@@ -49,13 +49,14 @@ const dir = dirname(outPath);
 // twelve-lens review the two differ by a factor of sixty.
 const models: Record<string, { outputTokens?: number; costUSD?: number }> = last.modelUsage ?? {};
 const outputTokens = Object.values(models).reduce((total, m) => total + (m.outputTokens ?? 0), 0);
+
+// `||` and not `??`: a subscription-billed run has been seen to report `total_cost_usd`
+// as a number the modelUsage figures contradict, and zero is the value that reads as a
+// free $36 review on every surface this number reaches.
 const costUsd =
-    last.total_cost_usd ?? Object.values(models).reduce((total, m) => total + (m.costUSD ?? 0), 0);
+    last.total_cost_usd || Object.values(models).reduce((total, m) => total + (m.costUSD ?? 0), 0);
 const durationMs = last.duration_ms ?? 0;
 
-// A permission mode that refuses something a lens needed narrows the review without
-// narrowing anything a reader can see. Same argument as lens_health: it becomes a
-// number, or it becomes silence.
 const denials: Array<{ tool_name?: string; tool_input?: { command?: string } }> = Array.isArray(
     last.permission_denials,
 )
@@ -69,9 +70,32 @@ await Bun.write(join(dir, "output-tokens"), String(outputTokens));
 await Bun.write(join(dir, "duration-ms"), String(durationMs));
 await Bun.write(join(dir, "permission-denials"), String(denials.length));
 
+// Rendered here rather than in the action's step, so that the shell reformats no
+// duration and guards no missing file, and so both surfaces round the same way.
+async function writeSummary(findingsCount: string): Promise<void> {
+    const rows: Array<[string, string]> = [
+        ["Findings", findingsCount],
+        ["Cost", `$${costUsd.toFixed(2)}`],
+        ["Output tokens", outputTokens.toLocaleString("en-GB")],
+        ["Wall clock", `${(durationMs / 60000).toFixed(1)} min`],
+    ];
+
+    const table = `### CodeFerret\n\n| Measure | Value |\n|---|---|\n${rows
+        .map(([measure, value]) => `| ${measure} | ${value} |`)
+        .join("\n")}\n`;
+
+    const refusals =
+        denials.length > 0
+            ? `\n> [!WARNING]\n> ${denials.length} tool calls were refused. The review covers less than this summary suggests.\n`
+            : "";
+
+    await Bun.write(join(dir, "summary.md"), table + refusals);
+}
+
 const structured = last.structured_output;
 
 if (!structured || !Array.isArray(structured.findings)) {
+    await writeSummary("none reported");
     console.error("the run produced no structured findings");
     console.error(`result subtype: ${last.subtype ?? "unknown"}`);
     console.error(`it cost $${costUsd.toFixed(2)} and was refused ${denials.length} tool call(s)`);
@@ -80,6 +104,7 @@ if (!structured || !Array.isArray(structured.findings)) {
 
 await Bun.write(outPath, `${JSON.stringify(structured, null, 2)}\n`);
 await Bun.write(join(dir, "findings-count"), String(structured.findings.length));
+await writeSummary(String(structured.findings.length));
 
 const health = structured.lens_health ?? [];
 const broken = health.filter((h: { ok?: boolean }) => h.ok === false);
@@ -96,7 +121,7 @@ for (const [model, usage] of Object.entries(models)) {
 
 for (const h of health) {
     const status = h.ok === false ? "NEEDS ATTENTION" : "ok";
-    console.log(`  ${h.lens}: ${h.findings_returned} findings — ${status}${h.detail ? ` (${h.detail})` : ""}`);
+    console.log(`  ${h.lens}: ${h.findings_returned} findings, ${status}${h.detail ? ` (${h.detail})` : ""}`);
 }
 
 if (broken.length > 0) {
@@ -106,10 +131,11 @@ if (broken.length > 0) {
 if (denials.length > 0) {
     console.log(`\n${denials.length} tool call(s) were refused by the permission mode:`);
     for (const d of denials) {
-        // JSON.stringify(undefined) is undefined, not a string, so a denial with no
-        // tool_input would take the whole run down at the point of reporting it.
+        // A denial carrying no tool_input prints as `{}`, which says the field was
+        // absent. Without the `?? {}` it prints the word "undefined", which reads as a
+        // value the harness sent.
         const what = d.tool_input?.command ?? JSON.stringify(d.tool_input ?? {});
         console.log(`  ${d.tool_name ?? "?"}: ${String(what).slice(0, 120)}`);
     }
-    console.log("A lens that could not run what it needed reviewed less than it appears to.");
+    console.log("A lens that could not run what it needed covered less than its report suggests.");
 }

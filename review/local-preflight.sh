@@ -18,9 +18,24 @@ say() {
     printf '%s=%s\n' "$1" "$2"
 }
 
+# Every value below reaches a command line, because /codeferret:review has a model
+# substitute them into the shell it runs. Quoting is no defence: `$(...)`, backticks and
+# `${...}` all still expand inside double quotes. And a hostile value need not be typed by
+# the user. `git check-ref-format` allows `$`, `(`, `)`, a backtick, `;`, `&` and `|`, so
+# `gh pr view --json baseRefName` can hand back a branch name that runs on substitution.
+#
+# So a value that is not a plain git ref never gets printed. This is the same test
+# build-prompts.sh applies, made one process earlier, before a shell has seen it.
+plain_ref() {
+    case $1 in
+    "" | -* | *[!A-Za-z0-9._/-]*) return 1 ;;
+    *) return 0 ;;
+    esac
+}
+
 # This script lives in the plugin, so a root that did not resolve means bash never found
 # it and none of this ran. What can go wrong is the caller holding a different path from
-# the one it is reading, which every later command would then be built from — so say where
+# the one it is reading, which every later command would then be built from. So say where
 # the script actually is and let the caller compare.
 ACTUAL_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
@@ -70,6 +85,15 @@ fi
 say head "$HEAD_SHA"
 
 BRANCH=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+
+if [ -n "$BRANCH" ] && ! plain_ref "$BRANCH"; then
+    say branch unsafe
+    say base none
+    say base_resolves no
+    echo "the current branch name is not a plain git ref, so nothing here can be built into a command" >&2
+    exit 0
+fi
+
 say branch "${BRANCH:-detached}"
 
 if git remote get-url origin >/dev/null 2>&1; then
@@ -152,6 +176,13 @@ fi
 if [ -z "$BASE" ]; then
     say base none
     say base_resolves no
+    exit 0
+fi
+
+if ! plain_ref "$BASE"; then
+    say base unsafe
+    say base_resolves no
+    echo "base ref '$BASE' is not a plain git ref" >&2
     exit 0
 fi
 

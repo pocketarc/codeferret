@@ -56,8 +56,8 @@ and more. They are all deliberate, and they are the measuring instrument. If you
 them, there is nothing left to score a review against.
 
 `backend/app/Support/Sanitizer.php` on `test/fixture` is a no-op on purpose. It sits
-*outside* the reviewed diff, which is what exercises the out-of-diff anchoring path.
-Leave it alone.
+*outside* the reviewed diff, so a finding against it exercises the out-of-diff anchoring
+path. Leave it alone.
 
 The scoring key lives outside the repository. Do not add it. A reviewer that can read
 the answers cannot be measured.
@@ -79,8 +79,8 @@ input description shipped once. Quote any string that contains `: `.
 
 ## Running a review locally
 
-Normally you want `/codeferret:review`. That is what the plugin is for, and it handles
-the base ref, the pathspec, and an uncommitted working tree for you.
+Normally you want `/codeferret:review`. The plugin exists for that, and it handles the
+base ref, the pathspec, and an uncommitted working tree for you.
 
 Underneath, both it and the action call `review/run.sh`, so you can run exactly what CI
 runs from a checkout of the branch you want reviewed:
@@ -101,22 +101,22 @@ else is refused, and refusals are counted in `build/permission-denials` rather t
 disappearing. The header of `run.sh` lists the rest.
 
 The plugin `run.sh` builds is also called `codeferret`, and so is the installed one. That
-is fine: `--plugin-dir` wins the namespace and shadows the installed copy, which is what
-you want, because the built one holds exactly the lenses this run asked for. An earlier
-note here said two plugins cannot share a name in one session and told you to disable the
-installed one first. That was never tested and it is wrong.
+is fine: a plugin passed with `--plugin-dir` takes the namespace and the installed copy is
+shadowed. That is the behaviour you want, because the built one holds exactly the lenses
+this run asked for. An earlier note here said two plugins cannot share a name in one
+session and told you to disable the installed one first. That was never tested and it is
+wrong.
 
 Print the review without posting it:
 
 ```sh
 DRY_RUN=1 GITHUB_TOKEN=x GITHUB_REPOSITORY=pocketarc/codeferret \
-  EXCLUDE_PATHS="$(cat review/defaults/exclude-paths.txt)" \
   bun review/post-review.ts "$RT/codeferret/build/findings.json" \
   test/fixture test/fixture-defects 1
 ```
 
-Give it the same `EXCLUDE_PATHS` the lenses were given, or a finding can anchor to a file
-they never saw.
+The findings file has to be the one in the run's own `build/`, because `post-review.ts`
+reads `diff-args` beside it to get the pathspec the lenses reviewed under.
 
 Budget roughly 15 minutes and several dollars per run on Opus with three lenses. Lenses
 run in parallel, so adding more of them costs money rather than time: the full fourteen,
@@ -137,11 +137,17 @@ To bundle a skill with the action, vendor it at a pinned commit:
 bash scripts/vendor-lens.sh <repo> <commit-sha> <in-repo-subdir> <local-name>
 ```
 
-Then add `<local-name>` to the `lenses` default in `action.yml` and to
-`review/defaults/lenses.txt`, render its agent with
-`bun scripts/build-lens-agents.ts`, and run `bun scripts/validate-manifests.ts`. The
-validator checks those three against each other, so it will tell you which one you
-forgot.
+Then add `<local-name>` to the `lenses` default in `action.yml`, which is the one place a
+default is written, and run:
+
+```sh
+bun scripts/build-lens-agents.ts
+bun scripts/build-defaults.ts
+bun scripts/validate-manifests.ts
+```
+
+`agents/` and `review/defaults/` are both generated. The validator re-runs each generator
+with `--check`, so a hand edit to either fails rather than drifting.
 
 To use a skill in one repository only, put it under the consuming repository's own
 `.claude/skills/<name>/` and name it in the action's `lenses` input. If a named lens has
@@ -152,7 +158,7 @@ everything it executes should be reviewable and should not change between runs.
 `lenses/skills/PROVENANCE.tsv` records the upstream repository, commit, and path for
 each bundled lens.
 
-`vendor-lens.sh` rewrites four frontmatter fields, because a vendored skill is not used
+`vendor-lens.sh` rewrites five frontmatter fields, because a vendored skill is not used
 the way its author intended:
 
 - `name` becomes the local directory name. All bundled lenses share one plugin
@@ -168,7 +174,14 @@ the way its author intended:
   running one lens by hand. An earlier version of this note said a skill carrying that
   flag never registers. That is wrong on 2.1.220: it registers, the model still sees it,
   and all the flag does is hide the menu entry. So do not add it back to tidy the slash
-  menu. The scoped description is what keeps a lens out of unrelated work.
+  menu. The scoped description keeps a lens out of unrelated work.
+- `argument-hint` is removed. Claude Code shows it beside a slash command as you type it, and upstream wrote it for a person invoking the skill by hand:
+  `accessibility-review`'s hint is a Figma URL. A lens agent passes no argument.
+
+The body is rewritten too: `@$1` and `$ARGUMENTS` become the diff under review, a link
+reaching above the skill directory loses its link, a line that was only such a pointer
+goes entirely, and an "If Connectors Available" section goes with it. What a lens still
+cannot follow after that belongs in `review/lens-extras/<lens>.md`.
 
 ## Releasing
 
@@ -184,9 +197,9 @@ git push origin v1.2.0
 git push --force origin v1
 ```
 
-A change that breaks a consumer's workflow — a new required input, a permission they now
-have to grant, work moved out of the action and into their job — needs `v2` and a `v2`
-tag, because `@v1` carries it to everyone the moment the tag moves.
+A change that breaks a consumer's workflow (a new required input, a permission they now
+have to grant, work moved out of the action and into their job) needs `v2` and a `v2` tag,
+because `@v1` carries it to everyone the moment the tag moves.
 
 Bump `version` in `.claude-plugin/plugin.json` to the same number in the same commit.
 Plugin users see it in `/plugin`, and it is the only version they are shown.
@@ -219,21 +232,25 @@ the arguments behind them.
   answer in a headless run.
 - **Subagents do not inherit `--json-schema`.** Their schema comes from the prompt, so
   do not trust the shape of lens output. Only the orchestrator's output is validated.
-- **`REVIEW.md` goes to `mattpocock-code-review` and to nothing else.** It travels in
-  `review/lens-extras/mattpocock-code-review.md`, appended to that one agent's system
-  prompt. Anything else meant for a single lens belongs there too, rather than in a line
-  the orchestrator has to route correctly every run. Do not broaden it to every lens.
+- **Text for one lens goes in that lens's own prompt, not the orchestrator's.**
+  `review/lens-extras/<lens>.md` is rendered into that agent's system prompt, and
+  `review/lens-dispatch-extras/<lens>.md` travels with the dispatch when the text depends
+  on the run. Routed through the orchestrator instead, the routing is a judgement remade
+  every run and nothing downstream can tell when it went wrong. `REVIEW.md` goes to
+  `mattpocock-code-review` alone; do not broaden it to every lens.
 - **Do not put severity or lens agreement into a comment.** Both are in `findings.json`
   and severity orders the findings, but neither is displayed. For the same reason, do not
   add severity filtering.
-- **Bounding a tool's output is not that filtering.** `review/tools/semgrep.ts` caps what
-  it hands the lens at 100 findings. That bounds what one lens is asked to read, not what
-  a reader is told: everything raised stays in `build/tool-*.json`. Bound the input, never
-  the findings.
+- **A cap on tool input is not that filtering.** `review/tools/*` cap what they hand the
+  lens at 100 findings, sorted so the cap takes the low end. That bounds what one lens is
+  asked to read, not what a reader is told: everything raised stays in
+  `build/tool-*.json`. Cap the input, never the findings. `post-review.ts` caps the
+  comments too, at 40, because GitHub refuses a review carrying more; the rest go into the
+  body, where the reader still sees every one.
 - **Lenses must not modify the working tree.** Every lens reads the same checkout at once,
   so one edit corrupts every other lens's review. `Edit`, `Write`, `NotebookEdit` and
   `Agent` are all kept off the tool list in `agents/`, and the action denies them at the
-  CLI as well. None of it is a guarantee — a lens has `Bash` — so keep the instruction in
+  CLI as well. None of it is a guarantee (a lens has `Bash`), so keep the instruction in
   `review/lens-brief.md` too.
 - **No lens is handed a way to reach the network.** `WebFetch` and `WebSearch` are off the
   tool list on purpose: a lens reads an untrusted diff with `CLAUDE_CODE_OAUTH_TOKEN` in
@@ -253,6 +270,12 @@ the arguments behind them.
   orchestrator weighs, not a gate: a fix landing elsewhere leaves a thread current, and an
   unrelated edit above one makes a live thread outdated. Do not turn it back into a
   condition.
-- **A reply cannot make a security defect safe.** `orchestrator.md` says so explicitly,
-  because "this is intentional" on a vulnerability would otherwise silence it for good.
-  Keep that carve-out if you touch the decline rules.
+- **A reply cannot make a security defect safe.** The carve-out is written into
+  `orchestrator.md`, because "this is intentional" on a vulnerability would otherwise
+  silence it for good. Keep it if you touch the decline rules.
+- **`post-review.ts` reads the pathspec back out of `build/diff-args`.** It used to build
+  its own, the two drifted, and the anchor map then covered files no lens had read. Do not
+  reintroduce a second construction of it.
+- **The action posts on `findings-checked`, not on the findings file existing.** A
+  findings file that fails `check-findings.ts` produces a comment with no line, and GitHub
+  answers 422 for the whole review.

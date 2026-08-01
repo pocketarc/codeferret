@@ -4,8 +4,8 @@
  *
  * GitHub validates workflow syntax when you push, but it does not validate an action
  * manifest until a run tries to load it. A composite action with a YAML error
- * therefore looks fine until it fails at the first step of a real run — which is how
- * an unquoted `pull-requests: write` inside a description shipped once already.
+ * therefore looks fine until it fails at the first step of a real run. That is how an
+ * unquoted `pull-requests: write` inside a description shipped once already.
  *
  * The plugin manifests have the same problem one step further out: Claude Code reads
  * them when somebody installs the plugin, so a broken one fails on their machine.
@@ -14,6 +14,7 @@
  */
 
 import { existsSync, readdirSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 // Every path below is repository-relative, and whoever has just edited this script is
@@ -50,7 +51,10 @@ const action = (await parse("action.yml")) as {
     name?: string;
     description?: string;
     inputs?: Record<string, { description?: string; required?: boolean; default?: unknown }>;
-    runs?: { using?: string; steps?: Array<{ name?: string; shell?: string; uses?: string }> };
+    runs?: {
+        using?: string;
+        steps?: Array<{ name?: string; shell?: string; uses?: string; run?: string }>;
+    };
 } | null;
 
 if (action) {
@@ -77,6 +81,31 @@ if (action) {
     }
 
     console.log(`OK action.yml: ${Object.keys(action.inputs ?? {}).length} inputs, ${steps.length} steps`);
+
+    // The `run:` blocks are the one piece of shell in the repository that is a string
+    // inside YAML, so the shellcheck job's `review/*.sh scripts/*.sh` never reaches them.
+    // They are extracted here instead. A machine without shellcheck says so and moves on:
+    // this script is what a maintainer runs before pushing, and CI has the linter.
+    if (Bun.which("shellcheck")) {
+        const scripts = steps.filter((step) => step.shell === "bash" && step.run);
+
+        for (const step of scripts) {
+            const name = step.name ?? "unnamed";
+            const file = join(tmpdir(), `codeferret-action-${name.replace(/\W+/g, "-")}.sh`);
+            await Bun.write(file, `#!/usr/bin/env bash\n${step.run}`);
+
+            // SC2016 for the same reason the workflow passes it: these blocks printf
+            // markdown, and a backtick in a single-quoted format is not an expansion.
+            const run = Bun.spawnSync(["shellcheck", "-e", "SC2016", file]);
+            if (run.exitCode !== 0) {
+                fail("action.yml", `shellcheck on step '${name}':\n${new TextDecoder().decode(run.stdout)}`);
+            }
+        }
+
+        console.log(`OK action.yml: ${scripts.length} shell step(s) pass shellcheck`);
+    } else {
+        console.log("-- action.yml: no shellcheck on PATH, its shell steps went unchecked");
+    }
 }
 
 const manifestFile = ".claude-plugin/plugin.json";
@@ -112,9 +141,6 @@ if (manifest) {
 const buildScript = await Bun.file("review/build-prompts.sh").text();
 const hardcoded = buildScript.match(/^NAMESPACE=(\S+)$/m)?.[1];
 
-// Without the `manifest &&`, a plugin.json that failed to parse turns up here as a
-// namespace mismatch, and the failure gets filed against build-prompts.sh instead of the
-// broken manifest.
 if (manifest && hardcoded !== namespace) {
     fail("review/build-prompts.sh", `NAMESPACE is '${hardcoded}', but ${manifestFile} declares '${namespace}'`);
 }
@@ -234,8 +260,6 @@ for (const entry of readdirSync("lenses/skills", { withFileTypes: true })) {
 
 console.log(`OK lenses/skills: ${seenSkillNames.size} bundled lens(es), names unique`);
 
-// Until this check, PROVENANCE.tsv was the one list of lenses nothing read back, which
-// is how static-analysis came to be bundled without a row in it.
 const provenanceFile = "lenses/skills/PROVENANCE.tsv";
 
 if (!existsSync(provenanceFile)) {
@@ -290,40 +314,16 @@ if (
     fail("action.yml", "tools run by default but `static-analysis` is not a default lens, so nothing reads them");
 }
 
-// A session cannot read a YAML default, so these lists exist for it to cat. action.yml
-// stays the documented default. Entries are compared rather than text, so reindenting
-// the block scalar does not fail the build over a non-difference.
-for (const [input, file] of [
-    ["lenses", "review/defaults/lenses.txt"],
-    ["exclude-paths", "review/defaults/exclude-paths.txt"],
-    ["tools", "review/defaults/tools.txt"],
-] as const) {
-    // The loop is here for a maintainer who edited action.yml and not the defaults.
-    // Deleting the file is the neighbouring mistake, and an unguarded read of a missing
-    // one ends the run in an unhandled rejection halfway through the checks.
-    if (!existsSync(file)) {
-        fail(file, `is missing, so a session has no \`${input}\` default to read`);
-        continue;
+// Both directories are generated, and re-running the generator is the only way to catch
+// a hand edit to a file it owns.
+for (const generator of ["scripts/build-lens-agents.ts", "scripts/build-defaults.ts"]) {
+    const run = Bun.spawnSync(["bun", generator, "--check"]);
+    process.stdout.write(new TextDecoder().decode(run.stdout));
+
+    if (run.exitCode !== 0) {
+        process.stderr.write(new TextDecoder().decode(run.stderr));
+        failures += 1;
     }
-
-    const documented = entries(action?.inputs?.[input]?.default);
-    const shipped = entries(await Bun.file(file).text());
-
-    if (documented.join("\n") !== shipped.join("\n")) {
-        fail(file, `does not match the \`${input}\` default in action.yml`);
-    } else {
-        console.log(`OK ${file}: ${shipped.length} entries, matching action.yml`);
-    }
-}
-
-// agents/ is generated from review/lens-brief.md, and re-rendering it is the only way
-// to catch a hand edit to a generated file.
-const agents = Bun.spawnSync(["bun", "scripts/build-lens-agents.ts", "--check"]);
-process.stdout.write(new TextDecoder().decode(agents.stdout));
-
-if (agents.exitCode !== 0) {
-    process.stderr.write(new TextDecoder().decode(agents.stderr));
-    failures += 1;
 }
 
 // A command whose frontmatter will not parse, or that has no description, never shows up
@@ -367,13 +367,30 @@ const workflowFiles = readdirSync(".github/workflows")
 const template = "templates/workflow.yml";
 if (existsSync(template)) workflowFiles.push(template);
 
+const gates = new Map<string, string>();
+
 for (const file of workflowFiles) {
-    const workflow = (await parse(file)) as { jobs?: Record<string, unknown> } | null;
+    const workflow = (await parse(file)) as {
+        jobs?: Record<string, { if?: string }>;
+    } | null;
     if (!workflow) continue;
 
     const jobs = Object.keys(workflow.jobs ?? {});
     if (jobs.length === 0) fail(file, "no jobs");
     else console.log(`OK ${file}: jobs ${jobs.join(", ")}`);
+
+    const gate = workflow.jobs?.review?.if;
+    if (typeof gate === "string") gates.set(file, gate.replace(/\s+/g, " ").trim());
+}
+
+// The template ships the gate this repository runs on itself, and the reasoning for all
+// three of its clauses lives only in the template. Tightened in one file and not the
+// other, either this repository reviews pull requests it decided not to, or every
+// consumer who installed the template does.
+const own = ".github/workflows/codeferret.yml";
+
+if (gates.has(own) && gates.has(template) && gates.get(own) !== gates.get(template)) {
+    fail(template, `jobs.review.if does not match ${own}`);
 }
 
 // The workflow this repository runs on itself has `uses: ./`. Shipping that shape to

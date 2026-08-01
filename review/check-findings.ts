@@ -18,9 +18,6 @@
 
 import schema from "./merged-schema.json";
 
-// Read from the schema rather than restated here. Two hand-kept copies of an enum drift
-// silently, and the drift would show up as a status added to the schema, emitted by the
-// orchestrator, and rejected here, throwing away a review that has already been paid for.
 const findingProperties = schema.properties.findings.items.properties;
 const SEVERITIES: string[] = findingProperties.severity.enum;
 const STATUSES: string[] = findingProperties.status.enum;

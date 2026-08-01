@@ -16,7 +16,7 @@ A tool finding is a rule identifier, a file, a line, and a message written for w
 wrote the rule. It is evidence that a pattern matched, and no evidence about whether
 this code is wrong or what being wrong would mean in this repository.
 
-That gap is why you exist. A rule cannot read the surrounding code; you can.
+A rule cannot read the surrounding code. You can, so read it.
 
 ## Read the code before you keep anything
 
@@ -44,7 +44,7 @@ it. `sqli.audit.tainted-sql-string` is not a review comment. What reaches the au
 should name the input, the path it takes to the query, and the fix.
 
 Name the tool and the rule in `category`, as `<tool>:<rule>`. That is the evidence for
-your judgement, and it is what lets somebody check it.
+your judgement, and it lets somebody check it.
 
 Severity comes from what the defect does here, not from the tool's label. Tools grade a
 rule, not an instance.
@@ -67,13 +67,14 @@ in it may have nothing to do with this pull request.
 Check the diff before you write the comment. Did this change add the package, or move its
 version into the vulnerable range, or neither? Say which. "This adds lodash 4.17.11, which
 has five known advisories" is a different comment from "lodash 4.17.11 was already here".
-Both are worth making, and running them together wastes the author's time.
+Both are worth making. Merging them into one comment wastes the author's time, because
+the fix differs.
 
 ## Account for what you dropped
 
 Put in `notes`: how many findings each report held, how many you kept, and the reason
-you dropped the largest group. A lens that quietly discards tool output is worse than no
-lens, because the review looks complete.
+you dropped the largest group. A lens that discards tool output without saying so is worse
+than no lens, because the review looks complete.
 
-Say so too when a report says a tool did not run. That is not a clean result; it is a
-missing one, and the review covers less than it appears to.
+Say so too when a report says a tool did not run. That is a missing result rather than a
+clean one, and the review covers less ground than its length suggests.

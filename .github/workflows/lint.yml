@@ -4,6 +4,11 @@ on:
     push:
     pull_request:
 
+# Neither job writes anything to GitHub, and without this they get whatever the
+# repository or organisation default grants, which on an older repository is read-write.
+permissions:
+    contents: read
+
 jobs:
     manifests:
         runs-on: ubuntu-latest
@@ -14,8 +19,18 @@ jobs:
             - name: Install Bun
               run: npm install -g bun
 
+            # shellcheck is on the runner already, and validate-manifests.ts extracts the
+            # `run:` blocks out of action.yml for it. Those blocks are the one piece of
+            # shell in the repository that is a string inside YAML, so nothing else sees it.
             - name: Validate manifests
               run: bun scripts/validate-manifests.ts
+
+            # Nothing here typechecks: that would want @types/bun, and so a package.json
+            # and a lockfile in a repository that has neither. Bundling is the check that
+            # is free. It resolves every import and parses every file, which catches a
+            # script that would have died at the first line of a real review.
+            - name: Bundle the scripts
+              run: bun build --target=bun review/*.ts review/tools/*.ts scripts/*.ts --outdir="$RUNNER_TEMP/bundle"
 
     shellcheck:
         runs-on: ubuntu-latest

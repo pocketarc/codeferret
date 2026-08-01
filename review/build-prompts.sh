@@ -19,7 +19,7 @@
 # Usage: build-prompts.sh <base-ref> <action-path> <plugin-out-dir> <workspace> [<lenses-file>]
 set -euo pipefail
 
-BASE=${1:?usage: build-prompts.sh <base-ref> <action-path> <plugin-out-dir> <workspace>}
+BASE=${1:?usage: build-prompts.sh BASE_REF ACTION_PATH PLUGIN_OUT_DIR WORKSPACE [LENSES_FILE]}
 ACTION=${2:?missing action path}
 PLUGIN=${3:?missing plugin output dir}
 WORKSPACE=${4:?missing workspace}
@@ -28,9 +28,14 @@ LENSES_FILE=${5:-}
 BUILD="$PLUGIN/build"
 RESOLVE_THREADS=${RESOLVE_THREADS:-1}
 
+# `&` and `|` mean something to sed's replacement, and a path or a glob may hold either.
+sed_escape() {
+    printf '%s' "$1" | sed -e 's/[|&\\]/\\&/g'
+}
+
 # The base ref arrives from a workflow input or from whatever the caller typed, and it
-# reaches a prompt that tells a lens to run `git log <base>..HEAD`. Git refs cannot hold
-# any of what is missing from this set, so nothing legitimate is turned away. A leading
+# reaches a prompt that tells a lens to run `git log <base>..HEAD`. A git ref cannot
+# contain a character outside this set, so nothing legitimate is turned away. A leading
 # `-` is barred separately: it is legal in a ref name and git would read it as an option.
 case $BASE in
 "" | -* | *[!A-Za-z0-9._/-]*)
@@ -70,11 +75,8 @@ if [ -z "$DECLINE" ] && [ -e "$PLUGIN" ] && [ ! -f "$MARKER" ]; then
 fi
 
 if [ -n "$DECLINE" ]; then
-    echo "refusing to delete '$PLUGIN': it $DECLINE" >&2
+    echo "will not delete '$PLUGIN': it $DECLINE" >&2
 
-    # A run directory written before this guard existed has no marker either, so the
-    # first run after upgrading refuses and every one after it would too. Say the way
-    # out, because from the message alone it reads as a bug rather than a decision.
     if [ -d "$PLUGIN/build" ]; then
         echo "it looks like a run directory from before this check existed." >&2
         echo "delete it yourself and run again: rm -rf '$PLUGIN'" >&2
@@ -98,7 +100,10 @@ printf '{"name": "%s", "version": "0.0.0", "description": "CodeFerret run plugin
 
 LENSES=()
 while IFS= read -r lens; do
-    lens=$(printf '%s' "$lens" | tr -d '[:space:]')
+    # Leading and trailing whitespace only. Deleting every space would turn `caveman
+    # review` into `cavemanreview`, which passes the check below and then fails as a
+    # missing SKILL.md under a name nobody typed.
+    lens=$(printf '%s' "$lens" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
     [ -z "$lens" ] && continue
 
     # The name becomes a path component under two search roots, a `cp -R` destination,
@@ -128,7 +133,7 @@ fi
 # and says nothing about the rest of the change.
 PATHSPEC_ARGS=()
 while IFS= read -r glob; do
-    glob=$(printf '%s' "$glob" | tr -d '[:space:]')
+    glob=$(printf '%s' "$glob" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
     [ -z "$glob" ] && continue
 
     # A glob arrives from a workflow input or from whatever /codeferret:review was given.
@@ -150,7 +155,7 @@ while IFS= read -r glob; do
     # bare pathspec with fnmatch, where `**/` still needs a `/` earlier in the path: the
     # default `**/.next/**` excludes `apps/web/.next/` and leaves the top-level `.next/`
     # in, which is where `next build` writes in a repository holding one app. Under glob
-    # magic `out/**` and `build/**` stay anchored at the root, which is what they mean.
+    # magic `out/**` and `build/**` stay anchored at the root, as they are meant to.
     PATHSPEC_ARGS+=(":(top,exclude,glob)$glob")
 done <<<"${EXCLUDE_PATHS:-}"
 
@@ -162,42 +167,38 @@ for lens in "${LENSES[@]}"; do
             exit 1
         fi
 
-        # The list below is only a prompt; a lens whose agent and skill are both absent
-        # cannot be dispatched at all.
         cp "$ACTION/agents/$lens.md" "$PLUGIN/agents/$lens.md"
         cp -R "$ACTION/lenses/skills/$lens" "$PLUGIN/skills/$lens"
-
-        printf -- '- `%s:%s`\n' "$NAMESPACE" "$lens" >>"$BUILD/lens-list.txt"
     elif [ -f "$WORKSPACE/.claude/skills/$lens/SKILL.md" ]; then
-        # A lens the action does not bundle has no agent of its own, so the generic one
-        # takes the skill name at dispatch instead.
-        cp "$ACTION/agents/lens.md" "$PLUGIN/agents/lens.md"
-
-        # Without the lens name, two unbundled lenses produce identical entries, and
-        # lens_health could not say which one came back empty.
-        {
-            printf -- '- `%s:lens`, running the `%s` lens. Call it `%s` in `lens_health`.\n' \
-                "$NAMESPACE" "$lens" "$lens"
-            printf '  Also tell it: Load the `%s` skill and have at it.\n' "$lens"
-        } >>"$BUILD/lens-list.txt"
+        # A lens the action does not bundle gets an agent rendered for it here, naming
+        # its skill the way a bundled lens's agent names its own. The alternative was a
+        # generic agent plus a line of the orchestrator's prompt telling it which skill to
+        # pass on, and a lens that never received that line reviewed under its name with
+        # no skill loaded, which nothing downstream can tell from a real review.
+        bun "$ACTION/scripts/build-lens-agents.ts" --one "$lens" "$PLUGIN/agents/$lens.md"
     else
         echo "lens '$lens' has no SKILL.md in the action's bundled lenses or in" >&2
         echo "$WORKSPACE/.claude/skills/$lens/" >&2
         exit 1
     fi
 
-    # This lens reads tool reports rather than the diff, and where they are is per-run.
-    if [ "$lens" = "static-analysis" ]; then
+    printf -- '- `%s:%s`\n' "$NAMESPACE" "$lens" >>"$BUILD/lens-list.txt"
+
+    # Some lenses need something this run wrote, and where it is cannot be in an agent
+    # that was rendered before the run existed. A file here rather than a test on the
+    # lens's name, so that the loop stays indifferent to which lens it is building.
+    EXTRA="$ACTION/review/lens-dispatch-extras/$lens.md"
+
+    if [ -f "$EXTRA" ]; then
         {
-            printf '  Also tell it: The static analysis reports for this run are the files\n'
-            printf '  matching `%s/tool-*.json`. Read every one of them.\n' "$BUILD"
+            printf '  Also tell it:\n'
+            sed -e "s|__BUILD__|$(sed_escape "$BUILD")|g" -e 's|^.|  &|' "$EXTRA"
         } >>"$BUILD/lens-list.txt"
     fi
-
 done
 
 # The action only ever reviews what is pushed. A session is usually on a branch still
-# being written, which is what INCLUDE_WORKING_TREE is for.
+# being written, and INCLUDE_WORKING_TREE covers that.
 #
 # Pin HEAD to the commit it is now. A review runs for twenty minutes and whoever started
 # it is often still working: a lens found the tree moving under it mid-review and had to
@@ -205,11 +206,17 @@ done
 # same checked-out commit either way.
 HEAD_SHA=$(git -C "$WORKSPACE" rev-parse HEAD 2>/dev/null || echo HEAD)
 
-if [ -n "${INCLUDE_WORKING_TREE:-}" ]; then
-    RANGE="$BASE"
-else
-    RANGE="$BASE...$HEAD_SHA"
-fi
+# Compared with 1 rather than tested for emptiness. The value is composed by a model
+# following commands/review.md, so `INCLUDE_WORKING_TREE=0` is a spelling that turns up,
+# and under a test for emptiness it would drop the HEAD pin above.
+case ${INCLUDE_WORKING_TREE:-0} in
+0) RANGE="$BASE...$HEAD_SHA" ;;
+1) RANGE="$BASE" ;;
+*)
+    echo "INCLUDE_WORKING_TREE is '$INCLUDE_WORKING_TREE'; it takes 0 or 1" >&2
+    exit 1
+    ;;
+esac
 
 # The pathspec runs to several hundred characters. Handing it to the orchestrator as
 # text means it retypes the whole thing once per lens, and a copy that loses an entry
@@ -229,39 +236,35 @@ while IFS= read -r -d '' arg; do args+=("$arg"); done <"$(dirname "$0")/diff-arg
 git diff "${args[@]}"
 DIFF_SCRIPT
 
-# `&` and `|` mean something to sed's replacement, and a path or a glob may hold either.
-sed_escape() {
-    printf '%s' "$1" | sed -e 's/[|&\\]/\\&/g'
-}
-
 # Indent the dispatch prompt so it sits as a block inside the orchestrator's prompt.
 # Matching `^.` rather than `^` keeps blank lines free of trailing whitespace.
 sed -e "s|__BASE__|$(sed_escape "$BASE")|g" \
     -e "s|__HEAD__|$(sed_escape "$HEAD_SHA")|g" \
     -e "s|__DIFF_SCRIPT__|$(sed_escape "$BUILD/diff.sh")|g" \
+    -e "s|__DIFF_ARGS__|$(sed_escape "$BUILD/diff-args")|g" \
     "$ACTION/review/lens-dispatch.md" |
     sed -e 's|^.|    &|' >"$BUILD/dispatch.txt"
 
+# Only CodeFerret's own account can tell its threads from a person's. Anywhere else the
+# review posts as whoever ran it, and closing a thread would take their words off the
+# page along with everyone else's. The two policies are separate files rather than one
+# followed by its retraction, so the prompt states a single policy either way.
+if [ "$RESOLVE_THREADS" = "0" ]; then
+    RESOLVE_FILE="$ACTION/review/resolve-none.md"
+else
+    RESOLVE_FILE="$ACTION/review/resolve-judge.md"
+fi
+
 sed -e "s|__BASE__|$(sed_escape "$BASE")|g" \
+    -e "s|__HEAD__|$(sed_escape "$HEAD_SHA")|g" \
     -e "s|__EXISTING__|$(sed_escape "$BUILD/existing.json")|g" \
     -e "/__LENS_LIST__/r $BUILD/lens-list.txt" \
     -e "/__LENS_LIST__/d" \
     -e "/__DISPATCH__/r $BUILD/dispatch.txt" \
     -e "/__DISPATCH__/d" \
+    -e "/__RESOLVE__/r $RESOLVE_FILE" \
+    -e "/__RESOLVE__/d" \
     "$ACTION/review/orchestrator.md" >"$BUILD/orchestrator.txt"
-
-# Only CodeFerret's own account can tell its threads from a person's. Anywhere else the
-# review posts as whoever ran it, and closing a thread would take their words off the
-# page along with everyone else's.
-if [ "$RESOLVE_THREADS" = "0" ]; then
-    cat >>"$BUILD/orchestrator.txt" <<'NO_RESOLVE'
-
-One correction to STEP 4: leave `resolve` empty and close nothing. This run comments
-under a person's own account rather than CodeFerret's, so `mine` marks their threads as
-well as yours and there is no way to tell them apart. Still say in `notes` which threads
-you would have closed and why.
-NO_RESOLVE
-fi
 
 # The orchestrator reads this file whether or not there was a pull request to fetch
 # comments from, and fetch-existing.ts overwrites it when there was. The keys have to be
