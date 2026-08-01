@@ -71,6 +71,15 @@ fi
 
 if [ -n "$DECLINE" ]; then
     echo "refusing to delete '$PLUGIN': it $DECLINE" >&2
+
+    # A run directory written before this guard existed has no marker either, so the
+    # first run after upgrading refuses and every one after it would too. Say the way
+    # out, because from the message alone it reads as a bug rather than a decision.
+    if [ -d "$PLUGIN/build" ]; then
+        echo "it looks like a run directory from before this check existed." >&2
+        echo "delete it yourself and run again: rm -rf '$PLUGIN'" >&2
+    fi
+
     exit 1
 fi
 
