@@ -209,6 +209,14 @@ the dispatch and write their reports into `build/`, and the `static-analysis` le
 each finding against the code, drops what does not hold, and writes the comment the rule
 could not — naming the input, the path it takes, and the fix.
 
+**Each tool decides which files it reads.** `exclude-paths` keeps lockfiles out of the
+review because nobody wants a reviewer reading one, and a lockfile is exactly what
+`osv-scanner` needs: it is the only thing here that can say a dependency has an advisory
+against it, which is the one job no lens can do at all. So a tool takes the range from
+the run's own diff — the same commits every lens reads — and decides its own pathspec.
+`semgrep` keeps the review's; `osv-scanner` drops it. `exclude-paths` is about what
+deserves a reader's attention, not a machine's.
+
 Nothing else changes shape. The orchestrator still merges N lens reports and still
 deduplicates on what the defect is, so a rule and two lenses that spot the same thing
 produce one comment with three names in `found_by` rather than three comments. A tool

@@ -49,6 +49,26 @@ your judgement, and it is what lets somebody check it.
 Severity comes from what the defect does here, not from the tool's label. Tools grade a
 rule, not an instance.
 
+## When a finding carries no line
+
+Some tools report a package rather than a position, and say so with `line: null`. A
+vulnerable dependency is true of a whole file, not of one line in it.
+
+Anchor it somewhere a reader can act on: the line in the manifest — `package.json`,
+`composer.json`, `go.mod` — where that dependency is declared, when the diff touches it.
+Failing that, the line in the lockfile where the package appears. A comment anchored to
+line 1 of a lockfile is one nobody reads.
+
+## When a finding may predate the change
+
+A lockfile holds every dependency, not only the ones this diff touched, so a vulnerability
+in it may have nothing to do with this pull request.
+
+Check the diff before you write the comment. Did this change add the package, or move its
+version into the vulnerable range, or neither? Say which. "This adds lodash 4.17.11, which
+has five known advisories" is a different comment from "lodash 4.17.11 was already here".
+Both are worth making, and running them together wastes the author's time.
+
 ## Account for what you dropped
 
 Put in `notes`: how many findings each report held, how many you kept, and the reason
