@@ -38,6 +38,12 @@ WORKSPACE=${4:?missing workspace}
 BUILD="$OUT/build"
 PREFIX=${PREFIX:-}
 MODEL=${MODEL:-opus}
+
+# Unset by default, which leaves whatever the model does on its own. Lowering it is a
+# review-quality decision and not only a cost one: the one measurement we have of trading
+# capability for price went the wrong way, with Sonnet spending 574k output tokens to find
+# 29 things where Opus spent 412k to find 90.
+EFFORT=${EFFORT:-}
 PERMISSION_MODE=${PERMISSION_MODE:-bypassPermissions}
 
 : "${LENSES:?no lenses given}"
@@ -133,6 +139,7 @@ status=0
 # with nothing to merge.
 $PREFIX claude -p "$(cat "$BUILD/orchestrator.txt")" \
     --model "$MODEL" \
+    ${EFFORT:+--effort "$EFFORT"} \
     --output-format json \
     --json-schema "$(cat "$ACTION/review/merged-schema.json")" \
     --permission-mode "$PERMISSION_MODE" \

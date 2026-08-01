@@ -77,6 +77,14 @@ inputs:
         description: Model for the orchestrator and every lens.
         required: false
         default: opus
+    effort:
+        description: |
+            Reasoning effort for the orchestrator and every lens: low, medium, high,
+            xhigh or max. Empty leaves the model's own default. Turning it down is a
+            review-quality decision as much as a cost one, so measure a run before
+            settling on one: the findings file records what each lens returned.
+        required: false
+        default: ''
     command-prefix:
         description: |
             Prefix for the `claude` and `bun` invocations, for repositories that run their
@@ -219,6 +227,7 @@ runs:
               GITHUB_REPOSITORY: ${{ github.repository }}
               PREFIX: ${{ inputs.command-prefix }}
               MODEL: ${{ inputs.model }}
+              EFFORT: ${{ inputs.effort }}
               LENSES: ${{ inputs.lenses }}
               TOOLS: ${{ inputs.tools }}
               EXCLUDE_PATHS: ${{ inputs.exclude-paths }}
