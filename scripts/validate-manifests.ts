@@ -269,7 +269,7 @@ if (!existsSync(provenanceFile)) {
         (await Bun.file(provenanceFile).text())
             .split("\n")
             .slice(1)
-            .map((line) => line.split("\t")[0].trim())
+            .map((line) => (line.split("\t")[0] ?? "").trim())
             .filter(Boolean),
     );
 

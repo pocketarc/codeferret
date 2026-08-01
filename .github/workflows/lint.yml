@@ -25,12 +25,15 @@ jobs:
             - name: Validate manifests
               run: bun scripts/validate-manifests.ts
 
-            # Nothing here typechecks: that would want @types/bun, and so a package.json
-            # and a lockfile in a repository that has neither. Bundling is the check that
-            # is free. It resolves every import and parses every file, which catches a
-            # script that would have died at the first line of a real review.
-            - name: Bundle the scripts
-              run: bun build --target=bun review/*.ts review/tools/*.ts scripts/*.ts --outdir="$RUNNER_TEMP/bundle"
+            # The scripts are the review. Nothing ships from package.json: it exists so
+            # tsc has @types/bun to check them against, under noUncheckedIndexedAccess,
+            # which is what catches the index access that returns undefined on the one
+            # input nobody tried.
+            - name: Install dev dependencies
+              run: bun install --frozen-lockfile
+
+            - name: Typecheck
+              run: bun run typecheck
 
     shellcheck:
         runs-on: ubuntu-latest

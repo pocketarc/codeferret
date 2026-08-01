@@ -51,10 +51,18 @@ if (!match) {
     process.exit(1);
 }
 
-let lines = match[1].split("\n");
+const frontmatter = match[1];
+
+if (frontmatter === undefined) {
+    console.error(`${path}: frontmatter block is empty`);
+    process.exit(1);
+}
+
+let lines = frontmatter.split("\n");
 
 const nameIndex = lines.findIndex((l) => /^name:/.test(l));
-const previous = nameIndex === -1 ? null : lines[nameIndex].replace(/^name:\s*/, "").trim();
+const declaredName = nameIndex === -1 ? undefined : lines[nameIndex];
+const previous = declaredName === undefined ? null : declaredName.replace(/^name:\s*/, "").trim();
 
 if (nameIndex === -1) {
     lines.unshift(`name: ${name}`);
@@ -99,7 +107,7 @@ if (descriptionIndex === -1) {
     // A description can be a folded block scalar or a wrapped quoted string, both of
     // which continue over indented lines until the next key at column zero.
     let end = descriptionIndex + 1;
-    while (end < lines.length && /^(\s|$)/.test(lines[end])) end += 1;
+    while (end < lines.length && /^(\s|$)/.test(lines[end] ?? "")) end += 1;
 
     lines.splice(descriptionIndex, end - descriptionIndex, scoped);
 }
@@ -167,13 +175,15 @@ function rewriteMarkdown(label: string, markdown: string): string {
 
         const heading = fenced ? null : line.match(HEADING);
 
+        const hashes = heading?.[1] ?? "";
+
         if (dropping > 0) {
-            if (!heading || heading[1].length > dropping) continue;
+            if (!heading || hashes.length > dropping) continue;
             dropping = 0;
         }
 
         if (heading && CONNECTORS_HEADING.test(line)) {
-            dropping = heading[1].length;
+            dropping = hashes.length;
             notes.push(`  ${label}: dropped the 'If Connectors Available' section; a lens session has none`);
             continue;
         }
@@ -218,7 +228,7 @@ let sawSkillFile = false;
 
 // Everything vendored, not only SKILL.md: caveman-review ships a README carrying a link
 // to the repository root it came from, and a lens reads what it is handed.
-for (const entry of readdirSync(skillDirectory, { recursive: true })) {
+for (const entry of readdirSync(skillDirectory, { recursive: true, encoding: "utf8" })) {
     if (!entry.endsWith(".md")) continue;
 
     const file = join(skillDirectory, entry);

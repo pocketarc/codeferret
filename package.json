@@ -1,0 +1,12 @@
+{
+    "name": "codeferret",
+    "private": true,
+    "description": "Dev dependencies only. Nothing here ships: the action and the plugin run the scripts under review/ and scripts/ with bun directly.",
+    "scripts": {
+        "typecheck": "tsc --noEmit"
+    },
+    "devDependencies": {
+        "@types/bun": "^1.3.5",
+        "typescript": "^5.9.3"
+    }
+}

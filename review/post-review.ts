@@ -63,6 +63,10 @@ if (!findingsPath || !baseRef || !headSha || !prNumber || !token || !repo) {
     process.exit(2);
 }
 
+// Bound here rather than inside commentableLines, because the check above narrows these
+// only at this level: a function body could be called before it ran.
+const buildDir = dirname(findingsPath);
+
 function severityRank(s: string): number {
     const i = SEVERITY_ORDER.indexOf(s);
     return i === -1 ? SEVERITY_ORDER.length : i;
@@ -75,7 +79,7 @@ async function commentableLines(): Promise<Map<string, Set<number>>> {
     // do this map covers files no lens read, so a finding can be anchored inline against
     // a file nothing reviewed. Element one is the range, which this script takes from its
     // own arguments; everything after it is the pathspec.
-    const argsFile = join(dirname(findingsPath), "diff-args");
+    const argsFile = join(buildDir, "diff-args");
 
     if (!existsSync(argsFile)) {
         console.error(
@@ -100,7 +104,8 @@ async function commentableLines(): Promise<Map<string, Set<number>>> {
     for (const line of new TextDecoder().decode(proc.stdout).split("\n")) {
         const newFile = line.match(/^\+\+\+ b\/(.*)$/);
         if (newFile) {
-            currentFile = newFile[1] === "/dev/null" ? null : newFile[1];
+            const named = newFile[1];
+            currentFile = named === undefined || named === "/dev/null" ? null : named;
             if (currentFile && !byFile.has(currentFile)) byFile.set(currentFile, new Set());
             continue;
         }
@@ -317,7 +322,8 @@ if (merged.summary) head.push(clamp(merged.summary));
 // One clause reads as a sentence. Five joined by a separator wrap wherever GitHub's
 // column ends, and a screen reader speaks the separator as nothing, so the counts run
 // into each other. Past one, they are a list.
-head.push(counts.length === 1 ? counts[0] : counts.map((c) => `- ${c}`).join("\n"));
+const [onlyCount] = counts;
+head.push(counts.length === 1 && onlyCount ? onlyCount : counts.map((c) => `- ${c}`).join("\n"));
 
 if (health.length > 0) {
     // A list, not a table: GitHub gives a wide column the container and starves the

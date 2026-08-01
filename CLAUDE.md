@@ -255,8 +255,7 @@ the arguments behind them.
 - **No lens is handed a way to reach the network.** `WebFetch` and `WebSearch` are off the
   tool list on purpose: a lens reads an untrusted diff with `CLAUDE_CODE_OAUTH_TOKEN` in
   its environment. This raises the cost of exfiltration rather than preventing it, since
-  `Bash` still has `curl`. Before pointing this at a public repository, narrow the
-  artifact's `path` or drop the upload: `run.json` is not secret-masked.
+  `Bash` still has `curl`.
 - **A tool an agent asks for is not necessarily a tool it gets, and nothing says so.**
   `Grep`, `Glob`, and `TodoWrite` were all in the lens tool list and none reached a
   dispatched lens. Reading the list will not tell you, so check it against a real dispatch
@@ -279,3 +278,32 @@ the arguments behind them.
 - **The action posts on `findings-checked`, not on the findings file existing.** A
   findings file that fails `check-findings.ts` produces a comment with no line, and GitHub
   answers 422 for the whole review.
+
+## Accepted risks
+
+Each of these is real, has been weighed, and stands. A review keeps finding them, because
+a lens reads the code rather than this file. Check here before acting on one.
+
+- **Mutable version references, `@v1` above all.** The template and the README point
+  consumers at `pocketarc/codeferret@v1`, which this repository moves on every release. A
+  tag anyone can repoint is a supply-chain risk and the tooling is right to say so. It is
+  also the whole distribution mechanism: pinning by SHA would mean every consumer editing
+  a workflow to get a fix. Anyone who wants the guarantee can pin `@v1.0.0`.
+- **A lens can read `CLAUDE_CODE_OAUTH_TOKEN`.** It runs with `Bash`, the token is in the
+  environment it inherits, and `run.json` goes into an artifact that is not secret-masked.
+  On a private repository, whoever can read that artifact could run the action anyway.
+  This is the one to revisit before pointing CodeFerret at a public repository: narrow the
+  artifact's `path`, or drop the upload.
+- **Anyone who can comment can decline a finding.** The orchestrator reads every comment
+  whoever wrote it, so on a public repository a stranger's "working as intended" suppresses
+  a finding on later runs. Deliberate: the alternative is ignoring a maintainer's reply
+  because it came from the wrong account. A reply still cannot make a security defect safe.
+- **Two lenses ship without the capability their skills describe.**
+  `copilot-web-design-reviewer` has no browser and `anthropic-accessibility-review` cannot
+  render a page. Both stay in the default set: measured over two runs they produced five
+  unique findings, including the one that was rendering every finding body as a code
+  block. `review/lens-extras/` tells each what it cannot do.
+- **semgrep fetches its ruleset at run time.** `--config p/default` is not pinned, so what
+  the tool looks for can change between two runs of the same commit. The rules are
+  declarative YAML rather than code, and `SEMGREP_CONFIG` points at a local set for anyone
+  who wants to close it.
