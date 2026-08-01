@@ -44,28 +44,39 @@ Carry on, but say so, when:
 ## 2. Settle what is under review
 
 A `<base>...HEAD` diff covers committed work only. When `dirty` is not `0`, say how many
-files are uncommitted and ask which the user wants:
+tracked files are uncommitted and ask which the user wants:
 
 - **Committed work only** — the same diff the action would review.
-- **Uncommitted work as well** — diffs the working tree against `merge_base`. A git diff
-  never shows an untracked file; `git add -N <path>` brings one in.
+- **Uncommitted work as well** — diffs the working tree against `merge_base`.
+
+When `untracked` is not `0`, say that too, whichever they pick. A git diff never shows an
+untracked file, so a newly written one is invisible to every lens until `git add -N
+<path>` puts it in the index.
 
 ## 3. Settle the lenses
 
 Use the lenses named in `$ARGUMENTS`. Otherwise read
 `<plugin>/review/defaults/lenses.txt`, which is the set the action runs.
 
-Before dispatching, say how many lenses are about to run, and that twelve lenses take
-around 15 minutes and cost several dollars on Opus. Let the user stop you there.
+Before dispatching, say how many lenses are about to run, and that a full twelve-lens run
+takes tens of minutes and costs several dollars on Opus. Let the user stop you there.
 
 ## 4. Build the prompts
 
 ```sh
-printf '<one lens per line>\n' | \
+cat "<plugin>/review/defaults/lenses.txt" | \
   EXCLUDE_PATHS="$(cat "<plugin>/review/defaults/exclude-paths.txt")" \
   PROMPTS_ONLY=1 \
-  bash "<plugin>/review/build-prompts.sh" <base> "<plugin>" "<git-dir>/codeferret/run" "<repo root>"
+  bash "<plugin>/review/build-prompts.sh" <base> "<plugin>" "<git-dir>/codeferret/run" <toplevel>
 ```
+
+`<toplevel>` is the working tree, which is where `.claude/skills/` and `REVIEW.md` live.
+Passing the git dir instead drops a repository's own lens and its standards without
+saying anything.
+
+When the user named lenses, swap the `cat` for `printf 'one\nper\nline\n'`. Do not retype
+the default list: it is twelve names you have already read, and a typo there is a lens
+that silently does not run.
 
 To review uncommitted work as well, pass `merge_base` as `<base>` and add
 `INCLUDE_WORKING_TREE=1` to that environment.

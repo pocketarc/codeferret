@@ -47,6 +47,11 @@ fi
 
 say repo "$GIT_DIR"
 
+# The git dir is not the working tree, and it is the working tree that holds
+# .claude/skills/ and REVIEW.md. In a linked worktree the two are nowhere near
+# each other.
+say toplevel "$(git rev-parse --show-toplevel)"
+
 HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || true)
 
 if [ -z "$HEAD_SHA" ]; then
@@ -66,14 +71,19 @@ else
 fi
 
 # A shallow clone has no merge base to diff against, and deepening it is a network
-# fetch, which is the caller's decision to make rather than this script's.
-if [ -f "$GIT_DIR/shallow" ]; then
+# fetch, which is the caller's decision to make rather than this script's. Ask git
+# rather than looking for the marker file: in a linked worktree it lives in the common
+# dir, not the one --absolute-git-dir reports.
+if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
     say shallow yes
 else
     say shallow no
 fi
 
-say dirty "$(git status --porcelain | wc -l | tr -d '[:space:]')"
+# Untracked files cannot appear in any diff, so they say nothing about whether the
+# review is anchorable. Counting them as dirty would block posting over a scratch file.
+say dirty "$(git status --porcelain --untracked-files=no | wc -l | tr -d '[:space:]')"
+say untracked "$(git ls-files --others --exclude-standard | wc -l | tr -d '[:space:]')"
 
 if [ -n "$BRANCH" ] &&
     git rev-parse --verify --quiet "origin/$BRANCH" >/dev/null &&
@@ -87,7 +97,10 @@ PR=""
 PR_BASE=""
 
 if command -v gh >/dev/null 2>&1; then
-    PR_LINE=$(gh pr view --json number,baseRefName --jq '[.number, .baseRefName] | @tsv' 2>/dev/null || true)
+    # `gh pr view` answers with the closed or merged pull request a branch used to have,
+    # which would offer to post a review onto something nobody is reading any more.
+    PR_LINE=$(gh pr view --json number,baseRefName,state \
+        --jq 'select(.state == "OPEN") | [.number, .baseRefName] | @tsv' 2>/dev/null || true)
     PR=$(printf '%s' "$PR_LINE" | cut -f1)
     PR_BASE=$(printf '%s' "$PR_LINE" | cut -f2)
 fi

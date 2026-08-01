@@ -23,7 +23,13 @@ import { existsSync, readdirSync } from "node:fs";
 // A tool name Claude Code does not recognise is dropped with no warning. `Grep`, `Glob`
 // and `TodoWrite` were all in this list and all silently absent, which is why searching
 // goes through Bash here. Check the list against a real dispatch before adding to it.
-const TOOLS = "Read, Bash, WebFetch, WebSearch, Skill, Agent";
+//
+// `Agent` is deliberately absent. A lens that spawns a general-purpose subagent hands it
+// the full tool set, `Write` and `Edit` included, and ten lenses share one checkout — so
+// the one thing this list exists to prevent would go through the gap. The action closes
+// it at the CLI; a session has only this list. Some skills fan out into subagents and
+// will do their passes one after another instead.
+const TOOLS = "Read, Bash, WebFetch, WebSearch, Skill";
 
 const AGENTS_DIR = "agents";
 

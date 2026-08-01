@@ -1,7 +1,7 @@
 ---
 name: anthropic-code-review
 description: CodeFerret's anthropic-code-review lens. Dispatched by /codeferret:review; not for general use.
-tools: Read, Bash, WebFetch, WebSearch, Skill, Agent
+tools: Read, Bash, WebFetch, WebSearch, Skill
 ---
 
 Review this change.

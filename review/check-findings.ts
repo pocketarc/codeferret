@@ -23,9 +23,17 @@ if (!path) {
 }
 
 const problems: string[] = [];
+const warnings: string[] = [];
 
 function problem(where: string, message: string): void {
     problems.push(`${where}: ${message}`);
+}
+
+// Something the schema permits and post-review.ts survives. It still gets said, but the
+// action runs this under `bash -e`, and failing here throws away a review that has
+// already been paid for and posts nothing.
+function warn(where: string, message: string): void {
+    warnings.push(`${where}: ${message}`);
 }
 
 function checkString(where: string, field: string, value: unknown, required = true): void {
@@ -58,14 +66,23 @@ function checkEnum(where: string, field: string, value: unknown, allowed: string
     }
 }
 
-let merged: Record<string, unknown>;
+let parsed: unknown;
 
 try {
-    merged = JSON.parse(await Bun.file(path).text());
+    parsed = JSON.parse(await Bun.file(path).text());
 } catch (error) {
     console.error(`${path}: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
 }
+
+// `null` and `[]` are both valid JSON, so the parse above accepts them and every field
+// access after this throws a stack trace instead of saying what is wrong.
+if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    console.error(`${path}: is ${Array.isArray(parsed) ? "an array" : String(parsed)}, not an object`);
+    process.exit(1);
+}
+
+const merged = parsed as Record<string, unknown>;
 
 checkString("findings.json", "summary", merged.summary, false);
 checkString("findings.json", "notes", merged.notes, false);
@@ -101,18 +118,19 @@ for (const [i, raw] of merged.findings.entries()) {
         problem(label, `\`file\` must be repo-relative, got '${f.file}'`);
     }
 
+    // post-review.ts reads neither of these, so neither is worth losing a review over.
     if (!Array.isArray(f.found_by) || f.found_by.length === 0) {
-        problem(label, "`found_by` must list at least one lens");
+        warn(label, "`found_by` names no lens");
     } else if (f.found_by.some((lens) => typeof lens !== "string")) {
-        problem(label, "`found_by` must contain only strings");
+        warn(label, "`found_by` holds something that is not a string");
     }
 
     if (f.in_diff !== undefined && typeof f.in_diff !== "boolean") {
-        problem(label, "`in_diff` must be a boolean");
+        warn(label, "`in_diff` is not a boolean");
     }
 
     if ((f.status === "already-reported" || f.status === "declined") && !f.existing_comment_url) {
-        problem(label, `is '${f.status}' but names no \`existing_comment_url\``);
+        warn(label, `is '${f.status}' but names no \`existing_comment_url\`, so it links nowhere`);
     }
 }
 
@@ -157,10 +175,13 @@ if (merged.lens_health !== undefined) {
     }
 }
 
+for (const w of warnings) console.warn(`! ${w}`);
+
 if (problems.length > 0) {
     for (const p of problems) console.error(`✘ ${p}`);
     console.error(`\n${problems.length} problem(s) in ${path}.`);
     process.exit(1);
 }
 
-console.log(`✔ ${path} — ${merged.findings.length} finding(s), shape valid`);
+const noted = warnings.length > 0 ? `, ${warnings.length} worth a look` : "";
+console.log(`✔ ${path} — ${merged.findings.length} finding(s), shape valid${noted}`);

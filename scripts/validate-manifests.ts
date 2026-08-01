@@ -109,7 +109,9 @@ if (manifest) {
 const buildScript = await Bun.file("review/build-prompts.sh").text();
 const hardcoded = buildScript.match(/^NAMESPACE=(\S+)$/m)?.[1];
 
-if (hardcoded !== namespace) {
+// Only worth comparing when the manifest parsed. Otherwise this reports a namespace
+// mismatch and sends the reader to the wrong file.
+if (manifest && hardcoded !== namespace) {
     fail("review/build-prompts.sh", `NAMESPACE is '${hardcoded}', but ${manifestFile} declares '${namespace}'`);
 }
 
@@ -242,15 +244,35 @@ if (agents.exitCode !== 0) {
 
 // A command with no description never surfaces in the slash menu, so the feature ships
 // and nobody can find it.
-for (const entry of existsSync("commands") ? readdirSync("commands") : []) {
-    if (!entry.endsWith(".md")) continue;
+// Regexes are what let an unquoted `pull-requests: write` through once already, and a
+// command whose frontmatter will not parse never reaches the slash menu at all.
+async function checkFrontmatter(file: string, required: string[]): Promise<void> {
+    const block = (await Bun.file(file).text()).match(/^---\n([\s\S]*?)\n---\n/)?.[1];
 
-    const file = `commands/${entry}`;
-    const frontmatter = (await Bun.file(file).text()).match(/^---\n([\s\S]*?)\n---\n/)?.[1];
+    if (block === undefined) {
+        fail(file, "has no frontmatter");
+        return;
+    }
 
-    if (frontmatter === undefined) fail(file, "has no frontmatter");
-    else if (!/^description:\s*\S/m.test(frontmatter)) fail(file, "has no `description` in frontmatter");
+    let parsed: Record<string, unknown>;
+    try {
+        parsed = Bun.YAML.parse(block) as Record<string, unknown>;
+    } catch (error) {
+        fail(file, `frontmatter is not valid YAML: ${error instanceof Error ? error.message : error}`);
+        return;
+    }
+
+    const missing = required.filter((key) => !parsed?.[key]);
+    if (missing.length > 0) fail(file, `frontmatter has no ${missing.map((k) => `\`${k}\``).join(", ")}`);
     else console.log(`✔ ${file}`);
+}
+
+for (const entry of existsSync("commands") ? readdirSync("commands") : []) {
+    if (entry.endsWith(".md")) await checkFrontmatter(`commands/${entry}`, ["description"]);
+}
+
+for (const entry of existsSync("agents") ? readdirSync("agents") : []) {
+    if (entry.endsWith(".md")) await checkFrontmatter(`agents/${entry}`, ["name", "description", "tools"]);
 }
 
 const workflowFiles = readdirSync(".github/workflows")

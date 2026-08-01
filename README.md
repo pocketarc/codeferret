@@ -43,13 +43,15 @@ Then, in any repository:
 It works out what to diff against (the base of your open pull request, or the default
 branch), dispatches the lenses, and prints what they found as `path:line` you can click.
 Uncommitted work counts if you want it to. When the branch has a pull request and the
-work is pushed, it posts the review; otherwise the findings stay in the terminal.
+work is pushed, it offers to post the review; otherwise the findings stay in the
+terminal.
 
 `/codeferret:install-workflow` writes the action's workflow into the repository you are
 in, for when you would rather have this run on every pull request.
 
-Twelve lenses take around 15 minutes and cost several dollars on Opus, so it says what it
-is about to do before it does it.
+Lenses run in parallel, so a twelve-lens run costs several dollars on Opus without taking
+much longer than a three-lens one. It says how many it is about to run before it runs
+them.
 
 ## Where things are
 

@@ -4,8 +4,17 @@ on:
     pull_request:
         types: [opened, synchronize, ready_for_review, reopened]
 
+# A push to an open pull request cancels the review already running for it. Without
+# this, three pushes in a row buy three full reviews and you read the last one.
+concurrency:
+    group: codeferret-${{ github.event.pull_request.number }}
+    cancel-in-progress: true
+
 jobs:
     review:
+        # A fork's pull request cannot read the secret, so without this gate every
+        # outside contributor gets a failed job that only the maintainer can explain.
+        if: contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
         runs-on: ubuntu-latest
         # Twelve lenses on a small diff take around 15 minutes; a large one takes longer.
         timeout-minutes: 60

@@ -1,7 +1,7 @@
 ---
 name: copilot-security-review
 description: CodeFerret's copilot-security-review lens. Dispatched by /codeferret:review; not for general use.
-tools: Read, Bash, WebFetch, WebSearch, Skill, Agent
+tools: Read, Bash, WebFetch, WebSearch, Skill
 ---
 
 Review this change.

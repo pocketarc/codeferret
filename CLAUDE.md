@@ -116,7 +116,8 @@ DRY_RUN=1 GITHUB_TOKEN=x GITHUB_REPOSITORY=pocketarc/codeferret \
   test/fixture test/fixture-defects 1
 ```
 
-Budget roughly 15 minutes and several dollars per run on Opus with three lenses.
+Budget roughly 15 minutes and several dollars per run on Opus with three lenses. Lenses
+run in parallel, so adding more of them costs money rather than time.
 
 ## Adding a lens
 
@@ -219,9 +220,12 @@ commit reaches them the moment it lands, where an action consumer sees nothing u
   find, and ten lenses read the same checkout at once, so one edit corrupts every other
   lens's review. `Edit`, `Write`, and `NotebookEdit` are kept away from them twice over:
   the action denies them at the CLI, and the agents in `agents/` name the tools they get
-  and leave those three out. `review/lens-brief.md` then tells each lens to report rather
-  than repair. Keep all of it. None of it is a guarantee: a lens has `Bash`, so `sed -i`
-  is a command away, and only the instruction stands between it and the tree.
+  and leave those three out. `Agent` is left out for the same reason: the action's denial
+  reaches a nested subagent and an agent's tool list does not, so a lens that spawned a
+  general-purpose one in a session would hand it `Write` and undo the whole arrangement.
+  `review/lens-brief.md` then tells each lens to report rather than repair. Keep all of
+  it. None of it is a guarantee: a lens has `Bash`, so `sed -i` is a command away, and
+  only the instruction stands between it and the tree.
 - **A tool name Claude Code does not know is dropped in silence.** The agents name their
   tools. `Grep`, `Glob`, and `TodoWrite` were all in that list, none of them reached a
   dispatched lens, and nothing said so: the lenses were searching through `Bash` alone.

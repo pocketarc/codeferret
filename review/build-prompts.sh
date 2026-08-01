@@ -26,6 +26,11 @@ PROMPTS_ONLY=${PROMPTS_ONLY:-}
 NAMESPACE=codeferret
 MANIFEST="$ACTION/.claude-plugin/plugin.json"
 
+if [ ! -f "$MANIFEST" ]; then
+    echo "no plugin manifest at $MANIFEST" >&2
+    exit 1
+fi
+
 if ! grep -q "\"name\"[[:space:]]*:[[:space:]]*\"$NAMESPACE\"" "$MANIFEST"; then
     echo "plugin namespace '$NAMESPACE' does not match the name in $MANIFEST" >&2
     exit 1
@@ -92,8 +97,11 @@ for lens in "${LENSES[@]}"; do
             cp "$ACTION/agents/lens.md" "$PLUGIN/agents/lens.md"
         fi
 
+        # Name the lens on the line too. Two of these would otherwise be the same entry
+        # twice, and lens_health could not say which one came back empty.
         {
-            printf -- '- `%s:lens`\n' "$NAMESPACE"
+            printf -- '- `%s:lens`, running the `%s` lens. Call it `%s` in `lens_health`.\n' \
+                "$NAMESPACE" "$lens" "$lens"
             printf '  Also tell it: Load the `%s` skill and have at it.\n' "$lens"
         } >>"$BUILD/lens-list.txt"
     else
@@ -124,14 +132,30 @@ else
     RANGE="$BASE...HEAD"
 fi
 
+# The pathspec runs to several hundred characters. Handing it to the orchestrator as
+# text means it retypes the whole thing once per lens, and a copy that loses an entry
+# puts lockfiles and build output back into the diff without anything noticing. A script
+# is copied by name instead.
+{
+    printf '#!/usr/bin/env bash\n'
+    printf '# The diff this run reviews. Rebuilt every run.\n'
+    printf 'git diff %s %s\n' "$RANGE" "$PATHSPEC"
+} >"$BUILD/diff.sh"
+
+# `&` and `|` mean something to sed's replacement, and a path or a glob may hold either.
+sed_escape() {
+    printf '%s' "$1" | sed -e 's/[|&\\]/\\&/g'
+}
+
 # Indent the dispatch prompt so it sits as a block inside the orchestrator's prompt.
 # Matching `^.` rather than `^` keeps blank lines free of trailing whitespace.
-sed -e "s|__BASE__|$BASE|g" -e "s|__RANGE__|$RANGE|g" -e "s|__PATHSPEC__|$PATHSPEC|g" \
+sed -e "s|__BASE__|$(sed_escape "$BASE")|g" \
+    -e "s|__DIFF_SCRIPT__|$(sed_escape "$BUILD/diff.sh")|g" \
     "$ACTION/review/lens-dispatch.md" |
     sed -e 's|^.|    &|' >"$BUILD/dispatch.txt"
 
-sed -e "s|__BASE__|$BASE|g" \
-    -e "s|__EXISTING__|$BUILD/existing.json|g" \
+sed -e "s|__BASE__|$(sed_escape "$BASE")|g" \
+    -e "s|__EXISTING__|$(sed_escape "$BUILD/existing.json")|g" \
     -e "/__LENS_LIST__/r $BUILD/lens-list.txt" \
     -e "/__LENS_LIST__/d" \
     -e "/__DISPATCH__/r $BUILD/dispatch.txt" \

@@ -31,7 +31,8 @@ STEP 2 — merge. When every lens has reported:
   in `notes`.
 
 STEP 3 — check what has already been said. Read `__EXISTING__`. It holds every comment
-already on this pull request: `threads`, each a review comment with its `replies`, and
+already on this pull request: `threads`, each holding its `comments` in the order they
+were written, the first being the one that opened the thread, and
 `conversation` for the comments not anchored to a line. It may be empty. `mine: true`
 marks a thread an earlier CodeFerret run opened.
 
@@ -43,13 +44,14 @@ For each merged finding, set `status`:
 - `declined` when the thread is `resolved: true`, or when a reply rejects the finding or
   accepts it and chooses not to act: "we don't want that", "working as intended", "not for
   this PR". Copy the thread `url`. A resolved thread settles the matter on its own and
-  needs no reading of the replies.
+  needs no reading of the rest.
 - `new` in every other case.
 
 A thread with `outdated: true` covers nothing. GitHub collapses those, so the author
 cannot see them.
 
-Read the replies for what they settle. A reply answering a question, agreeing, or asking
+Read everything after that first comment for what it settles. A reply answering a
+question, agreeing, or asking
 for more detail leaves the finding as it was. Only a reply that closes the matter makes
 it `declined`.
 
