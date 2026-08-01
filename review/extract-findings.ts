@@ -1,14 +1,45 @@
 #!/usr/bin/env bun
 /**
- * Pull the merged findings out of a Claude Code run log.
+ * Pull the merged findings out of a Claude Code run log, and write down what the run cost.
  *
  * The orchestrator emits a fresh structured output each time a lens reports back, so
  * the log holds several `result` messages and only the last is complete.
+ *
+ * Six files come out of this, all in the directory of the findings path: `findings.json`,
+ * `findings-count`, `cost-usd`, `output-tokens`, `duration-ms` and `permission-denials`.
+ * The action reads every one of them, and review/summary.ts renders them into the job
+ * summary. The four numbers are written before the findings are looked at, because a run
+ * that produced none is the one whose cost and refusals somebody most wants to see.
+ *
+ * The shape of a run log is upstream's. It is narrowed rather than read through `any`,
+ * because a renamed field would otherwise report a $36 review as $0.00 with nothing
+ * saying the number was not found.
  *
  * Usage: bun extract-findings.ts <run.json> <findings.json>
  */
 
 import { dirname, join } from "node:path";
+
+interface ModelUsage {
+    outputTokens?: number;
+    costUSD?: number;
+}
+
+interface Denial {
+    tool_name?: string;
+    tool_input?: { command?: string };
+}
+
+interface ResultMessage {
+    type?: string;
+    subtype?: string;
+    is_error?: boolean;
+    total_cost_usd?: number;
+    duration_ms?: number;
+    modelUsage?: Record<string, ModelUsage>;
+    permission_denials?: Denial[];
+    structured_output?: { findings?: unknown[]; lens_health?: Array<{ lens?: string; findings_returned?: number; ok?: boolean; detail?: string }> };
+}
 
 const [runPath, outPath] = process.argv.slice(2);
 
@@ -17,26 +48,37 @@ if (!runPath || !outPath) {
     process.exit(2);
 }
 
+function record(value: unknown): Record<string, unknown> | null {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+    return value as Record<string, unknown>;
+}
+
+function number(value: unknown): number | null {
+    return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 const text = await Bun.file(runPath).text();
 
-let messages: Record<string, any>[];
+let messages: unknown[];
 try {
-    const parsed = JSON.parse(text);
+    const parsed: unknown = JSON.parse(text);
     messages = Array.isArray(parsed) ? parsed : [parsed];
 } catch {
     messages = text
         .split("\n")
         .filter((line) => line.trim().length > 0)
-        .map((line) => JSON.parse(line));
+        .map((line) => JSON.parse(line) as unknown);
 }
 
-const results = messages.filter((m) => m.type === "result");
-const last = results[results.length - 1];
+const results = messages.map(record).filter((m) => m !== null && m.type === "result");
+const raw = results[results.length - 1];
 
-if (!last) {
+if (!raw) {
     console.error("no result message in the run log. The session produced no terminal output.");
     process.exit(1);
 }
+
+const last: ResultMessage = raw;
 
 if (last.is_error) {
     console.error(`the run reported an error: ${last.subtype ?? "unknown"}`);
@@ -45,78 +87,63 @@ if (last.is_error) {
 const dir = dirname(outPath);
 
 // The result's `usage` counts the orchestrator's last turn and nothing else. Only
-// `modelUsage` covers the subagents, which is where a lens run spends everything: on a
-// twelve-lens review the two differ by a factor of sixty.
-const models: Record<string, { outputTokens?: number; costUSD?: number }> = last.modelUsage ?? {};
-const outputTokens = Object.values(models).reduce((total, m) => total + (m.outputTokens ?? 0), 0);
+// `modelUsage` covers the subagents, which is where a lens run spends everything: over a
+// full set of lenses the two differ by a factor of sixty.
+const models = record(last.modelUsage);
+const perModel = models ? Object.entries(models).map(([name, usage]) => [name, record(usage)] as const) : [];
 
-// `||` and not `??`: a subscription-billed run has been seen to report `total_cost_usd`
-// as a number the modelUsage figures contradict, and zero is the value that reads as a
-// free $36 review on every surface this number reaches.
-const costUsd =
-    last.total_cost_usd || Object.values(models).reduce((total, m) => total + (m.costUSD ?? 0), 0);
-const durationMs = last.duration_ms ?? 0;
+const outputTokens = perModel.reduce((total, [, usage]) => total + (number(usage?.outputTokens) ?? 0), 0);
 
-const denials: Array<{ tool_name?: string; tool_input?: { command?: string } }> = Array.isArray(
-    last.permission_denials,
-)
-    ? last.permission_denials
-    : [];
+const summed = perModel.reduce((total, [, usage]) => total + (number(usage?.costUSD) ?? 0), 0);
+const reported = number(last.total_cost_usd);
 
-// Written before the findings are looked at, because a run that produced none is the one
-// whose cost and refusals somebody most wants to see.
-await Bun.write(join(dir, "cost-usd"), costUsd.toFixed(2));
+// A subscription-billed run has been seen to report `total_cost_usd` as zero while the
+// modelUsage figures said otherwise, and zero is the number a reader takes for a free $36
+// review on every surface this reaches. So a reported zero falls through to the sum.
+//
+// Null when the log carried neither: a confident 0.00 out of a log whose shape has moved
+// is the failure this file is narrowed to avoid.
+let costUsd: number | null;
+
+if (reported) costUsd = reported;
+else if (models !== null) costUsd = summed;
+else if (reported === 0) costUsd = 0;
+else costUsd = null;
+const durationMs = number(last.duration_ms) ?? 0;
+const money = costUsd === null ? "unknown" : `$${costUsd.toFixed(2)}`;
+
+const denials: Denial[] = Array.isArray(last.permission_denials) ? last.permission_denials : [];
+
+await Bun.write(join(dir, "cost-usd"), costUsd === null ? "unknown" : costUsd.toFixed(2));
 await Bun.write(join(dir, "output-tokens"), String(outputTokens));
 await Bun.write(join(dir, "duration-ms"), String(durationMs));
 await Bun.write(join(dir, "permission-denials"), String(denials.length));
 
-// Rendered here rather than in the action's step, so that the shell reformats no
-// duration and guards no missing file, and so both surfaces round the same way.
-async function writeSummary(findingsCount: string): Promise<void> {
-    const rows: Array<[string, string]> = [
-        ["Findings", findingsCount],
-        ["Cost", `$${costUsd.toFixed(2)}`],
-        ["Output tokens", outputTokens.toLocaleString("en-GB")],
-        ["Wall clock", `${(durationMs / 60000).toFixed(1)} min`],
-    ];
-
-    const table = `### CodeFerret\n\n| Measure | Value |\n|---|---|\n${rows
-        .map(([measure, value]) => `| ${measure} | ${value} |`)
-        .join("\n")}\n`;
-
-    const refusals =
-        denials.length > 0
-            ? `\n> [!WARNING]\n> ${denials.length} tool calls were refused. The review covers less than this summary suggests.\n`
-            : "";
-
-    await Bun.write(join(dir, "summary.md"), table + refusals);
-}
-
 const structured = last.structured_output;
 
 if (!structured || !Array.isArray(structured.findings)) {
-    await writeSummary("none reported");
+    await Bun.write(join(dir, "findings-count"), "none reported");
     console.error("the run produced no structured findings");
     console.error(`result subtype: ${last.subtype ?? "unknown"}`);
-    console.error(`it cost $${costUsd.toFixed(2)} and was refused ${denials.length} tool call(s)`);
+    console.error(`it cost ${money} and was refused ${denials.length} tool call(s)`);
     process.exit(1);
 }
 
 await Bun.write(outPath, `${JSON.stringify(structured, null, 2)}\n`);
 await Bun.write(join(dir, "findings-count"), String(structured.findings.length));
-await writeSummary(String(structured.findings.length));
 
 const health = structured.lens_health ?? [];
-const broken = health.filter((h: { ok?: boolean }) => h.ok === false);
+const broken = health.filter((h) => h.ok === false);
 
 console.log(`findings: ${structured.findings.length}`);
 console.log(`lenses reported: ${health.length}`);
-console.log(`cost: $${costUsd.toFixed(2)}`);
+console.log(`cost: ${money}`);
 console.log(`output tokens: ${outputTokens.toLocaleString("en-GB")}`);
 console.log(`wall clock: ${(durationMs / 60000).toFixed(1)} min`);
 
-for (const [model, usage] of Object.entries(models)) {
-    console.log(`  ${model}: ${(usage.outputTokens ?? 0).toLocaleString("en-GB")} out, $${(usage.costUSD ?? 0).toFixed(2)}`);
+for (const [model, usage] of perModel) {
+    const tokens = (number(usage?.outputTokens) ?? 0).toLocaleString("en-GB");
+    console.log(`  ${model}: ${tokens} out, $${(number(usage?.costUSD) ?? 0).toFixed(2)}`);
 }
 
 for (const h of health) {
@@ -131,9 +158,6 @@ if (broken.length > 0) {
 if (denials.length > 0) {
     console.log(`\n${denials.length} tool call(s) were refused by the permission mode:`);
     for (const d of denials) {
-        // A denial carrying no tool_input prints as `{}`, which says the field was
-        // absent. Without the `?? {}` it prints the word "undefined", which reads as a
-        // value the harness sent.
         const what = d.tool_input?.command ?? JSON.stringify(d.tool_input ?? {});
         console.log(`  ${d.tool_name ?? "?"}: ${String(what).slice(0, 120)}`);
     }

@@ -1,4 +1,4 @@
-STEP 4 — leave every thread open. Fill `resolve` with nothing and close nothing.
+STEP 4: leave every thread open. Fill `resolve` with nothing and close nothing.
 
 This run comments under a person's own account rather than CodeFerret's, so `mine` marks
 their threads as well as yours and there is no way to tell the two apart. Closing one

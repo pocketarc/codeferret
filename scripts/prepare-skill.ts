@@ -13,7 +13,7 @@
  * `description` is replaced. Upstream wrote it to win the skill an invocation:
  * writing-review asks to be used "proactively whenever writing, reviewing, or
  * rewriting text". That is right for a skill somebody installed on purpose and wrong
- * for twelve that arrived together inside a code review tool. Left alone, installing
+ * for a set that arrived together inside a code review tool. Left alone, installing
  * CodeFerret means a lens fires while you are drafting a blog post. A lens agent is
  * told which skill to load by name, so nothing downstream reads this.
  *
@@ -143,11 +143,16 @@ function isPointerOnly(line: string, linkTexts: string[]): boolean {
 // `Audit for accessibility: @$1` reaches the model as `Audit for accessibility: @`, an
 // instruction naming nothing. The dispatch names the diff, so the replacement does too.
 //
-// `@` is required. The bare `$1` through `$9` are PostgreSQL and node-postgres bind
-// placeholders, and they turn up in exactly the prose a SQL or a security skill is
-// vendored for: "WHERE id = $1" would become "WHERE id = the diff under review", which is
-// a broken illustration of the one defence against SQL injection.
-const ARGUMENT_PLACEHOLDER = /(?:@\$(?:ARGUMENTS|[1-9])|\$ARGUMENTS)\b/g;
+// `${selection}` and its siblings are the same thing from GitHub Copilot's prompt files,
+// which two vendored skills came from. Missed once, the SQL lens's first instruction after
+// loading its skill was to review `${selection}` verbatim.
+//
+// `@` is required in front of a digit. The bare `$1` through `$9` are PostgreSQL and
+// node-postgres bind placeholders, and they turn up in exactly the prose a SQL or a
+// security skill is vendored for: "WHERE id = $1" would become "WHERE id = the diff under
+// review", which is a broken illustration of the one defence against SQL injection.
+const ARGUMENT_PLACEHOLDER =
+    /(?:@\$(?:ARGUMENTS|[1-9])|\$ARGUMENTS)\b|\$\{(?:selection|file|fileBasename|fileDirname|workspaceFolder)\}/g;
 const TARGET = "the diff under review";
 
 // Anthropic's knowledge-work plugins end a skill with a section conditioned on the
@@ -170,6 +175,17 @@ function rewriteMarkdown(label: string, markdown: string): string {
     let fenced = false;
     let dropping = 0;
 
+    // Dropping a line from between two blank ones leaves the pair behind, and a
+    // maintainer diffs a vendored skill against the upstream commit pinned in
+    // PROVENANCE.tsv. Set when a drop leaves a blank line last, and consumed by the next
+    // line if that one is blank too.
+    let closeTheGap = false;
+
+    const drop = (note: string): void => {
+        notes.push(note);
+        closeTheGap = out[out.length - 1] === "";
+    };
+
     for (const line of markdown.split("\n")) {
         if (FENCE.test(line)) fenced = !fenced;
 
@@ -184,7 +200,7 @@ function rewriteMarkdown(label: string, markdown: string): string {
 
         if (heading && CONNECTORS_HEADING.test(line)) {
             dropping = hashes.length;
-            notes.push(`  ${label}: dropped the 'If Connectors Available' section; a lens session has none`);
+            drop(`  ${label}: dropped the 'If Connectors Available' section; a lens session has none`);
             continue;
         }
 
@@ -201,12 +217,12 @@ function rewriteMarkdown(label: string, markdown: string): string {
 
         if (rewritten !== line) {
             if (rewritten.trim() === "") {
-                notes.push(`  ${label}: dropped a line that was only a link reaching above the skill directory`);
+                drop(`  ${label}: dropped a line that was only a link reaching above the skill directory`);
                 continue;
             }
 
             if (deadLinkTexts.length > 0 && isPointerOnly(rewritten, deadLinkTexts)) {
-                notes.push(`  ${label}: dropped a line pointing at a file that was not vendored: ${line.trim()}`);
+                drop(`  ${label}: dropped a line pointing at a file that was not vendored: ${line.trim()}`);
                 continue;
             }
 
@@ -214,6 +230,11 @@ function rewriteMarkdown(label: string, markdown: string): string {
             // rather than found in a lens's review months later.
             notes.push(`  ${label}: rewrote ${line.trim()}`);
             notes.push(`  ${label}:      to ${rewritten.trim()}`);
+        }
+
+        if (closeTheGap) {
+            closeTheGap = false;
+            if (rewritten.trim() === "") continue;
         }
 
         out.push(rewritten);

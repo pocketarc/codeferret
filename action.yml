@@ -40,10 +40,10 @@ inputs:
             which hold, so name that lens in `lenses` as well. Set it to an empty string
             to run none.
 
-            A tool runs from the runner's own binary if there is one and a pinned
-            container otherwise; with neither, it records that and is skipped. So a runner
-            without docker and without the binaries gets two skipped reports, and one with
-            docker pulls two images, semgrep's being around 420MB on the first run.
+            A tool runs from the runner's own binary if there is one and from a pinned
+            container otherwise. With neither, it records that and is skipped. A runner
+            with neither docker nor the binaries gets two skipped reports. A runner with
+            docker pulls two images. The semgrep image is about 420MB.
 
             Both tools reach the network. semgrep fetches its `p/default` ruleset from
             semgrep's registry unless SEMGREP_CONFIG names a repository-relative one, and
@@ -67,27 +67,29 @@ inputs:
             any depth, the top-level one included. Set to an empty string to review
             everything.
 
-            The defaults below split on a name's second career as a source directory.
-            `.next`, `dist`, the lockfiles and the minified and snapshot files are matched
-            at any depth. `out` and `build` are matched at the repository root alone,
-            because both are legal App Router route segments and the any-depth form hides
-            `app/build/` from every lens. The cost of that choice is a workspace build
-            directory, `apps/web/out/`, which stays in the diff: add your own layout's
-            form to this list if you have one.
+            The defaults below are split by depth, because `out` and `build` are also
+            source directory names. `.next`, `dist`, the lockfiles and the minified and
+            snapshot files are matched at any depth. `out` and `build` are matched at the
+            repository root and one level inside `apps/` and `packages/`, because both are
+            legal App Router route segments and the any-depth form hides `app/build/` from
+            every lens. `dist` stays at any depth: it is a packaging convention rather than
+            a word anybody routes on. Add your own workspace directory here if it is
+            neither `apps/` nor `packages/`.
         required: false
         default: |
             **/*.lock
             **/*.lockb
-            bun.lock
             package-lock.json
-            yarn.lock
-            composer.lock
             node_modules/**
             vendor/**
             **/.next/**
             **/dist/**
             out/**
             build/**
+            apps/*/out/**
+            apps/*/build/**
+            packages/*/out/**
+            packages/*/build/**
             **/*.min.js
             **/*.min.css
             **/*.snap
@@ -102,9 +104,9 @@ inputs:
     effort:
         description: |
             Reasoning effort for the orchestrator and every lens: low, medium, high,
-            xhigh or max. Empty leaves the model's own default. Turning it down is a
-            review-quality decision as much as a cost one, so measure a run before
-            settling on one: the findings file records what each lens returned.
+            xhigh or max. Empty leaves the model's own default. Turning it down changes
+            review quality as much as it changes the bill. Measure a run before you settle
+            on a level. The findings file records what each lens returned.
         required: false
         default: ''
     command-prefix:
@@ -125,10 +127,19 @@ inputs:
             The GitHub login the review posts under, which is how a run tells its own
             threads from a person's and so which ones it may resolve. Empty means
             `github-actions`, which is right for the default `github-token`. Set it to
-            match whenever `github-token` is a personal access token or a GitHub App,
-            or every thread reads as somebody else's and none is ever resolved.
+            match whenever `github-token` is a personal access token or a GitHub App.
+            Otherwise the run treats every thread as somebody else's and resolves none.
         required: false
         default: ''
+    resolve-threads:
+        description: |
+            Whether the review may close its own threads once their defect is gone. Set it
+            to 'false' alongside `contents: read`, which is what the shipped workflow
+            grants: `resolveReviewThread` needs `contents: write`, so on read the
+            orchestrator spends a step of the run deciding which threads are finished and
+            every one of those decisions is then refused.
+        required: false
+        default: 'true'
     pr-number:
         description: Pull request to review. Defaults to the one that triggered the run.
         required: false
@@ -141,7 +152,7 @@ inputs:
         description: |
             Whether to check the repository out. 'auto' checks out the pull request head
             with full history, but only when the workspace has no checkout yet, so it can
-            never clean away work an earlier step produced. 'skip' never checks out; use
+            never clean away work an earlier step produced. 'skip' never checks out. Use
             it when you check out yourself, or need submodules, LFS, or a sparse checkout.
         required: false
         default: auto
@@ -167,7 +178,9 @@ outputs:
         description: Number of merged findings.
         value: ${{ steps.review.outputs.findings-count }}
     cost-usd:
-        description: What the run cost in US dollars, across the orchestrator and every lens.
+        description: |
+            What the run cost in US dollars, across the orchestrator and every lens.
+            `unknown` when the run log carried no cost.
         value: ${{ steps.review.outputs.cost-usd }}
     output-tokens:
         description: Output tokens across the orchestrator and every lens.
@@ -189,12 +202,17 @@ runs:
                   echo "present=false" >>"$GITHUB_OUTPUT"
               fi
 
+        # `head-sha` before the event, because outside a `pull_request` event the event
+        # value is empty and actions/checkout falls back to the default branch. A
+        # workflow_dispatch run passing base-ref, pr-number and head-sha then had every
+        # lens review the wrong tree, and post-review.ts threw on a commit the checkout
+        # did not contain, after the whole review had been paid for.
         - name: Check out the head commit
           if: inputs.checkout != 'skip' && steps.probe.outputs.present == 'false'
           uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
           with:
               fetch-depth: 0
-              ref: ${{ github.event.pull_request.head.sha }}
+              ref: ${{ inputs.head-sha || github.event.pull_request.head.sha }}
               token: ${{ inputs.github-token }}
 
         - name: Install the toolchain
@@ -269,12 +287,11 @@ runs:
               BASE: ${{ steps.target.outputs.base }}
               PR: ${{ steps.target.outputs.pr }}
               OWN_LOGIN: ${{ inputs.own-login }}
+              RESOLVE_THREADS: ${{ inputs.resolve-threads == 'false' && '0' || '1' }}
               PERMISSION_MODE: bypassPermissions
           run: |
               out="$RUNNER_TEMP/codeferret/build"
 
-              # A failed run is when its cost and its refusal count matter most, so the
-              # exit code is held until everything the run did manage to write is out.
               status=0
               bash "$GITHUB_ACTION_PATH/review/run.sh" \
                   "$BASE" \
@@ -306,16 +323,8 @@ runs:
               emit output-tokens
               emit findings-checked
 
-              # The table is rendered by extract-findings.ts, where the numbers are, so
-              # that nothing here has to reformat a duration or guard a missing file.
-              if [ -f "$out/summary.md" ]; then
-                  cat "$out/summary.md" >>"$GITHUB_STEP_SUMMARY"
-              elif [ "$status" != "0" ]; then
+              if ! $PREFIX bun "$GITHUB_ACTION_PATH/review/summary.ts" "$out" "$status" >>"$GITHUB_STEP_SUMMARY"; then
                   printf '### CodeFerret\n\nThe review failed before it could report what it had spent.\n' >>"$GITHUB_STEP_SUMMARY"
-              fi
-
-              if [ "$status" != "0" ]; then
-                  printf '\n> [!WARNING]\n> The review failed. Read the step log.\n' >>"$GITHUB_STEP_SUMMARY"
               fi
 
               exit "$status"

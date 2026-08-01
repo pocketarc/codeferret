@@ -38,7 +38,7 @@ tell them apart, so "no SQL, no schema and no database access anywhere in the di
 grep" is worth writing. Without it you are read as broken, which is the safe assumption.
 
 Report, do not repair. Other lenses are reading the same working tree at the same time,
-so changing a file corrupts their review as well as this one. Say what the fix is; do
+so changing a file corrupts their review as well as this one. Say what the fix is. Do
 not apply it.
 __EXTRAS__
 Return JSON matching this schema as your entire final message:

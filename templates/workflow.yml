@@ -4,7 +4,7 @@ on:
     pull_request:
         types: [opened, synchronize, ready_for_review, reopened]
 
-# Without this, three pushes in a row cost three full reviews and you read the last one.
+# Without this, three pushes in a row cost three full reviews and only the last is read.
 concurrency:
     group: codeferret-${{ github.event.pull_request.number }}
     cancel-in-progress: true
@@ -33,34 +33,38 @@ jobs:
             # The review runs an agent with Bash, so a token that can write contents is a
             # token that can push. Swap this for `contents: write` to have CodeFerret
             # resolve finished threads: GitHub rejects `resolveReviewThread` from a token
-            # that cannot write contents, and `pull-requests: write` cannot. On read,
-            # CodeFerret still posts the review and lists the threads it would have closed.
+            # that cannot write contents, and `pull-requests: write` cannot. Set
+            # `resolve-threads` to 'true' in the same edit.
             contents: read
             pull-requests: write
 
         steps:
             # `v1` is a mutable tag, moved to each new release, so you get fixes without
-            # editing this file. Pin `@v1.2.0` or a commit SHA instead if you would rather
+            # editing this file. Pin `@v1.1.0` or a commit SHA instead if you would rather
             # read what runs before it runs: this job holds your OAuth token and
             # `pull-requests: write`, and it runs an agent with Bash.
             - name: CodeFerret
               uses: pocketarc/codeferret@v1
               with:
                   claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+                  # Nothing here can resolve a thread on `contents: read`. Left on, the
+                  # orchestrator spends part of the run judging which threads are finished
+                  # and every one of those decisions is refused.
+                  resolve-threads: 'false'
 
             # CodeFerret posts only new findings. A finding the orchestrator marked as
             # already answered is in findings.json and nowhere else, so without this
             # artifact a mistaken mark costs a real finding and nobody ever knows.
             #
-            # The same upload includes run.json, which is the orchestrator's final result
-            # object: its summary, every merged finding, and what the run cost. It is not
-            # a transcript, so no lens's tool calls and no file contents are in it. It is
-            # not secret-masked either, and the orchestrator's own prose quotes the diff,
-            # so on a public repository point `path` at findings.json alone.
+            # findings.json alone, not the whole directory. Beside it sits run.json, the
+            # orchestrator's final result object, which is not secret-masked and whose
+            # prose quotes the diff. On a public repository anyone can download an
+            # artifact. Widen `path` to `${{ runner.temp }}/codeferret/build/` while
+            # debugging a run, and put it back.
             - name: Keep the run for inspection
               if: always()
               uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
               with:
                   name: codeferret-run
-                  path: ${{ runner.temp }}/codeferret/build/
+                  path: ${{ runner.temp }}/codeferret/build/findings.json
                   retention-days: 14

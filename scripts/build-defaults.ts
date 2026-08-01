@@ -11,6 +11,7 @@
  */
 
 import { join } from "node:path";
+import { writeOrCheck } from "./generated.ts";
 
 // Every path below is repository-relative, and whoever has just edited this script is
 // standing in scripts/.
@@ -28,6 +29,7 @@ const action = Bun.YAML.parse(await Bun.file("action.yml").text()) as {
     inputs?: Record<string, { default?: unknown }>;
 };
 
+const wanted = new Map<string, string>();
 let problems = 0;
 
 for (const [input, path] of FILES) {
@@ -42,26 +44,11 @@ for (const [input, path] of FILES) {
         continue;
     }
 
-    const wanted = `${entries.join("\n")}\n`;
-
-    if (!check) {
-        await Bun.write(path, wanted);
-        continue;
-    }
-
-    const current = await Bun.file(path)
-        .text()
-        .catch(() => null);
-
-    if (current !== wanted) {
-        console.error(`FAIL ${path} does not match the \`${input}\` default in action.yml`);
-        problems += 1;
-    }
+    wanted.set(path, `${entries.join("\n")}\n`);
 }
 
-if (problems > 0) {
-    if (check) console.error("\nRun `bun scripts/build-defaults.ts` to regenerate.");
-    process.exit(1);
-}
+problems += (await writeOrCheck(wanted, check, "bun scripts/build-defaults.ts")).problems;
+
+if (problems > 0) process.exit(1);
 
 console.log(`OK review/defaults: ${FILES.length} file(s)${check ? " match action.yml" : " written"}`);

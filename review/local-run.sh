@@ -3,11 +3,10 @@
 #
 # /codeferret:review calls this. Everything the run needs is derived here rather than
 # pasted into a command by a model: the git dir the run directory hangs off, the top
-# level, the three defaults, and the gh credentials. build-prompts.sh grew a guard
-# against deleting the wrong directory because that path used to arrive by substitution.
+# level, the three defaults, and the gh credentials.
 #
-# Naming lenses drops the tools unless static-analysis is among them, because the tools
-# report to that lens and to nothing else.
+# Naming lenses drops the tools unless the tool-reading lens is among them, because the
+# tools report to that lens and to nothing else.
 #
 # Usage: local-run.sh <plugin-root> <base-ref> [<lens>...]
 #
@@ -26,11 +25,14 @@ shift 2
 TOPLEVEL=$(git rev-parse --show-toplevel)
 GIT_DIR=$(git rev-parse --absolute-git-dir)
 
+# shellcheck source=review/lib.sh
+. "$PLUGIN/review/lib.sh"
+
 if [ "$#" -gt 0 ]; then
     LENSES=$(printf '%s\n' "$@")
     TOOLS=""
 
-    if printf '%s\n' "$@" | grep -qx static-analysis; then
+    if printf '%s\n' "$@" | grep -qx "$TOOLS_LENS"; then
         TOOLS=$(cat "$PLUGIN/review/defaults/tools.txt")
     fi
 else
@@ -52,7 +54,7 @@ export PERMISSION_MODE=auto
 export RESOLVE_THREADS=0
 
 # Without gh there is nothing to read earlier comments from, so every finding counts as
-# new. That is a noisier review rather than a failed one, and the run says so.
+# new. That is a noisier review rather than a failed one, and run.sh prints a warning.
 if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
     PR=$(gh pr view --json number,state --jq 'select(.state == "OPEN") | .number' 2>/dev/null || true)
 

@@ -55,9 +55,14 @@ Some tools report a package rather than a position, and say so with `line: null`
 vulnerable dependency is true of a whole file, not of one line in it.
 
 Anchor it somewhere a reader can act on: the line in the manifest (`package.json`,
-`composer.json`, `go.mod`) where that dependency is declared, when the diff touches it.
-Failing that, the line in the lockfile where the package appears. A comment anchored to
-line 1 of a lockfile is one nobody reads.
+`composer.json`, `go.mod`) where that dependency is declared. Prefer that line even when
+the diff does not touch it, because a finding outside the diff is listed in the review body
+under its file, where the path and the line still tell the author where to go.
+
+Do not anchor to a lockfile. Every lockfile name is in the `exclude-paths` default, so the
+lockfile is not in the diff every lens read and cannot carry a comment. The scanner reads
+it because it was handed the range without that pathspec, which is why the file looks
+available to you and is not.
 
 ## When a finding may predate the change
 

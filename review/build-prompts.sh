@@ -28,21 +28,22 @@ LENSES_FILE=${5:-}
 BUILD="$PLUGIN/build"
 RESOLVE_THREADS=${RESOLVE_THREADS:-1}
 
-# `&` and `|` mean something to sed's replacement, and a path or a glob may hold either.
+# shellcheck source=review/lib.sh
+. "$ACTION/review/lib.sh"
+
+# Every caller writes `s|__X__|...|g`, so `|` is the delimiter and an unescaped one in the
+# replacement ends the command early. `&` and `\` are special in a replacement whatever the
+# delimiter is.
 sed_escape() {
     printf '%s' "$1" | sed -e 's/[|&\\]/\\&/g'
 }
 
 # The base ref arrives from a workflow input or from whatever the caller typed, and it
-# reaches a prompt that tells a lens to run `git log <base>..HEAD`. A git ref cannot
-# contain a character outside this set, so nothing legitimate is turned away. A leading
-# `-` is barred separately: it is legal in a ref name and git would read it as an option.
-case $BASE in
-"" | -* | *[!A-Za-z0-9._/-]*)
+# reaches a prompt that tells a lens to run `git log <base>..HEAD`.
+if ! plain_ref "$BASE"; then
     echo "base ref '$BASE' is not a plain git ref" >&2
     exit 1
-    ;;
-esac
+fi
 
 NAMESPACE=codeferret
 MANIFEST="$ACTION/.claude-plugin/plugin.json"
@@ -100,21 +101,14 @@ printf '{"name": "%s", "version": "0.0.0", "description": "CodeFerret run plugin
 
 LENSES=()
 while IFS= read -r lens; do
-    # Leading and trailing whitespace only. Deleting every space would turn `caveman
-    # review` into `cavemanreview`, which passes the check below and then fails as a
-    # missing SKILL.md under a name nobody typed.
     lens=$(printf '%s' "$lens" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
     [ -z "$lens" ] && continue
 
-    # The name becomes a path component under two search roots, a `cp -R` destination,
-    # and a line of the orchestrator's own prompt. /codeferret:review takes lens names
-    # from whatever the user typed, so none of those can assume it is a plain name.
-    case $lens in
-    .* | *[!A-Za-z0-9._-]*)
+    # /codeferret:review takes lens names from whatever the user typed.
+    if ! plain_name "$lens"; then
         echo "lens name '$lens' is not a plain name" >&2
         exit 1
-        ;;
-    esac
+    fi
 
     LENSES+=("$lens")
 done < <(if [ -n "$LENSES_FILE" ]; then cat "$LENSES_FILE"; else cat; fi)
@@ -140,8 +134,13 @@ while IFS= read -r glob; do
     # None of the characters below belong in one. The list reaches git as argv now,
     # through the NUL-separated file written further down, so there is no shell left for
     # a quote to break out of. The check stays for whatever consumes the list next.
+    #
+    # An alternation of quoted patterns rather than one bracket expression, because
+    # semgrep's bash grammar cannot read a bracket expression in a case pattern and gives
+    # up on the whole construct. It then reports this file as scanned, and the largest
+    # shell change in a review gets less of a scan than the report claims.
     case $glob in
-    *[\'\"\;\$\`\\\&\|\<\>]*)
+    *"'"* | *'"'* | *';'* | *'$'* | *'`'* | *"\\"* | *'&'* | *'|'* | *'<'* | *'>'*)
         echo "exclude path '$glob' contains a shell metacharacter" >&2
         exit 1
         ;;
@@ -175,6 +174,13 @@ for lens in "${LENSES[@]}"; do
         # generic agent plus a line of the orchestrator's prompt telling it which skill to
         # pass on, and a lens that never received that line reviewed under its name with
         # no skill loaded, which nothing downstream can tell from a real review.
+        #
+        # The agent body comes from lens-brief.md and is ours. The skill it loads is not:
+        # it sits in the tree the pull request modified, and Claude Code reads it from
+        # there. So naming a workspace lens puts that repository's .claude/skills/ inside
+        # the CI trust boundary, where any branch can write the instructions for an agent
+        # that has Bash and runs in the job holding the tokens. Bundled lenses carry no
+        # such exposure.
         bun "$ACTION/scripts/build-lens-agents.ts" --one "$lens" "$PLUGIN/agents/$lens.md"
     else
         echo "lens '$lens' has no SKILL.md in the action's bundled lenses or in" >&2
@@ -183,18 +189,6 @@ for lens in "${LENSES[@]}"; do
     fi
 
     printf -- '- `%s:%s`\n' "$NAMESPACE" "$lens" >>"$BUILD/lens-list.txt"
-
-    # Some lenses need something this run wrote, and where it is cannot be in an agent
-    # that was rendered before the run existed. A file here rather than a test on the
-    # lens's name, so that the loop stays indifferent to which lens it is building.
-    EXTRA="$ACTION/review/lens-dispatch-extras/$lens.md"
-
-    if [ -f "$EXTRA" ]; then
-        {
-            printf '  Also tell it:\n'
-            sed -e "s|__BUILD__|$(sed_escape "$BUILD")|g" -e 's|^.|  &|' "$EXTRA"
-        } >>"$BUILD/lens-list.txt"
-    fi
 done
 
 # The action only ever reviews what is pushed. A session is usually on a branch still
@@ -240,6 +234,7 @@ DIFF_SCRIPT
 # Matching `^.` rather than `^` keeps blank lines free of trailing whitespace.
 sed -e "s|__BASE__|$(sed_escape "$BASE")|g" \
     -e "s|__HEAD__|$(sed_escape "$HEAD_SHA")|g" \
+    -e "s|__RANGE__|$(sed_escape "$RANGE")|g" \
     -e "s|__DIFF_SCRIPT__|$(sed_escape "$BUILD/diff.sh")|g" \
     -e "s|__DIFF_ARGS__|$(sed_escape "$BUILD/diff-args")|g" \
     "$ACTION/review/lens-dispatch.md" |

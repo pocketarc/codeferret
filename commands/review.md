@@ -16,11 +16,11 @@ step 1 prints. Substitute them yourself rather than relying on a shell variable:
 command runs in its own shell, so nothing you export survives. Put double quotes around
 each one.
 
-Quoting is not what makes a substituted value safe, so do not treat it as though it were:
-`$(...)`, a backtick and `${...}` all still expand inside double quotes. What makes it
-safe is that `local-preflight.sh` prints `base=unsafe` rather than a ref holding any
-character outside `A-Za-z0-9._/-`. Stop if you see that, and stop as well if the user
-hands you a ref carrying `$`, a backtick, a quote or a semicolon. Do not pass it on.
+Do not treat the quotes as what makes a value safe. `$(...)`, a backtick and `${...}` all
+expand inside double quotes. What makes a value safe is `local-preflight.sh`, which prints
+`unsafe` rather than a ref or a path holding a character that would run. Stop when you see
+`unsafe`. Stop as well when the user hands you a ref carrying `$`, a backtick, a quote or
+a semicolon, and do not pass it on.
 
 ## 1. Find out what this checkout supports
 
@@ -34,17 +34,19 @@ Stop when you see any of these, and name every one you saw:
 
 - No output at all beyond `No such file or directory`. The plugin root did not resolve,
   so nothing below will work.
-- A `plugin=` value starting with `unset:` or `mismatch:`. The rest of that value is the
-  plugin root the script you just ran sits in, so say it: otherwise every `<plugin>` you
-  substitute below comes from a root holding none of the review scripts, or from nothing.
+- A `plugin=` value starting with `unset:` or `mismatch:`. The rest of the value is the
+  plugin root of the script that just ran. Report that root. Without it, every `<plugin>`
+  below points at a directory with no review scripts in it.
 - `repo=missing`. This is not a git repository.
+- `repo=unsafe` or `toplevel=unsafe`. This checkout sits under a directory whose path
+  would run as shell where the review builds its commands. Say so and stop.
 - `head=none`. This repository has no commits yet.
 - `bun=missing`. The review cannot read its own findings back. Install Bun from
   https://bun.sh.
 - `base_resolves=no`. Name the ref that failed. When `base=none` there was nothing to
   infer one from, so ask for it: `/codeferret:review origin/main`. When `base=unsafe` or
   `branch=unsafe`, a ref name holds a character that would run as shell where the review
-  builds its commands; say which and stop. Otherwise the ref is not in this checkout, and
+  builds its commands. Say which and stop. Otherwise the ref is not in this checkout, and
   `git fetch origin` usually settles it.
 - `shallow=yes`. A shallow clone has no merge base to diff against. `git fetch
   --unshallow` fixes it, but the fetch goes to the network, so ask first.
@@ -88,7 +90,7 @@ command does has not agreed to that.
 ## 4. Run it
 
 The review runs as its own `claude` process rather than in this session. It reads a diff,
-and pull request comments, written by whoever opened them; this session holds the user's
+and pull request comments, written by whoever opened them. This session holds the user's
 editor, shell and MCP servers, and there is no reason to introduce the two.
 
 Run it in the background. It takes tens of minutes, which is longer than a foreground
@@ -121,14 +123,22 @@ died. Say what the last lines of its output were, and print whatever
 `<git-dir>/codeferret/run/build/` does hold: `cost-usd`, `duration-ms` and
 `permission-denials` are written before the findings are. Then stop.
 
-Otherwise read `<git-dir>/codeferret/run/build/findings.json`. Group its findings by file,
-in diff order, and by line within a file:
+Otherwise read `<git-dir>/codeferret/run/build/findings.json`. Open with its `summary`, so
+a reader who wanted the overview does not have to scroll past every finding to reach it.
+
+Then the findings whose `status` is `new`, grouped by file in diff order and by line within
+a file:
 
 ```
 path/to/file.ts:42: One-line title
 
 The finding body.
 ```
+
+A finding marked `already-reported` or `declined` was answered on a previous round, so it
+does not belong in that list. Count them instead, in a line saying where to read them:
+"4 findings were raised before and are in findings.json". The posted review draws the same
+line, so a run read here and read on GitHub says the same thing.
 
 Do not indent the body. Four spaces after a blank line is an indented code block in
 markdown, which strips the formatting out of every finding and stops it wrapping.
@@ -141,10 +151,10 @@ so showing the guess mostly licenses the reader to skip the finding. Agreement t
 obvious a defect is rather than how much it matters. Both are in the findings file for
 anyone who wants them.
 
-Close with the summary, and then the lenses: name every lens whose `ok` is false and say
-what happened. Nothing else in the output says so. A lens marked `ok` having found
-nothing is not one of these. Half the set is domain lenses, and one with nothing in its
-domain says why in `detail`, which is worth repeating in a line.
+Close with the lenses: name every lens whose `ok` is false and say what happened. Nothing
+else in the output says so. A lens marked `ok` having found nothing is not one of these.
+Half the set is domain lenses, and one with nothing in its domain says why in `detail`,
+which is worth repeating in a line.
 
 Then print the refusal count in `build/permission-denials` when it is above zero, and
 what the run cost, which `review/run.sh` prints as it finishes.
@@ -153,11 +163,18 @@ Finally, say where the findings file is, and offer to work through them.
 
 ## 6. Offer to post it
 
-Only when `pr` is a number, `gh=ok`, `pushed=yes` and `dirty=0`. Otherwise name whichever
-of those is not true and leave it: comments are anchored to a commit GitHub holds, so a
-review of work that GitHub has never seen lands on the wrong lines, or on none. `dirty=0`
-still applies when the review covered committed work only. The lenses read files as they
-find them, so the lines they report might not be the pushed commit's.
+Run the preflight again first. Step 1's answers were taken before a run that took tens of
+minutes, and the user was invited to carry on committing through it:
+
+```sh
+CLAUDE_PLUGIN_ROOT="<plugin>" bash "<plugin>/review/local-preflight.sh" "<base>"
+```
+
+Offer to post only when the fresh output says `pr` is a number, `gh=ok`, `pushed=yes` and
+`dirty=0`. Otherwise name whichever of those is not true and leave it. A comment is
+anchored to a commit GitHub holds, so a review of work GitHub has never seen lands on the
+wrong lines or on none. `dirty=0` still applies when the review covered committed work
+only, because the lenses read files as they find them.
 
 Ask before posting. It writes to a pull request other people are reading.
 
@@ -165,8 +182,10 @@ Ask before posting. It writes to a pull request other people are reading.
 bash "<plugin>/review/local-post.sh" "<plugin>" "<base>" "<pr>"
 ```
 
-`<base>` here is always the ref step 1 reported, even when step 4 used `merge_base`. The
-review anchors against `<base>` and the pushed head, which is the diff GitHub holds.
+`<base>` here is always the ref step 1 reported, even when step 4 used `merge_base`.
+`local-post.sh` takes the head from the run itself, refuses when HEAD has moved since, and
+refuses when the pull request's head is a different commit. Report what it says rather than
+working around it.
 
 Put `DRY_RUN=1` in front of that command to print the review instead of posting it.
 Without it, the command posts.

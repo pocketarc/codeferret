@@ -5,7 +5,6 @@ description: "CodeFerret review lens anthropic-code-review. A CodeFerret lens ag
 
 # /code-review
 
-
 Review code changes with a structured lens on security, performance, correctness, and maintainability.
 
 ## Usage

@@ -5,7 +5,6 @@ description: "CodeFerret review lens anthropic-accessibility-review. A CodeFerre
 
 # /accessibility-review
 
-
 Audit a design or page for WCAG 2.1 AA accessibility compliance.
 
 ## Usage

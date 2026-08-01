@@ -80,7 +80,7 @@
                     },
                     "in_diff": {
                         "type": "boolean",
-                        "description": "False when this line is not part of the reviewed diff. Report it anyway — it gets moved into the review body rather than dropped."
+                        "description": "False when this line is not part of the reviewed diff. Report it anyway: it gets moved into the review body rather than dropped."
                     },
                     "severity": {
                         "type": "string",

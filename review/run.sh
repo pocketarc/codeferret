@@ -7,7 +7,7 @@
 #
 # The orchestrator runs here, in its own process, rather than in whoever's session asked
 # for it. It reads a diff and pull request comments written by whoever opened them, and a
-# session holds an editor, a shell, and whatever MCP servers its owner has connected.
+# session holds an editor, a shell, and whatever its owner has connected over MCP.
 #
 # Usage: run.sh <base-ref> <action-path> <out-dir> <workspace>
 #
@@ -21,7 +21,8 @@
 #   PREFIX            prefix for `claude` and `bun`, for a containerised toolchain.
 #   PR                pull request number. Set it to have earlier comments read, which
 #                     stops a finding being raised twice.
-#   OWN_LOGIN         the account the review posts under, so it knows its own threads.
+#   OWN_LOGIN         the account the review posts under. fetch-existing.ts marks a thread
+#                     `mine` when the login and the hidden marker both match.
 #   TOOLS             whitespace-separated static analysis tools to run before the review,
 #                     naming files in review/tools/. Their reports are read by the
 #                     `static-analysis` lens, which decides which findings hold. These run
@@ -51,6 +52,9 @@ EFFORT=${EFFORT:-}
 PERMISSION_MODE=${PERMISSION_MODE:-bypassPermissions}
 
 : "${LENSES:?no lenses given}"
+
+# shellcheck source=review/lib.sh
+. "$ACTION/review/lib.sh"
 
 printf '%s\n' "$LENSES" |
     bash "$ACTION/review/build-prompts.sh" "$BASE" "$ACTION" "$OUT" "$WORKSPACE"
@@ -103,30 +107,27 @@ fi
 # and paid for to say it found no reports. A warning here is cheaper than the bill.
 tools_named=$(printf '%s' "${TOOLS:-}" | tr -d '[:space:]')
 
-if printf '%s\n' "$LENSES" | tr -d '[:blank:]' | grep -qx static-analysis; then
+if printf '%s\n' "$LENSES" | tr -d '[:blank:]' | grep -qx "$TOOLS_LENS"; then
     if [ -z "$tools_named" ]; then
-        echo "the static-analysis lens is named but no tools are named. The lens will find no reports." >&2
+        echo "the $TOOLS_LENS lens is named but no tools are named. The lens will find no reports." >&2
     fi
 elif [ -n "$tools_named" ]; then
-    echo "tools are named but the static-analysis lens is not. Nothing will read their reports." >&2
+    echo "tools are named but the $TOOLS_LENS lens is not. Nothing will read their reports." >&2
 fi
 
 # Tools run before the dispatch, because their reports are input to a lens rather than
 # output of the review. A tool that is not installed writes that down and returns 0.
 #
 # A name reaches here from a workflow input and from a model composing an environment in
-# /codeferret:review, and it is pasted into a path that then gets executed. The lens names
-# in build-prompts.sh come from the same two sources and carry the same guard. Globbing is
-# off for the split, so the shell leaves a `*` alone instead of expanding it against the
+# /codeferret:review, and it is pasted into a path that then gets executed. Globbing is off
+# for the split, so the shell leaves a `*` alone instead of expanding it against the
 # workspace.
 set -f
 for tool in ${TOOLS:-}; do
-    case $tool in
-    .* | *[!A-Za-z0-9._-]*)
+    if ! plain_name "$tool"; then
         echo "tool name '$tool' is not a plain name" >&2
         exit 1
-        ;;
-    esac
+    fi
 
     if [ ! -f "$ACTION/review/tools/$tool.ts" ]; then
         echo "no tool named '$tool' in $ACTION/review/tools/" >&2
@@ -135,8 +136,20 @@ for tool in ${TOOLS:-}; do
 
     # A review that stops for want of a linter is worth less than one that runs without
     # it, and the tools already write down the failures they expect.
-    $PREFIX bun "$ACTION/review/tools/$tool.ts" "$BUILD" ||
+    #
+    # A tool that dies before reaching its own reporter writes no file at all, and a file
+    # that is not there is invisible to the lens: it accounts for what it was handed, so a
+    # tool that never ran leaves no trace in the review. The stub is what gives the lens
+    # something to report.
+    if ! $PREFIX bun "$ACTION/review/tools/$tool.ts" "$BUILD"; then
+        code=$?
         echo "tool '$tool' failed. The review carries on without its report." >&2
+
+        if [ ! -f "$BUILD/tool-$tool.json" ]; then
+            printf '{"tool": "%s", "ran": false, "reason": "the tool exited %s without writing a report", "how": null, "scanned": 0, "raised": 0, "truncated": 0, "findings": []}\n' \
+                "$tool" "$code" >"$BUILD/tool-$tool.json"
+        fi
+    fi
 done
 set +f
 
@@ -151,6 +164,15 @@ status=0
 # so this removes the one-call path without closing the hole. Agent has to stay: STEP 1
 # of the orchestrator prompt dispatches every lens with it, and denying it leaves the run
 # with nothing to merge.
+#
+# `--setting-sources user` keeps the reviewed tree out of the session's own configuration.
+# The session starts in that tree, so without it Claude Code loads the branch's CLAUDE.md
+# as instruction and its .claude/settings.json as settings. Both were measured on 2.1.220:
+# the memory file reaches the model, and a SessionStart hook in project settings runs even
+# under --permission-mode bypassPermissions, which is arbitrary command execution written
+# by whoever opened the pull request. Plugins passed with --plugin-dir still load, so the
+# lens agents are unaffected. A repository's review conventions reach a lens the way
+# REVIEW.md already does, through review/lens-extras/.
 $PREFIX claude -p "$(cat "$BUILD/orchestrator.txt")" \
     --model "$MODEL" \
     ${EFFORT:+--effort "$EFFORT"} \
@@ -158,6 +180,7 @@ $PREFIX claude -p "$(cat "$BUILD/orchestrator.txt")" \
     --json-schema "$(cat "$ACTION/review/merged-schema.json")" \
     --permission-mode "$PERMISSION_MODE" \
     --strict-mcp-config \
+    --setting-sources user \
     --no-session-persistence \
     --disallowed-tools Edit Write NotebookEdit WebFetch WebSearch \
     --plugin-dir "$OUT" \
@@ -173,16 +196,19 @@ if [ -s "$BUILD/run.json" ]; then
     fi
 fi
 
-# The shape check runs whatever went wrong above, because the action decides whether to
-# post on the marker this writes rather than on this script's exit code: a run that died
-# after writing a good findings file is still worth posting, and one whose findings failed
-# the check is not. A finding with no `line` reaches GitHub as a comment with no line, and
-# the reviews endpoint answers 422 for the whole batch.
+# The shape check runs whatever went wrong above, because the marker it writes is what the
+# action posts on. Exit 3 means it dropped what it could not use and left a file worth
+# posting, so the marker goes down and the run still ends red.
 if [ -f "$BUILD/findings.json" ]; then
-    if $PREFIX bun "$ACTION/review/check-findings.ts" "$BUILD/findings.json"; then
+    checked=0
+    $PREFIX bun "$ACTION/review/check-findings.ts" "$BUILD/findings.json" || checked=$?
+
+    if [ "$checked" -eq 0 ] || [ "$checked" -eq 3 ]; then
         printf 'ok' >"$BUILD/findings-checked"
         echo "findings: $BUILD/findings.json"
-    elif [ "$status" -eq 0 ]; then
+    fi
+
+    if [ "$checked" -ne 0 ] && [ "$status" -eq 0 ]; then
         status=1
     fi
 fi

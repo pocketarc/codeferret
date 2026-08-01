@@ -18,26 +18,19 @@ say() {
     printf '%s=%s\n' "$1" "$2"
 }
 
-# Every value below reaches a command line, because /codeferret:review has a model
-# substitute them into the shell it runs. Quoting is no defence: `$(...)`, backticks and
-# `${...}` all still expand inside double quotes. And a hostile value need not be typed by
-# the user. `git check-ref-format` allows `$`, `(`, `)`, a backtick, `;`, `&` and `|`, so
-# `gh pr view --json baseRefName` can hand back a branch name that runs on substitution.
-#
-# So a value that is not a plain git ref never gets printed. This is the same test
-# build-prompts.sh applies, made one process earlier, before a shell has seen it.
-plain_ref() {
-    case $1 in
-    "" | -* | *[!A-Za-z0-9._/-]*) return 1 ;;
-    *) return 0 ;;
-    esac
-}
-
 # This script lives in the plugin, so a root that did not resolve means bash never found
 # it and none of this ran. What can go wrong is the caller holding a different path from
 # the one it is reading, which every later command would then be built from. So say where
 # the script actually is and let the caller compare.
 ACTUAL_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+
+# Every value below reaches a command line, because /codeferret:review has a model
+# substitute them into the shell it runs. So a value that fails one of these guards is
+# printed as `unsafe` instead. They are the same guards build-prompts.sh and run.sh apply,
+# made one process earlier, before a shell has seen the value.
+#
+# shellcheck source=review/lib.sh
+. "$ACTUAL_ROOT/review/lib.sh"
 
 if [ -z "${CLAUDE_PLUGIN_ROOT:-}" ]; then
     say plugin "unset:$ACTUAL_ROOT"
@@ -68,12 +61,26 @@ if [ -z "$GIT_DIR" ]; then
     exit 0
 fi
 
+# commands/review.md has a model paste this into the paths it reads the run's output
+# from, so a checkout under a directory holding `$(...)` or a backtick would expand there.
+if ! plain_path "$GIT_DIR"; then
+    say repo unsafe
+    echo "the git directory's path holds a character that would run as shell" >&2
+    exit 0
+fi
+
 say repo "$GIT_DIR"
 
 # The git dir is not the working tree, and it is the working tree that holds
 # .claude/skills/ and REVIEW.md. In a linked worktree the two are nowhere near
 # each other.
-say toplevel "$(git rev-parse --show-toplevel)"
+TOPLEVEL=$(git rev-parse --show-toplevel)
+
+if plain_path "$TOPLEVEL"; then
+    say toplevel "$TOPLEVEL"
+else
+    say toplevel unsafe
+fi
 
 HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || true)
 

@@ -24,11 +24,12 @@ steps:
     - uses: pocketarc/codeferret@v1
       with:
           claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          resolve-threads: 'false' # 'true' with contents: write
 ```
 
 `contents: write` costs something. The review runs an agent with Bash, so a token that
-can write contents is a token that can push. On `read`, everything else works and the
-review lists the threads it would have closed.
+can write contents is a token that can push. On `read`, everything else works and nothing
+tries to close a thread.
 
 The rest of that file is:
 
@@ -39,16 +40,16 @@ The rest of that file is:
 - A gate on author association, limiting who can spend the budget to an owner, a member
   or a collaborator.
 - A 60-minute timeout.
-- A step that uploads the run directory as an artifact and keeps it for 14 days. It holds
-  `findings.json`, which carries every finding including the ones the review suppressed,
-  so whoever can read the repository's artifacts can read those too.
+- A step that uploads `findings.json` as an artifact and keeps it for 14 days. That file
+  carries every finding including the ones the review suppressed, so whoever can read the
+  repository's artifacts can read those too.
 
 The action checks the repository out and installs what it needs. It also runs semgrep and
 osv-scanner before the review, from the runner's binaries if they are there and from
 pinned containers otherwise, which means a container pull on the first run and a lookup
 against osv.dev for each changed lockfile. Set `tools: ''` to run neither.
 
-`@v1` moves with each 1.x release. Pin a full version, `@v1.0.0`, to hold a revision.
+`@v1` moves with each 1.x release. Pin a full version, `@v1.1.0`, to hold a revision.
 
 ## On the branch you are working on
 

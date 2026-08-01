@@ -1,26 +1,42 @@
 #!/usr/bin/env bun
 /**
- * Check merged findings against the shape post-review.ts reads.
+ * Check merged findings against the shape post-review.ts reads, and drop what it cannot use.
  *
  * The action and `/codeferret:review` both run the orchestrator under `--json-schema`,
  * but that is a request to the model rather than a check on what comes back, and
  * post-review.ts validates nothing it is handed. So this is the only thing standing
- * between the orchestrator's output and a posted review: a finding with no `line` fails
- * its anchor check and ends up in the body, one with no `status` is posted as new, and
- * one whose `file` carries a leading slash matches nothing in the diff map. All three
- * look like an ordinary review.
+ * between the orchestrator's output and a posted review: a finding with no `status` is
+ * posted as new, and one whose `file` carries a leading slash matches nothing in the diff
+ * map. Both look like an ordinary review.
  *
- * Where this and the schema disagree, this file is the stricter one on purpose: a leading
- * slash and an empty string both satisfy the schema, and neither survives posting.
+ * The shape itself is read out of merged-schema.json rather than mirrored here, so the
+ * contract has one home. Three rules the schema cannot state are added below.
+ *
+ * A finding this cannot use is dropped and the rest are written back. Failing the file
+ * would throw away a review that took twenty minutes and tens of dollars to produce, over
+ * one finding among a hundred; the exit code still says the run went wrong.
  *
  * Usage: bun check-findings.ts <findings.json>
+ *
+ * Exit: 0 nothing wrong, 3 something was dropped and the rest is worth posting,
+ *       1 nothing usable is left.
  */
 
-import schema from "./merged-schema.json";
+import { join } from "node:path";
 
-const findingProperties = schema.properties.findings.items.properties;
-const SEVERITIES: string[] = findingProperties.severity.enum;
-const STATUSES: string[] = findingProperties.status.enum;
+interface JsonSchema {
+    type?: string;
+    required?: string[];
+    properties?: Record<string, JsonSchema>;
+    items?: JsonSchema;
+    enum?: string[];
+    additionalProperties?: boolean;
+}
+
+interface Problem {
+    path: string;
+    message: string;
+}
 
 const [path] = process.argv.slice(2);
 
@@ -29,49 +45,119 @@ if (!path) {
     process.exit(2);
 }
 
-const problems: string[] = [];
-const warnings: string[] = [];
+/**
+ * The rules that decide a posted review and that JSON Schema cannot express.
+ *
+ * Keyed by the path the walk builds, with an array index written as `[]`.
+ */
+const EXTRA: Record<string, (value: unknown) => string | null> = {
+    "findings[].line": positive,
+    "findings[].end_line": positive,
+    "findings[].file": (value) =>
+        typeof value === "string" && value.startsWith("/")
+            ? `must be repo-relative, got '${value}'`
+            : null,
+};
 
-function problem(where: string, message: string): void {
-    problems.push(`${where}: ${message}`);
+/**
+ * Faults post-review.ts survives, so none of them is worth losing a finding over.
+ *
+ * `found_by` and `in_diff` are never read. A finding with no usable `line` fails its
+ * anchor check and is listed in the review body under its file, which is worth more to a
+ * reader than a finding nobody sees.
+ */
+const TOLERATED = new Set([
+    "findings[].found_by",
+    "findings[].in_diff",
+    "findings[].line",
+    "findings[].end_line",
+]);
+
+function positive(value: unknown): string | null {
+    return typeof value === "number" && value < 1 ? `must be 1 or more, got ${value}` : null;
 }
 
-// A warning is something that is valid under the schema, and that post-review.ts
-// survives. The check still prints it, but the action runs this under `bash -e`, so
-// failing here would throw away a review that has already been paid for and post nothing.
-function warn(where: string, message: string): void {
-    warnings.push(`${where}: ${message}`);
+function record(value: unknown): Record<string, unknown> | null {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+    return value as Record<string, unknown>;
 }
 
-function checkString(where: string, field: string, value: unknown, required = true): void {
-    if (value === undefined) {
-        if (required) problem(where, `missing \`${field}\``);
+/** The path with every array index replaced by `[]`, which is how the tables above are keyed. */
+function shape(path: string): string {
+    return path.replace(/\[\d+\]/g, "[]");
+}
+
+function walk(value: unknown, node: JsonSchema, path: string, out: Problem[]): void {
+    const problem = (message: string): void => {
+        out.push({ path, message });
+    };
+
+    if (node.enum && (typeof value !== "string" || !node.enum.includes(value))) {
+        problem(`must be one of ${node.enum.join(", ")}, got ${JSON.stringify(value)}`);
         return;
     }
-    if (typeof value !== "string" || value.trim() === "") {
-        problem(where, `\`${field}\` must be a non-empty string`);
-    }
-}
 
-function checkInteger(where: string, field: string, value: unknown, required = true): void {
-    if (value === undefined) {
-        if (required) problem(where, `missing \`${field}\``);
+    if (node.type === "object") {
+        const object = record(value);
+
+        if (!object) {
+            problem(`must be an object, got ${JSON.stringify(value)}`);
+            return;
+        }
+
+        // Reported against the missing field's own path, so that the tables above can
+        // name it the way they name a field that is present and wrong.
+        for (const key of node.required ?? []) {
+            if (object[key] === undefined) {
+                out.push({ path: path ? `${path}.${key}` : key, message: "is missing" });
+            }
+        }
+
+        if (node.additionalProperties === false) {
+            for (const key of Object.keys(object)) {
+                if (!node.properties?.[key]) problem(`has an unknown key \`${key}\``);
+            }
+        }
+
+        for (const [key, child] of Object.entries(node.properties ?? {})) {
+            if (object[key] !== undefined) walk(object[key], child, path ? `${path}.${key}` : key, out);
+        }
+
         return;
     }
-    if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
-        problem(where, `\`${field}\` must be a positive integer, got ${JSON.stringify(value)}`);
-    }
-}
 
-function checkEnum(where: string, field: string, value: unknown, allowed: string[]): void {
-    if (value === undefined) {
-        problem(where, `missing \`${field}\``);
+    if (node.type === "array") {
+        if (!Array.isArray(value)) {
+            problem(`must be an array, got ${JSON.stringify(value)}`);
+            return;
+        }
+
+        if (node.items) {
+            value.forEach((item, i) => walk(item, node.items as JsonSchema, `${path}[${i}]`, out));
+        }
+
         return;
     }
-    if (typeof value !== "string" || !allowed.includes(value)) {
-        problem(where, `\`${field}\` must be one of ${allowed.join(", ")}, got ${JSON.stringify(value)}`);
+
+    if (node.type === "string") {
+        if (typeof value !== "string") problem(`must be a string, got ${JSON.stringify(value)}`);
+        else if (value.trim() === "") problem("is empty");
     }
+
+    if (node.type === "integer" && !Number.isInteger(value)) {
+        problem(`must be an integer, got ${JSON.stringify(value)}`);
+    }
+
+    if (node.type === "boolean" && typeof value !== "boolean") {
+        problem(`must be a boolean, got ${JSON.stringify(value)}`);
+    }
+
+    const extra = EXTRA[shape(path)];
+    const complaint = extra?.(value);
+    if (complaint) problem(complaint);
 }
+
+const schema = JSON.parse(await Bun.file(join(import.meta.dir, "merged-schema.json")).text()) as JsonSchema;
 
 let parsed: unknown;
 
@@ -85,111 +171,100 @@ try {
 // `null` and `[]` both survive the parse above. Without this guard, `null` ends the run
 // in a stack trace and `[]` ends it complaining that `findings` is missing, which sends
 // the reader hunting for a field when the whole file is the wrong shape.
-if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+const merged = record(parsed);
+
+if (!merged) {
     console.error(`${path}: is ${Array.isArray(parsed) ? "an array" : String(parsed)}, not an object`);
     process.exit(1);
 }
-
-const merged = parsed as Record<string, unknown>;
-
-checkString("findings.json", "summary", merged.summary, false);
-checkString("findings.json", "notes", merged.notes, false);
 
 if (!Array.isArray(merged.findings)) {
     console.error("findings.json: `findings` is missing or not an array");
     process.exit(1);
 }
 
-for (const [i, raw] of merged.findings.entries()) {
-    const where = `finding ${i + 1}`;
+const found = merged.findings.length;
+const problems: Problem[] = [];
 
-    if (typeof raw !== "object" || raw === null) {
-        problem(where, "is not an object");
-        continue;
-    }
+walk(merged, schema, "", problems);
 
-    const f = raw as Record<string, unknown>;
-    const label = typeof f.title === "string" ? `${where} (${f.title})` : where;
-
-    checkString(label, "file", f.file);
-    checkString(label, "category", f.category);
-    checkString(label, "title", f.title);
-    checkString(label, "body", f.body);
-    checkInteger(label, "line", f.line);
-    checkInteger(label, "end_line", f.end_line, false);
-    checkEnum(label, "severity", f.severity, SEVERITIES);
-    checkEnum(label, "status", f.status, STATUSES);
-
-    // The diff map post-review.ts builds is keyed on the paths git prints, which never
-    // carry a leading slash, so one that does matches nothing.
-    if (typeof f.file === "string" && f.file.startsWith("/")) {
-        problem(label, `\`file\` must be repo-relative, got '${f.file}'`);
-    }
-
-    // post-review.ts reads neither of these, so neither is worth losing a review over.
-    if (!Array.isArray(f.found_by) || f.found_by.length === 0) {
-        warn(label, "`found_by` names no lens");
-    } else if (f.found_by.some((lens) => typeof lens !== "string")) {
-        warn(label, "`found_by` holds something that is not a string");
-    }
-
-    if (f.in_diff !== undefined && typeof f.in_diff !== "boolean") {
-        warn(label, "`in_diff` is not a boolean");
-    }
+// post-review.ts reads neither of these, so neither is worth losing a review over.
+merged.findings.forEach((raw, i) => {
+    const f = record(raw);
+    if (!f) return;
 
     if ((f.status === "already-reported" || f.status === "declined") && !f.existing_comment_url) {
-        warn(label, `is '${f.status}' but names no \`existing_comment_url\`, so it links nowhere`);
+        problems.push({
+            path: `findings[${i}].existing_comment_url`,
+            message: `is '${String(f.status)}' but names no url, so it links nowhere`,
+        });
     }
+});
+
+const label = (problem: Problem): string => {
+    const owner = problem.path.match(/^findings\[(\d+)\]/)?.[1];
+    if (owner === undefined) return problem.path || "findings.json";
+
+    const raw = merged.findings;
+    const title = Array.isArray(raw) ? record(raw[Number(owner)])?.title : undefined;
+
+    return typeof title === "string" ? `${problem.path} (${title})` : problem.path;
+};
+
+const fatal = problems.filter((p) => !TOLERATED.has(shape(p.path)));
+const warnings = problems.filter((p) => TOLERATED.has(shape(p.path)));
+
+// Everything under one finding, so that a finding with three faults is dropped once.
+const doomed = new Set<number>();
+
+for (const p of fatal) {
+    const owner = p.path.match(/^findings\[(\d+)\]/)?.[1];
+    if (owner !== undefined) doomed.add(Number(owner));
 }
 
-if (merged.resolve !== undefined) {
-    if (!Array.isArray(merged.resolve)) {
-        problem("findings.json", "`resolve` is not an array");
-    } else {
-        for (const [i, raw] of merged.resolve.entries()) {
-            const where = `resolve ${i + 1}`;
-            if (typeof raw !== "object" || raw === null) {
-                problem(where, "is not an object");
-                continue;
-            }
-            const entry = raw as Record<string, unknown>;
-            checkString(where, "thread_id", entry.thread_id);
-            checkString(where, "reason", entry.reason);
-        }
-    }
+// A fault outside `findings` never drops anything: post-review.ts logs a GraphQL error and
+// carries on for a bad `thread_id`, and renders lens_health as prose. A non-object entry is
+// the exception, because it throws where the script reads a field off it.
+const elsewhere = fatal.filter((p) => !/^findings\[/.test(p.path));
+
+const keepEntries = (key: "resolve" | "lens_health"): number => {
+    const list = merged[key];
+    if (!Array.isArray(list)) return 0;
+
+    const kept = list.filter((entry) => record(entry) !== null);
+    const dropped = list.length - kept.length;
+    if (dropped > 0) merged[key] = kept;
+
+    return dropped;
+};
+
+const droppedEntries = keepEntries("resolve") + keepEntries("lens_health");
+
+for (const w of warnings) console.warn(`WARN ${label(w)}: ${w.message}`);
+for (const p of elsewhere) console.warn(`WARN ${label(p)}: ${p.message}`);
+for (const p of fatal.filter((x) => /^findings\[/.test(x.path))) {
+    console.error(`DROP ${label(p)}: ${p.message}`);
 }
 
-if (merged.lens_health !== undefined) {
-    if (!Array.isArray(merged.lens_health)) {
-        problem("findings.json", "`lens_health` is not an array");
-    } else {
-        for (const [i, raw] of merged.lens_health.entries()) {
-            const where = `lens_health ${i + 1}`;
-            if (typeof raw !== "object" || raw === null) {
-                problem(where, "is not an object");
-                continue;
-            }
-            const entry = raw as Record<string, unknown>;
-            checkString(where, "lens", entry.lens);
-            checkString(where, "detail", entry.detail, false);
-
-            if (typeof entry.findings_returned !== "number" || !Number.isInteger(entry.findings_returned)) {
-                problem(where, "`findings_returned` must be an integer");
-            }
-            if (typeof entry.ok !== "boolean") {
-                problem(where, "`ok` must be a boolean");
-            }
-        }
-    }
+if (doomed.size > 0 || droppedEntries > 0) {
+    merged.findings = merged.findings.filter((_, i) => !doomed.has(i));
+    await Bun.write(path, `${JSON.stringify(merged, null, 2)}\n`);
 }
 
-for (const w of warnings) console.warn(`WARN ${w}`);
+const kept = Array.isArray(merged.findings) ? merged.findings.length : 0;
 
-if (problems.length > 0) {
-    for (const p of problems) console.error(`FAIL ${p}`);
-    console.error(`\n${problems.length} problem(s) in ${path}.`);
+if (found > 0 && kept === 0) {
+    console.error(`\nnothing usable in ${path}: all ${found} finding(s) were dropped.`);
     process.exit(1);
 }
 
-const noted = warnings.length > 0 ? `, ${warnings.length} worth a look` : "";
-console.log(`OK ${path}: ${merged.findings.length} finding(s), shape valid${noted}`);
+if (doomed.size > 0 || droppedEntries > 0) {
+    console.error(
+        `\n${path}: dropped ${doomed.size} finding(s) and ${droppedEntries} other entr(ies).` +
+            ` ${kept} finding(s) left, which is worth posting.`,
+    );
+    process.exit(3);
+}
+
+const noted = warnings.length + elsewhere.length;
+console.log(`OK ${path}: ${kept} finding(s), shape valid${noted > 0 ? `, ${noted} worth a look` : ""}`);

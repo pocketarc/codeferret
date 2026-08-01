@@ -7,8 +7,14 @@ not for its workflow.
   target is the diff, and nobody can answer a question.
 - Skip Step 2's visual inspection, Step 4's re-verification and the viewport sweep. Apply
   the Step 2.2 checklists to the changed markup and styles by reading them: spacing scale,
-  type scale, colour contrast declared in the source, focus states, hit areas, and the
-  responsive rules the CSS actually contains.
+  type scale, whether a focus state is declared at all, and the responsive rules the CSS
+  actually contains.
+- Leave contrast and hit areas alone. A contrast ratio is a property of a colour against
+  whatever paints behind it after cascade, inheritance, opacity and any theme layer, and
+  a declared colour does not say which. `#767676` is 4.54:1 on white and 2.8:1 on
+  `#f6f8fa`. A hit area is a computed box, not a declared width. Reporting either from
+  source produces a WCAG failure nobody measured, which teaches the author that this
+  review's accessibility claims are guesses.
 - Do not enter Step 3. It is a fixing loop, and every other lens is reading this same
   checkout while you run. Report each fix as a finding and change nothing.
 - Leave the Output Format's "Issues Fixed", "Fixed File" and "Fix Details" alone. Your

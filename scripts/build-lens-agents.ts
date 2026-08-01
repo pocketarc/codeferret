@@ -21,6 +21,7 @@
 
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { writeOrCheck } from "./generated.ts";
 
 // Every path below is repository-relative, and whoever has just edited this script is
 // standing in scripts/. Without this the run dies on a raw ENOENT or writes an agents/
@@ -77,7 +78,7 @@ async function extrasFor(lens: string): Promise<string> {
 
 /**
  * The extras go where lens-brief.md puts `__EXTRAS__`, above the closing instruction to
- * return the schema. Below it, a standing instruction reads as a continuation of the
+ * return the schema. Below it, a reader takes a standing instruction for part of the
  * output format, which is what everything else the lens must remember sits above.
  */
 function render(skillLine: string, extras: string): string {
@@ -138,25 +139,10 @@ for (const entry of readdirSync("lenses/skills", { withFileTypes: true })) {
     );
 }
 
-let problems = 0;
+let problems = (await writeOrCheck(wanted, check, "bun scripts/build-lens-agents.ts")).problems;
 
-for (const [path, content] of wanted) {
-    if (!check) {
-        await Bun.write(path, content);
-        continue;
-    }
-
-    const current = existsSync(path) ? await Bun.file(path).text() : null;
-
-    if (current === null) {
-        console.error(`FAIL ${path} is missing`);
-        problems += 1;
-    } else if (current !== content) {
-        console.error(`FAIL ${path} does not match review/lens-brief.md`);
-        problems += 1;
-    }
-}
-
+// An agent left behind by a lens that has gone. Nothing regenerates it away, so it is
+// reported separately from the files this script owns.
 for (const entry of existsSync(AGENTS_DIR) ? readdirSync(AGENTS_DIR) : []) {
     if (!entry.endsWith(".md")) continue;
     if (wanted.has(`${AGENTS_DIR}/${entry}`)) continue;
@@ -168,13 +154,6 @@ for (const entry of existsSync(AGENTS_DIR) ? readdirSync(AGENTS_DIR) : []) {
     problems += 1;
 }
 
-if (problems > 0) {
-    console.error(
-        check
-            ? "\nRun `bun scripts/build-lens-agents.ts` to regenerate."
-            : "\nThe agents were written. Deal with the files above by hand.",
-    );
-    process.exit(1);
-}
+if (problems > 0) process.exit(1);
 
 console.log(`OK ${AGENTS_DIR}: ${wanted.size} agent(s)${check ? " match review/lens-brief.md" : " written"}`);

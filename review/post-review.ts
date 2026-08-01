@@ -11,47 +11,22 @@
  * Env:   GITHUB_TOKEN, GITHUB_REPOSITORY
  */
 
-import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
-
-interface Finding {
-    found_by?: string[];
-    file: string;
-    line: number;
-    end_line?: number;
-    severity: string;
-    category: string;
-    title: string;
-    body: string;
-    in_diff?: boolean;
-    status?: "new" | "already-reported" | "declined";
-    existing_comment_url?: string;
-}
-
-interface LensHealth {
-    lens: string;
-    findings_returned: number;
-    ok: boolean;
-    detail?: string;
-}
-
-interface Merged {
-    summary?: string;
-    notes?: string;
-    lens_health?: LensHealth[];
-    resolve?: Array<{ thread_id: string; reason: string }>;
-    findings: Finding[];
-}
-
-const SEVERITY_ORDER = ["critical", "high", "medium", "low", "nit", "question"];
-const MAX_BODY = 60000;
-const RETRY_AFTER_MS = 60_000;
-const MAX_RETRY_AFTER_MS = 300_000;
-const MAX_INLINE = 40;
-
-// The orchestrator writes both of these, and nothing bounds what a model produces. Left
-// unbounded, a runaway summary eats the length the findings need.
-const MAX_PROSE = 4000;
+import { MARKER, readDiffArgs } from "./lib.ts";
+import {
+    anchorable,
+    anchorableLines,
+    assemble,
+    clamp,
+    details,
+    escapeInline,
+    MAX_INLINE,
+    mention,
+    plural,
+    rateLimitWait,
+    severityRank,
+} from "./review-body.ts";
+import type { Finding, Listing, Merged, Section } from "./review-body.ts";
 
 const [findingsPath, baseRef, headSha, prNumber] = process.argv.slice(2);
 const token = process.env.GITHUB_TOKEN;
@@ -63,71 +38,113 @@ if (!findingsPath || !baseRef || !headSha || !prNumber || !token || !repo) {
     process.exit(2);
 }
 
-// Bound here rather than inside commentableLines, because the check above narrows these
-// only at this level: a function body could be called before it ran.
+// Bound here rather than inside a function, because the check above narrows these only at
+// this level: a function body could be called before it ran.
 const buildDir = dirname(findingsPath);
-
-function severityRank(s: string): number {
-    const i = SEVERITY_ORDER.indexOf(s);
-    return i === -1 ? SEVERITY_ORDER.length : i;
-}
 
 /** Right-side line numbers per file that appear anywhere in the diff hunks. */
 async function commentableLines(): Promise<Map<string, Set<number>>> {
-    // The pathspec is read back from the argv build-prompts.sh wrote for the lenses,
-    // rather than built a second time here. Two constructions of it drift, and once they
-    // do this map covers files no lens read, so a finding can be anchored inline against
-    // a file nothing reviewed. Element one is the range, which this script takes from its
-    // own arguments; everything after it is the pathspec.
-    const argsFile = join(buildDir, "diff-args");
+    // The arguments are read back from the argv build-prompts.sh wrote for the lenses,
+    // rather than built a second time here. Two constructions of them drift, and once they
+    // do this map covers a diff no lens read, so a finding can be anchored inline against
+    // a file nothing reviewed.
+    let range: string;
+    let pathspec: string[];
 
-    if (!existsSync(argsFile)) {
+    try {
+        ({ range, pathspec } = await readDiffArgs(join(buildDir, "diff-args")));
+    } catch (error) {
         console.error(
-            `no ${argsFile}. findings.json has to sit in the build directory of the run that produced it,` +
-                " beside the diff arguments its lenses read under.",
+            `${error instanceof Error ? error.message : String(error)}. findings.json has to sit in` +
+                " the build directory of the run that produced it, beside the diff arguments its" +
+                " lenses read under.",
         );
         process.exit(1);
     }
 
-    const pathspec = (await Bun.file(argsFile).text()).split("\0").filter(Boolean).slice(1);
+    // build-prompts.sh pins the head when the run starts, because a run takes tens of
+    // minutes and whoever started it is often still committing. Anchoring against a
+    // different commit puts a comment on the wrong line, or names a commit GitHub does not
+    // hold, which fails the whole atomic review.
+    const reviewed = range.includes("...") ? range.slice(range.lastIndexOf("...") + 3) : null;
 
-    const proc = Bun.spawnSync(["git", "diff", "-U3", `${baseRef}...${headSha}`, ...pathspec]);
+    if (reviewed !== headSha) {
+        console.error(
+            `the lenses reviewed '${range}' and this was asked to anchor against '${headSha}'.` +
+                " Run the review again against the commit you mean to post about.",
+        );
+        process.exit(1);
+    }
+
+    // The parser below reads git's default output shape, and a caller's own git config can
+    // change it: `diff.noprefix` and `diff.mnemonicPrefix` both rewrite the `b/` this keys
+    // on, `core.quotePath` backslash-quotes any path outside ASCII, and `diff.external`
+    // replaces the format outright. Under any of them nothing matches, every finding is
+    // demoted, and the review looks like one that anchored nothing on purpose. A runner
+    // has no such config; the developer running local-post.sh does.
+    const proc = Bun.spawnSync([
+        "git",
+        "-c",
+        "core.quotePath=false",
+        "diff",
+        "--no-ext-diff",
+        "--src-prefix=a/",
+        "--dst-prefix=b/",
+        "-U3",
+        `${baseRef}...${headSha}`,
+        ...pathspec,
+    ]);
 
     if (proc.exitCode !== 0) {
         throw new Error(`git diff failed: ${new TextDecoder().decode(proc.stderr)}`);
     }
 
-    const byFile = new Map<string, Set<number>>();
-    let currentFile: string | null = null;
-    let rightLine = 0;
-
-    for (const line of new TextDecoder().decode(proc.stdout).split("\n")) {
-        const newFile = line.match(/^\+\+\+ b\/(.*)$/);
-        if (newFile) {
-            const named = newFile[1];
-            currentFile = named === undefined || named === "/dev/null" ? null : named;
-            if (currentFile && !byFile.has(currentFile)) byFile.set(currentFile, new Set());
-            continue;
-        }
-
-        const hunk = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
-        if (hunk) {
-            rightLine = Number(hunk[1]);
-            continue;
-        }
-
-        if (!currentFile || line.startsWith("-")) continue;
-        if (line.startsWith("+") || line.startsWith(" ")) {
-            byFile.get(currentFile)?.add(rightLine);
-            rightLine += 1;
-        }
-    }
-
-    return byFile;
+    return anchorableLines(new TextDecoder().decode(proc.stdout));
 }
 
-const merged: Merged = JSON.parse(await Bun.file(findingsPath).text());
-const allFindings = [...(merged.findings ?? [])].sort(
+/** Threads this run posted itself, which are the only ones it may resolve. */
+async function ownThreads(): Promise<Set<string>> {
+    const file = Bun.file(join(buildDir, "existing.json"));
+
+    if (!(await file.exists())) return new Set();
+
+    try {
+        const parsed = JSON.parse(await file.text()) as {
+            threads?: Array<{ thread_id?: unknown; mine?: unknown }>;
+        };
+
+        return new Set(
+            (parsed.threads ?? [])
+                .filter((t) => t.mine === true && typeof t.thread_id === "string")
+                .map((t) => String(t.thread_id)),
+        );
+    } catch {
+        console.error("existing.json could not be read, so no thread will be resolved.");
+        return new Set();
+    }
+}
+
+let merged: Merged;
+
+try {
+    // Nothing has necessarily validated this file. The action runs check-findings.ts
+    // first, but local-post.sh and the by-hand path in review/README.md both come
+    // straight here, and an unhandled rejection at the end of a run that cost real money
+    // is a worse answer than a sentence naming the file.
+    merged = JSON.parse(await Bun.file(findingsPath).text()) as Merged;
+} catch (error) {
+    console.error(`${findingsPath}: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(`check it with: bun check-findings.ts ${findingsPath}`);
+    process.exit(1);
+}
+
+if (typeof merged !== "object" || merged === null || !Array.isArray(merged.findings)) {
+    console.error(`${findingsPath}: has no \`findings\` array`);
+    console.error(`check it with: bun check-findings.ts ${findingsPath}`);
+    process.exit(1);
+}
+
+const allFindings = [...merged.findings].sort(
     (a, b) => severityRank(a.severity) - severityRank(b.severity),
 );
 
@@ -136,22 +153,13 @@ const suppressed = allFindings.filter((f) => f.status === "already-reported");
 const declined = allFindings.filter((f) => f.status === "declined");
 const findings = allFindings.filter((f) => f.status !== "already-reported" && f.status !== "declined");
 
-const anchorable = await commentableLines();
+const anchors = await commentableLines();
 
 const inline: Finding[] = [];
 const demoted: Finding[] = [];
 
 for (const finding of findings) {
-    const fileLines = anchorable.get(finding.file);
-    const start = finding.end_line ? Math.min(finding.line, finding.end_line) : finding.line;
-    const end = finding.end_line ? Math.max(finding.line, finding.end_line) : finding.line;
-
-    let ok = fileLines !== undefined;
-    for (let n = start; ok && n <= end; n += 1) {
-        if (!fileLines?.has(n)) ok = false;
-    }
-
-    (ok ? inline : demoted).push(finding);
+    (anchorable(finding, anchors.get(finding.file)) ? inline : demoted).push(finding);
 }
 
 // GitHub counts every comment in a review as content created, and refuses a review
@@ -166,46 +174,30 @@ function lensLabel(lens: string): string {
     return lens.replace(/^[^:]+:/, "");
 }
 
-function plural(n: number, word: string): string {
-    return `${n} ${word}${n === 1 ? "" : "s"}`;
-}
-
-// `github-actions[bot]` is the login of every workflow posting with `github.token`, so a
-// later run cannot tell its own threads from another workflow's by author. This marker
-// renders as nothing and is what fetch-existing.ts matches on.
-const MARKER = "<!-- codeferret -->";
-
 function commentBody(f: Finding): string {
-    return `**${f.title}**\n\n${f.body}\n\n_${f.category}_\n\n${MARKER}`;
-}
-
-/**
- * One finding as a bullet, for the sections of the body that list findings rather than
- * anchor them.
- *
- * The continuation indent is two spaces. Four after a blank line is an indented code
- * block in markdown, which takes the formatting out of the body and stops it wrapping.
- */
-function bullet(f: Finding): string {
-    const span = f.end_line && f.end_line !== f.line ? `${f.line}-${f.end_line}` : `${f.line}`;
-    const body = f.body.replace(/\n/g, "\n  ");
-
-    return `- **${f.title}**\n\n  \`${f.file}:${span}\`\n\n  ${body}\n\n  _${f.category}_`;
-}
-
-/** One finding as a single line, for the sections that only say a finding was seen. */
-function mention(f: Finding, link: string): string {
-    const url = f.existing_comment_url ? ` ([${link}](${f.existing_comment_url}))` : "";
-    return `- ${f.title} (\`${f.file}:${f.line}\`)${url}`;
-}
-
-/** Prose the orchestrator wrote, cut to a length the findings can still fit around. */
-function clamp(prose: string): string {
-    return prose.length <= MAX_PROSE ? prose : `${prose.slice(0, MAX_PROSE)}\n\n_(cut for length)_`;
+    return `**${escapeInline(f.title)}**\n\n${f.body}\n\n_${f.category}_\n\n${MARKER}`;
 }
 
 // Resolving is a write, so a dry run reports the decision without making it.
-const toResolve = merged.resolve ?? [];
+const mine = await ownThreads();
+const asked = merged.resolve ?? [];
+
+// The orchestrator is told to leave a human's thread open, and that judgement is made in a
+// session that has just read every comment on the pull request, written by anyone who can
+// comment. `mine` is the non-model signal beside it: the login the review posts under, and
+// the marker every comment of ours carries. Resolving somebody else's thread takes their
+// words off the page, and the next run reads the resolved thread back as a declined
+// finding, so one wrong call suppresses a finding for good.
+const foreign = asked.filter((entry) => !mine.has(entry.thread_id));
+const toResolve = asked.filter((entry) => mine.has(entry.thread_id));
+
+if (foreign.length > 0) {
+    console.error(
+        `not resolving ${plural(foreign.length, "thread")} the orchestrator named but this run did not open:` +
+            ` ${foreign.map((entry) => entry.thread_id).join(", ")}`,
+    );
+}
+
 const resolved: Array<{ reason: string }> = [];
 let resolveDenied = false;
 
@@ -231,7 +223,7 @@ if (toResolve.length > 0 && !process.env.DRY_RUN) {
             resolveDenied = true;
             console.error(
                 `cannot resolve threads: the token lacks contents: write.` +
-                    ` ${plural(toResolve.length, "thread")} were judged finished and left open.`,
+                    ` ${plural(toResolve.length - resolved.length, "thread")} were judged finished and left open.`,
             );
             continue;
         }
@@ -245,66 +237,7 @@ if (toResolve.length > 0 && !process.env.DRY_RUN) {
     }
 }
 
-/** A heading, a reason, and findings listed under it. The only sections that can run long. */
-interface Listing {
-    heading: string;
-    lead: string;
-    items: Finding[];
-}
-
-type Section = string | Listing;
-
-function isListing(section: Section): section is Listing {
-    return typeof section !== "string";
-}
-
-/**
- * Join the sections into one body no longer than GitHub accepts.
- *
- * Everything except the finding listings is short, and it is the part that makes the
- * review honest: the counts, the lens health, what was suppressed, and the caveats saying
- * what the run could not check. So the listings get whatever length the rest leaves, and
- * they lose whole findings from the end rather than being cut at a character offset. An
- * offset lands inside a `<details>`, a fenced block, or a finding's own markup, and
- * GitHub renders the wreckage. What did not fit is counted and pointed at the artifact.
- *
- * Listings are filled in the order given, so put the one that matters most first.
- */
-function assemble(sections: Section[]): string {
-    const fixed = sections.filter((s) => !isListing(s)) as string[];
-    let budget = MAX_BODY - fixed.reduce((total, s) => total + s.length + 2, 0);
-
-    const rendered = sections.map((section) => {
-        if (!isListing(section)) return section;
-
-        const frame = `### ${section.heading}\n\n${section.lead}\n\n`;
-        // Reserved for the omission line, so saying what went missing cannot itself be
-        // the thing that does not fit.
-        budget -= frame.length + 200;
-
-        const kept: string[] = [];
-        for (const finding of section.items) {
-            const text = bullet(finding);
-            if (text.length + 2 > budget) break;
-            kept.push(text);
-            budget -= text.length + 2;
-        }
-
-        const missing = section.items.length - kept.length;
-        const omission =
-            missing > 0
-                ? `\n\n- _${plural(missing, "further finding")} left out for length. Every one of them is in \`findings.json\` in the \`codeferret-run\` artifact._`
-                : "";
-
-        return `${frame}${kept.join("\n\n")}${omission}`;
-    });
-
-    const body = rendered.join("\n\n");
-
-    // Reached only when the short sections alone exceed the limit, which takes a
-    // lens_health list or a suppressed list of a size nothing here has seen.
-    return body.length > MAX_BODY ? `${body.slice(0, MAX_BODY)}\n\n_(cut for length)_` : body;
-}
+const leftOpen = toResolve.length - resolved.length;
 
 const health = merged.lens_health ?? [];
 const brokenLenses = health.filter((h) => !h.ok);
@@ -319,21 +252,21 @@ const head: Section[] = ["## CodeFerret"];
 
 if (merged.summary) head.push(clamp(merged.summary));
 
-// One clause reads as a sentence. Five joined by a separator wrap wherever GitHub's
-// column ends, and a screen reader speaks the separator as nothing, so the counts run
+// A screen reader speaks a separator between joined counts as nothing, so five of them run
 // into each other. Past one, they are a list.
 const [onlyCount] = counts;
 head.push(counts.length === 1 && onlyCount ? onlyCount : counts.map((c) => `- ${c}`).join("\n"));
 
 if (health.length > 0) {
     // A list, not a table: GitHub gives a wide column the container and starves the
-    // rest, and most lenses report no detail at all.
+    // rest, and most lenses report no detail at all. Punctuation a screen reader speaks,
+    // for the reason the counts above are a list.
     const items = health
         .map((h) => {
             const name = lensLabel(h.lens);
-            const flag = h.ok ? "" : " · **needs attention**";
+            const flag = h.ok ? "" : ", **needs attention**";
             const detail = h.detail ? `\n  ${h.detail.replace(/\n+/g, " ")}` : "";
-            return `- **${name}** · ${plural(h.findings_returned, "finding")}${flag}${detail}`;
+            return `- **${name}**: ${plural(h.findings_returned, "finding")}${flag}${detail}`;
         })
         .join("\n");
 
@@ -348,37 +281,36 @@ if (health.length > 0) {
             ? `${health.length} lenses ran, ${brokenLenses.length} needing attention`
             : `${health.length} lenses ran, all reporting`;
 
-    head.push(
-        `<details${brokenLenses.length > 0 ? " open" : ""}>\n<summary>${heading}</summary>\n\n${items}\n</details>`,
-    );
+    head.push(details(heading, items, brokenLenses.length > 0));
 }
 
 const tail: Section[] = [];
 
 if (suppressed.length > 0) {
-    const body = suppressed.map((f) => mention(f, "earlier comment")).join("\n");
     tail.push(
-        `<details>\n<summary>${plural(suppressed.length, "finding")} already commented on</summary>\n\n${body}\n</details>`,
+        details(
+            `${plural(suppressed.length, "finding")} already commented on`,
+            suppressed.map((f) => mention(f, "earlier comment")).join("\n"),
+        ),
     );
 }
 
 if (declined.length > 0) {
-    const body = declined.map((f) => mention(f, "thread")).join("\n");
     tail.push(
-        `<details>\n<summary>${plural(declined.length, "finding")} raised before and declined</summary>\n\n${body}\n</details>`,
+        details(
+            `${plural(declined.length, "finding")} raised before and declined`,
+            declined.map((f) => mention(f, "thread")).join("\n"),
+        ),
     );
 }
 
 if (resolved.length > 0) {
-    const body = resolved.map((r) => `- ${r.reason}`).join("\n");
-    tail.push(
-        `<details>\n<summary>${plural(resolved.length, "thread")} resolved</summary>\n\n${body}\n</details>`,
-    );
+    tail.push(details(`${plural(resolved.length, "thread")} resolved`, resolved.map((r) => `- ${r.reason}`).join("\n")));
 }
 
 if (resolveDenied) {
     tail.push(
-        `> ${plural(toResolve.length, "thread")} look finished but could not be resolved:` +
+        `> ${plural(leftOpen, "thread")} look finished but could not be resolved:` +
             ` the workflow grants \`pull-requests: write\`, and \`resolveReviewThread\` needs` +
             ` \`contents: write\`.`,
     );
@@ -420,7 +352,7 @@ const comments = inline.map((f) => ({
 console.log(
     `total=${allFindings.length} new=${findings.length} suppressed=${suppressed.length}` +
         ` declined=${declined.length} inline=${inline.length} demoted=${demoted.length}` +
-        ` overflow=${overflow.length} resolved=${resolved.length}/${toResolve.length}`,
+        ` overflow=${overflow.length} resolved=${resolved.length}/${asked.length}`,
 );
 
 // A run where every lens died also produces no findings, and posting nothing leaves the
@@ -457,21 +389,6 @@ interface Posted {
     retryAfterMs: number | null;
 }
 
-/**
- * A secondary rate limit comes back as 403 or 429, and both carry `retry-after`. Match only
- * one of those statuses, or sleep a fixed minute of our own, and the retry goes out after a
- * minute against a limit that asked for two: the wait is spent and it is refused again.
- */
-function rateLimitWait(response: Response, detail: string): number | null {
-    const limited =
-        response.status === 429 || (response.status === 403 && /secondary rate limit/i.test(detail));
-
-    if (!limited) return null;
-
-    const asked = Number(response.headers.get("retry-after")) * 1000;
-    return asked > 0 ? Math.min(asked, MAX_RETRY_AFTER_MS) : RETRY_AFTER_MS;
-}
-
 async function postReview(payload: unknown): Promise<Posted> {
     const response = await fetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}/reviews`, {
         method: "POST",
@@ -490,7 +407,7 @@ async function postReview(payload: unknown): Promise<Posted> {
         ok: response.ok,
         status: response.status,
         detail,
-        retryAfterMs: rateLimitWait(response, detail),
+        retryAfterMs: rateLimitWait(response.status, response.headers.get("retry-after"), detail),
     };
 }
 
@@ -520,19 +437,23 @@ if (!response.ok && comments.length > 0) {
     // The reviews endpoint is all-or-nothing: one rejected anchor creates no comments.
     console.error("retrying as a body-only review so the findings still land");
 
+    // Nothing is on its own line in this path, so the overflow findings join the rescued
+    // ones under a single heading. Two sibling sections here gave the reader two different
+    // reasons for the same treatment.
+    //
     // The rescued findings are assembled first, so the length goes to them before it goes
     // to anything else. Appending them to a body already at the limit is how the one path
     // that exists to save them was what dropped them.
     const rescued: Listing = {
         heading: "Findings",
         lead: "GitHub rejected the inline anchors for this review, so these are listed here instead.",
-        items: inline,
+        items: [...inline, ...overflow],
     };
 
     response = await postWaitingOutALimit(
         {
             commit_id: headSha,
-            body: assemble([...head, rescued, ...listings, ...tail]),
+            body: assemble([...head, rescued, ...(demoted.length > 0 ? [outsideDiff] : []), ...tail]),
             event: "COMMENT",
         },
         "body-only review",

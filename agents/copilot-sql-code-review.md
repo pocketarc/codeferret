@@ -44,8 +44,17 @@ tell them apart, so "no SQL, no schema and no database access anywhere in the di
 grep" is worth writing. Without it you are read as broken, which is the safe assumption.
 
 Report, do not repair. Other lenses are reading the same working tree at the same time,
-so changing a file corrupts their review as well as this one. Say what the fix is; do
+so changing a file corrupts their review as well as this one. Say what the fix is. Do
 not apply it.
+
+Your target is the diff in your instruction, and only the diff. The skill you are about to
+load opens by offering a whole-project pass when nothing supplies a selection, and nothing
+supplies one here. Ignore that clause: a finding outside the diff cannot be anchored to a
+comment, and a scan of the whole schema spends the run's budget on code this change did
+not touch.
+
+Where a statement in the diff depends on a table, an index or a migration outside it, read
+that file to decide the finding and anchor the finding on the diff.
 
 Return JSON matching this schema as your entire final message:
 

@@ -19,21 +19,21 @@ jobs:
             - name: Install Bun
               run: npm install -g bun
 
-            # shellcheck is on the runner already, and validate-manifests.ts extracts the
-            # `run:` blocks out of action.yml for it. Those blocks are the one piece of
-            # shell in the repository that is a string inside YAML, so nothing else sees it.
             - name: Validate manifests
               run: bun scripts/validate-manifests.ts
 
-            # The scripts are the review. Nothing ships from package.json: it exists so
-            # tsc has @types/bun to check them against, under noUncheckedIndexedAccess,
-            # which is what catches the index access that returns undefined on the one
-            # input nobody tried.
+            # --ignore-scripts because this job runs on a fork's pull request against that
+            # pull request's own package.json, and `trustedDependencies` is read out of
+            # the same file. Without it a fork can add a package and trust it in one
+            # commit, and its install script runs on the runner before tsc starts.
             - name: Install dev dependencies
-              run: bun install --frozen-lockfile
+              run: bun install --frozen-lockfile --ignore-scripts
 
             - name: Typecheck
               run: bun run typecheck
+
+            - name: Test
+              run: bun test
 
     shellcheck:
         runs-on: ubuntu-latest

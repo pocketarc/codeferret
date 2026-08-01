@@ -1,4 +1,4 @@
-STEP 4 — close what is finished. Fill `resolve` with the threads that are done, each with
+STEP 4: close what is finished. Fill `resolve` with the threads that are done, each with
 a one-line reason. This is a judgement on each thread, not a rule: `resolved` and
 `outdated` are evidence you weigh, not conditions that decide for you.
 

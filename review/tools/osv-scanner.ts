@@ -19,11 +19,9 @@
  * Usage: bun review/tools/osv-scanner.ts <build-dir>
  */
 
-import { existsSync } from "node:fs";
 import { basename, join } from "node:path";
-import { repoRoot as findRepoRoot, reporter } from "./report";
-
-const MAX_FINDINGS = 100;
+import { readDiffArgs } from "../lib.ts";
+import { changedFiles, MAX_FINDINGS, repoRoot, reporter, runner } from "./report.ts";
 
 const IMAGE =
     "ghcr.io/google/osv-scanner:v2.2.4@sha256:f7ba4be68bac8086b1f88fd598fdca1ca67239c79ad2c2b5c78e03a82e5187c4";
@@ -77,34 +75,22 @@ if (!buildDir) {
     process.exit(2);
 }
 
-const repoRoot = findRepoRoot();
+const root = repoRoot();
 
-const write = reporter("osv-scanner", join(buildDir, "tool-osv-scanner.json"), {
-    // One entry per manifest, so a scan that failed on one lockfile and succeeded on
-    // another is legible rather than a single number.
+// One `manifests` entry per lockfile, so a scan that failed on one and succeeded on
+// another is legible rather than a single number.
+const extras: { manifests: Array<Record<string, unknown>>; caveat: string } = {
     manifests: [],
     caveat:
         "A lockfile holds every dependency, not only the ones this diff touched, so a" +
         " vulnerability here may predate the change. Check the diff before blaming it on" +
         " this pull request.",
-});
+};
 
-function runner(): { argv: string[]; how: string } | null {
-    if (Bun.which("osv-scanner")) return { argv: ["osv-scanner"], how: "binary" };
+const write = reporter("osv-scanner", join(buildDir, "tool-osv-scanner.json"), extras);
 
-    if (Bun.which("docker")) {
-        // The image's entrypoint is the scanner itself, so it takes arguments and no
-        // command.
-        return {
-            argv: ["docker", "run", "--rm", "--volume", `${repoRoot}:/src:ro`, "--workdir", "/src", IMAGE],
-            how: `docker ${IMAGE}`,
-        };
-    }
-
-    return null;
-}
-
-const osv = runner();
+// The image's entrypoint is the scanner itself, so it takes arguments and no command.
+const osv = runner("osv-scanner", IMAGE);
 
 if (!osv) {
     await write({ ran: false, reason: "neither osv-scanner nor docker is on PATH" });
@@ -113,43 +99,29 @@ if (!osv) {
 }
 
 const argsFile = join(buildDir, "diff-args");
+let range: string;
 
-if (!existsSync(argsFile)) {
-    await write({ ran: false, reason: `no ${argsFile}` });
-    console.error(`osv-scanner: ${argsFile} is missing, skipped`);
+try {
+    // The range only. This tool drops the pathspec beside it, for the reason at the top
+    // of this file.
+    ({ range } = await readDiffArgs(argsFile));
+} catch (error) {
+    await write({ ran: false, reason: error instanceof Error ? error.message : String(error) });
+    console.error(`osv-scanner: ${argsFile} could not be read, skipped`);
     process.exit(0);
 }
 
-// Element one is the range. Everything after it is the pathspec, which the header says
-// why this tool drops.
-const range = (await Bun.file(argsFile).text()).split("\0").filter(Boolean)[0];
+const changed = changedFiles([range]);
 
-if (!range) {
-    await write({ ran: false, reason: "no range in diff-args" });
-    console.error("osv-scanner: diff-args names no range, skipped");
-    process.exit(0);
-}
-
-// -z because git backslash-quotes any path outside ASCII unless it is asked not to, and a
-// quoted path neither matches a manifest name nor exists on disk.
-const named = Bun.spawnSync(["git", "diff", "--name-only", "-z", "--diff-filter=d", range], {
-    cwd: repoRoot,
-});
-
-// A failing git diff writes nothing to stdout, which is the same shape as a diff changing
-// no manifest. Left unchecked, the only check on dependency advisories reports itself as
-// having run and found nothing.
-if (named.exitCode !== 0) {
-    const stderr = new TextDecoder().decode(named.stderr).trim().slice(0, 300);
-    await write({ ran: false, reason: `git diff failed: ${stderr || `exit ${named.exitCode}`}` });
+// Left unchecked, the only check on dependency advisories would report itself as having
+// run and found nothing.
+if ("failure" in changed) {
+    await write({ ran: false, reason: changed.failure });
     console.error("osv-scanner: git diff failed, skipped");
     process.exit(0);
 }
 
-const manifests = new TextDecoder()
-    .decode(named.stdout)
-    .split("\0")
-    .filter((f) => f.length > 0 && MANIFESTS.has(basename(f)) && existsSync(join(repoRoot, f)));
+const manifests = changed.present.filter((f) => MANIFESTS.has(basename(f)));
 
 if (manifests.length === 0) {
     await write({ ran: true, how: osv.how, scanned: 0 });
@@ -170,7 +142,7 @@ for (const manifest of manifests) {
     // `--lockfile=` rather than a separate argument, so that a later edit cannot separate
     // the flag from its value and leave a repository-controlled path being read as one.
     const proc = Bun.spawnSync([...osv.argv, "scan", "source", "--format", "json", `--lockfile=${manifest}`], {
-        cwd: repoRoot,
+        cwd: root,
     });
 
     // It exits non-zero when it finds something, which is the normal case here, so the

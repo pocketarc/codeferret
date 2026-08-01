@@ -3,7 +3,8 @@
     "private": true,
     "description": "Dev dependencies only. Nothing here ships: the action and the plugin run the scripts under review/ and scripts/ with bun directly.",
     "scripts": {
-        "typecheck": "tsc --noEmit"
+        "typecheck": "tsc --noEmit",
+        "test": "bun test"
     },
     "devDependencies": {
         "@types/bun": "^1.3.5",

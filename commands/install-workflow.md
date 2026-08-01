@@ -20,13 +20,18 @@ Read `<plugin>/templates/workflow.yml` and show it before writing anything. It g
 `pull-requests: write` and `contents: read`, and the user should see that first.
 
 `contents: read` is what the template ships, and everything works under it except closing
-a finished thread; the review lists the ones it would have closed instead. Offer the
-upgrade to `contents: write` rather than assuming it, and say what it costs: the review
-agent runs with Bash, so a token that can write contents is a token that can push.
+a finished thread. The template turns thread resolution off to match. Offer the upgrade to
+`contents: write` rather than assuming it, and say what it costs: the review agent runs
+with Bash, so a token that can write contents is a token that can push. Taking the upgrade
+means setting `resolve-threads: 'true'` in the same edit.
+
+Say what the workflow uploads. The last step keeps `findings.json` as an artifact for 14
+days, which holds every finding including the ones the review suppressed, so whoever can
+read the repository's artifacts can read those.
 
 The template references `pocketarc/codeferret@v1`, which is not a pin. It is a tag this
 repository moves to each new release, so the workflow follows those releases without being
-edited. Say so, and say that `@v1.2.0` or a commit SHA holds a revision instead. Say too
+edited. Say so, and say that `@v1.1.0` or a commit SHA holds a revision instead. Say too
 that this plugin follows the default branch, so what runs in CI can be a release behind
 what runs in this session.
 
