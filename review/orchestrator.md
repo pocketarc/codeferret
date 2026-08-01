@@ -85,9 +85,14 @@ A thread already carrying `resolved: true` needs no entry.
 
 STEP 5 — account for every lens. Fill `lens_health` with one entry per lens in the list
 above, including any that errored, could not load its skill, or returned nothing usable.
-A lens that returns zero findings is more likely broken than satisfied, so mark
-`ok: false` and say what you saw. This is the only place a dead lens becomes visible, so
-do not tidy it away.
+Zero findings is a failure until the lens shows otherwise, so mark `ok: false` and say
+what you saw. This is the only place a dead lens becomes visible, so do not tidy it away.
+
+One exception, and only one: a lens that returned nothing *and* said specifically why —
+no SQL in the diff, no UI, no dependency manifest — and how it checked. Read that reason
+against the diff yourself. Where it holds, mark `ok: true` and put the reason in `detail`.
+A domain lens with nothing in its domain did its job, and filing it as broken teaches a
+reader to skip past the one line that would tell them a lens really had died.
 
 A lens that never started needs an entry too. A session that has hit a budget or
 concurrency limit refuses to launch further agents while the ones already running report

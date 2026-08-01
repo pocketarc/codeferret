@@ -1,3 +1,4 @@
+static-analysis
 caveman-review
 mattpocock-code-review
 anthropic-code-review

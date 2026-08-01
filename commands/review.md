@@ -84,6 +84,7 @@ command is allowed.
 ```sh
 LENSES="$(cat "<plugin>/review/defaults/lenses.txt")" \
   EXCLUDE_PATHS="$(cat "<plugin>/review/defaults/exclude-paths.txt")" \
+  TOOLS="$(cat "<plugin>/review/defaults/tools.txt")" \
   MODEL=opus \
   PERMISSION_MODE=auto \
   RESOLVE_THREADS=0 \

@@ -240,12 +240,30 @@ for (const lens of entries(action?.inputs?.lenses?.default)) {
     }
 }
 
+// A tool named by default and missing from review/tools/ fails every run at the point it
+// is invoked, which is after the checkout and before anything useful has happened.
+for (const tool of entries(action?.inputs?.tools?.default)) {
+    if (!existsSync(`review/tools/${tool}.ts`)) {
+        fail("action.yml", `default tool '${tool}' has no review/tools/${tool}.ts`);
+    }
+}
+
+// Tools report to this lens. Defaulting them on without it means running them and
+// throwing the reports away.
+if (
+    entries(action?.inputs?.tools?.default).length > 0 &&
+    !entries(action?.inputs?.lenses?.default).includes("static-analysis")
+) {
+    fail("action.yml", "tools run by default but `static-analysis` is not a default lens, so nothing reads them");
+}
+
 // A session cannot read a YAML default, so these lists exist for it to cat. action.yml
 // stays the documented default. Entries are compared rather than text, so reindenting
 // the block scalar does not fail the build over a non-difference.
 for (const [input, file] of [
     ["lenses", "review/defaults/lenses.txt"],
     ["exclude-paths", "review/defaults/exclude-paths.txt"],
+    ["tools", "review/defaults/tools.txt"],
 ] as const) {
     const documented = entries(action?.inputs?.[input]?.default);
     const shipped = entries(await Bun.file(file).text());

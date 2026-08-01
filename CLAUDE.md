@@ -199,6 +199,14 @@ commit reaches them the moment it lands, where an action consumer sees nothing u
   a prose format and the schema has no field for prose. That is why every finding must
   go through the structured output (see `review/lens-brief.md`), and why the posted
   review includes `lens_health`.
+
+  One exception, added because the rule was crying wolf: a lens that returns nothing
+  *and* names a checkable reason — no SQL in the diff, no UI, no dependency manifest,
+  and how it looked — is `ok: true` with the reason kept in `detail`. Half the default
+  set is domain lenses, and a run where three of them are correctly empty should not
+  print three warnings; a reader who learns to skip that line stops seeing the lens that
+  really did die. `lens-brief.md` asks for the reason and the orchestrator checks it
+  against the diff. Do not widen this to zero findings with no reason given.
 - **The lens brief must state the base ref.** Without it, some lenses stop and ask which
   commit to diff against, and nothing can answer in a headless run.
 - **Subagents do not inherit `--json-schema`.** Their schema comes from the prompt, so

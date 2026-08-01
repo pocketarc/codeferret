@@ -18,6 +18,7 @@ inputs:
             action.
         required: false
         default: |
+            static-analysis
             caveman-review
             mattpocock-code-review
             anthropic-code-review
@@ -38,9 +39,11 @@ inputs:
             lens, which reads each finding against the code and decides which hold, so
             name that lens in `lenses` as well. A tool runs from the runner's own binary
             if there is one and a pinned container otherwise; with neither, it records
-            that and is skipped. Empty runs no tools.
+            that and is skipped. Set it to an empty string to run none.
         required: false
-        default: ''
+        default: |
+            semgrep
+            osv-scanner
     exclude-paths:
         description: |
             Newline-separated globs to keep out of the review, one per line. These become
