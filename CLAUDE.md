@@ -218,8 +218,13 @@ get whatever is there the moment it lands, while an action consumer sees nothing
   stop and ask which commit to diff against, and nothing can answer in a headless run.
 - **Subagents do not inherit `--json-schema`.** Their schema comes from the prompt, so
   do not trust the shape of lens output. Only the orchestrator's output is validated.
-- **`REVIEW.md` goes to `mattpocock-code-review` and to nothing else.** A repository's
-  review conventions reach the one lens whose Standards axis enumerates documented rules.
+- **`REVIEW.md` goes to `mattpocock-code-review` and to nothing else.** It travels in
+  `review/lens-extras/mattpocock-code-review.md`, which the generator appends to that one
+  agent's system prompt — not through the orchestrator, which would leave the routing to
+  a judgement made afresh every run with nothing downstream able to tell when it went
+  wrong. Anything else meant for one lens alone belongs in `lens-extras/` for the same
+  reason. A repository's review conventions reach the one lens whose Standards axis
+  enumerates documented rules.
   Do not broaden it: giving every lens a whole rulebook pulls them toward the same
   generalist read, and the unique findings come from lenses staying in their own domain.
   The name is `REVIEW.md` and not `CLAUDE.md` because Claude Code auto-loads `CLAUDE.md`

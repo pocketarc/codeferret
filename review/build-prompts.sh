@@ -175,16 +175,6 @@ for lens in "${LENSES[@]}"; do
         } >>"$BUILD/lens-list.txt"
     fi
 
-    # One lens only: a rulebook given to every lens pulls them all toward the same
-    # generalist read. review/README.md has the evidence.
-    if [ "$lens" = "mattpocock-code-review" ] && [ -f "$WORKSPACE/REVIEW.md" ]; then
-        {
-            printf '  Also tell it: This repository documents its own review conventions in\n'
-            printf '  `REVIEW.md`. Read it and treat it as a standards source alongside anything\n'
-            printf '  else you find. It is additional context, never grounds for staying quiet\n'
-            printf '  about something it does not mention.\n'
-        } >>"$BUILD/lens-list.txt"
-    fi
 done
 
 # Naming a commit and nothing else diffs it against the working tree, so uncommitted work

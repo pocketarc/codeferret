@@ -61,6 +61,15 @@ if (!namespace) {
 const brief = await Bun.file("review/lens-brief.md").text();
 const schema = (await Bun.file("review/lens-schema.json").text()).trim();
 
+// Text meant for one lens and no other belongs in that lens's own system prompt. Routed
+// through the orchestrator instead — as the `REVIEW.md` instruction was — it becomes a
+// line the orchestrator has to hand to the right lens and no one else, every run, and
+// nothing downstream can tell when it gets that wrong.
+async function extrasFor(lens: string): Promise<string> {
+    const path = `review/lens-extras/${lens}.md`;
+    return existsSync(path) ? `\n${(await Bun.file(path).text()).trim()}\n` : "";
+}
+
 function render(skillLine: string): string {
     // Replacer functions, because `replace` reads `$&`, `` $` `` and `$1` in a
     // replacement *string* as substitutions, and JSON Schema's whole vocabulary is
@@ -90,7 +99,8 @@ for (const entry of readdirSync("lenses/skills", { withFileTypes: true })) {
         agent(
             entry.name,
             `CodeFerret's ${entry.name} lens. Dispatched by /codeferret:review; not for general use.`,
-            render(`Load the \`${namespace}:${entry.name}\` skill and have at it.`),
+            render(`Load the \`${namespace}:${entry.name}\` skill and have at it.`) +
+                (await extrasFor(entry.name)),
         ),
     );
 }
