@@ -100,8 +100,11 @@ to run it the way `/codeferret:review` does: a lens gets the reads it needs, any
 else is refused, and refusals are counted in `build/permission-denials` rather than
 disappearing. The header of `run.sh` lists the rest.
 
-Disable the installed plugin first (`/plugin`), because the plugin `run.sh` builds is
-also called `codeferret`, and two plugins cannot share a name in one session.
+The plugin `run.sh` builds is also called `codeferret`, and so is the installed one. That
+is fine: `--plugin-dir` wins the namespace and shadows the installed copy, which is what
+you want, because the built one holds exactly the lenses this run asked for. An earlier
+note here said two plugins cannot share a name in one session and told you to disable the
+installed one first. That was never tested and it is wrong.
 
 Print the review without posting it:
 
@@ -116,8 +119,10 @@ Give it the same `EXCLUDE_PATHS` the lenses were given, or a finding can anchor 
 they never saw.
 
 Budget roughly 15 minutes and several dollars per run on Opus with three lenses. Lenses
-run in parallel, so adding more of them costs money rather than time: the full twelve on
-a 47-file diff came to $31.80 in 19 minutes, and returned 90 findings.
+run in parallel, so adding more of them costs money rather than time: the full fourteen,
+with both static analysis tools, came to $36.00 in 20m46s and returned 97 findings, with
+no permission denials. The twelve-lens set before them came to $31.80 in 19 minutes over
+a 47-file diff.
 
 `extract-findings.ts` prints that cost, and the action puts it in the job summary and in
 its `cost-usd` and `output-tokens` outputs. Read `modelUsage` in `run.json` if you want
@@ -152,7 +157,7 @@ the way its author intended:
 
 - `name` becomes the local directory name. All bundled lenses share one plugin
   namespace, and more than one upstream ships a skill called `security-review`.
-- `description` is replaced with a scoped one, so that twelve lenses do not put
+- `description` is replaced with a scoped one, so that fourteen lenses do not put
   themselves in front of the model during unrelated work. Nothing downstream reads it: a
   lens agent is told which skill to load by name. `review/README.md` has the argument.
 - `disable-model-invocation: true` is removed. It leaves a skill reachable only by a
@@ -206,7 +211,8 @@ get whatever is there the moment it lands, while an action consumer sees nothing
   go through the structured output (see `review/lens-brief.md`), and why the posted
   review includes `lens_health`.
 
-  One exception, added because the rule was crying wolf: a lens that returns nothing
+  One exception, because the rule marked correctly-empty domain lenses as broken: a lens
+  that returns nothing
   *and* names a checkable reason — no SQL in the diff, no UI, no dependency manifest,
   and how it looked — is `ok: true` with the reason kept in `detail`. Half the default
   set is domain lenses, and a run where three of them are correctly empty should not
@@ -237,12 +243,11 @@ get whatever is there the moment it lands, while an action consumer sees nothing
   index and the keyboard-access failure were each found by one. For the same reason, do
   not add severity filtering.
 - **Bounding a tool's output is not the severity filtering the rule above forbids.**
-  `review/tools/semgrep.ts` caps what it hands over at 100 findings. That looks like the
-  filtering ruled out two entries up, and it is not: that rule exists because a *lens*
-  grades severity without the context that decides it, so its label is too unreliable to
-  hide anything with. A cap on tool input is a bound on what one lens is asked to read,
-  not on what a reader is told — everything raised stays in `build/tool-*.json` in the
-  artifact, and the lens reports how many it was given. Keep the distinction if you
+  `review/tools/semgrep.ts` caps what it hands over at 100 findings. That rule exists
+  because a *lens* grades severity without the context that decides it, so its label is
+  too unreliable to hide anything with. A cap on tool input bounds what one lens is asked
+  to read, not what a reader is told: everything raised stays in `build/tool-*.json` in
+  the artifact, and the lens reports how many it was given. Keep the distinction if you
   touch either rule: bound the input, never the findings.
 - **Lenses must not modify the working tree.** Some review skills offer to fix what they
   find, and every lens reads the same checkout at once, so one edit corrupts every other
@@ -263,14 +268,11 @@ get whatever is there the moment it lands, while an action consumer sees nothing
   so do not read it as a boundary that holds.
 - **A tool an agent asks for is not necessarily a tool it gets, and nothing says so.**
   `Grep`, `Glob`, and `TodoWrite` were all in the lens tool list and none of them reached
-  a dispatched lens. An earlier note here blamed unrecognised names; that was wrong, and
-  the experiment below is what corrected it. `TodoWrite` is indeed not a name on 2.1.220,
-  but `Grep` and `Glob` are — they are refused when the same agent asks for `Bash`, which
-  every lens needs for `git diff`. The two are mutually exclusive by design, and the
-  harness says so only to the agent: "Grep is not available in this session — search file
-  contents with grep via the Bash tool instead." Check the list against a real dispatch
-  when you change it, with `claude -p '...' --plugin-dir .` and a prompt asking an agent
-  to name the tools it has.
+  a dispatched lens; `review/README.md` has the reasons. Reading the list will not tell
+  you, so check it against a real dispatch when you change it, with
+  `claude -p '...' --plugin-dir .` and a prompt asking an agent to name the tools it has.
+  An earlier note here blamed unrecognised names, and that experiment is what corrected
+  it.
 - **Suppression can hide a real finding.** Every push re-runs the whole review, and the
   orchestrator marks each finding `new`, `already-reported`, or `declined` so that only
   new ones get posted. It reads every comment on the pull request, whoever wrote it, and

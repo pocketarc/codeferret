@@ -10,9 +10,10 @@
  * what makes an automated review unreadable.
  *
  * An installed semgrep is used if there is one, and a pinned container if there is not,
- * so nobody has to put Python on a machine to review a diff. Neither one available is
- * written down and skipped, because a review that stops for want of a linter is worth
- * less than one that runs without it.
+ * so nobody has to put Python on a machine to review a diff. The container costs a 420MB
+ * pull the first time and nothing after. Neither one available is written down and
+ * skipped, because a review that stops for want of a linter is worth less than one that
+ * runs without it.
  *
  * The image is pinned; the ruleset is not. `p/default` is fetched from semgrep's
  * registry on each run, so what the tool looks for can change between two runs of the
@@ -27,14 +28,15 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 // The lens reads every finding it is handed and checks it against the code, so a
-// pathological run would make one lens the most expensive thing in the review. Bounding
-// the input is easier to justify than bounding what a reviewer gets told about.
+// pathological run would make one lens the most expensive thing in the review.
 const MAX_FINDINGS = 100;
 
-// Pinned, for the reason every lens is pinned: a review job holds a write token, and
-// what it runs should not change between runs. `-nonroot` so a bind mount does not come
-// back owned by root.
-const IMAGE = "semgrep/semgrep:1.172.0-nonroot";
+// Pinned, for the reason every lens is pinned: a review job holds a write token, and what
+// it runs should not change between runs. A tag is a mutable pointer, so the digest is the
+// pin and the tag is there to be read. `-nonroot` so a bind mount does not come back owned
+// by root.
+const IMAGE =
+    "semgrep/semgrep:1.172.0-nonroot@sha256:d1012a3bf2acf47721216fbf7ff12d4c2971cc7f9c7b77cf6c6e9dcf006bd487";
 
 const [buildDir] = process.argv.slice(2);
 
@@ -50,13 +52,26 @@ const out = join(buildDir, "tool-semgrep.json");
 const topLevel = Bun.spawnSync(["git", "rev-parse", "--show-toplevel"]);
 const repoRoot = new TextDecoder().decode(topLevel.stdout).trim() || process.cwd();
 
+// Every exit writes the same keys, because the lens is asked to say how many findings the
+// report held and whether the tool ran at all. It cannot answer that from a shape that
+// changes with the path taken, and it cannot tell `{ran: true, scanned: 0}` from a report
+// that lost its counts.
 async function write(report: Record<string, unknown>): Promise<void> {
-    await Bun.write(out, `${JSON.stringify(report, null, 2)}\n`);
+    const full = {
+        tool: "semgrep",
+        ran: false,
+        how: null,
+        reason: null,
+        scanned: 0,
+        raised: 0,
+        truncated: 0,
+        errors: [],
+        findings: [],
+        ...report,
+    };
+    await Bun.write(out, `${JSON.stringify(full, null, 2)}\n`);
 }
 
-// A container costs a 420MB pull the first time and nothing after, which beats asking
-// somebody to put Python on their machine to review a diff. An installed semgrep wins,
-// because it is faster and it is what a runner with the tool already set up will have.
 function runner(): { argv: string[]; how: string } | null {
     if (Bun.which("semgrep")) return { argv: ["semgrep"], how: "binary" };
 
@@ -66,9 +81,7 @@ function runner(): { argv: string[]; how: string } | null {
                 "docker",
                 "run",
                 "--rm",
-                // Read-only, so the rule that lenses must not touch the working tree is
-                // enforced by the kernel here rather than by asking nicely, which is all
-                // that holds a lens back.
+                // Read-only: a linter has no business writing to the tree.
                 "--volume",
                 `${repoRoot}:/src:ro`,
                 "--workdir",
@@ -86,12 +99,7 @@ function runner(): { argv: string[]; how: string } | null {
 const semgrep = runner();
 
 if (!semgrep) {
-    await write({
-        tool: "semgrep",
-        ran: false,
-        reason: "neither semgrep nor docker is on PATH",
-        findings: [],
-    });
+    await write({ ran: false, reason: "neither semgrep nor docker is on PATH" });
     console.log("semgrep: no semgrep and no docker, skipped");
     process.exit(0);
 }
@@ -101,25 +109,37 @@ if (!semgrep) {
 const argsFile = join(buildDir, "diff-args");
 
 if (!existsSync(argsFile)) {
-    await write({ tool: "semgrep", ran: false, reason: `no ${argsFile}`, findings: [] });
+    await write({ ran: false, reason: `no ${argsFile}` });
     console.error(`semgrep: ${argsFile} is missing, skipped`);
     process.exit(0);
 }
 
 const diffArgs = (await Bun.file(argsFile).text()).split("\0").filter(Boolean);
 
-// -d drops deleted files: semgrep cannot read what is no longer there.
-const named = Bun.spawnSync(["git", "diff", "--name-only", "--diff-filter=d", ...diffArgs], {
+// -d drops deleted files: semgrep cannot read what is no longer there. -z because git
+// backslash-quotes any path outside ASCII unless it is asked not to, and a quoted path
+// matches no file on disk, so those files would drop out of the scan without a word.
+const named = Bun.spawnSync(["git", "diff", "--name-only", "-z", "--diff-filter=d", ...diffArgs], {
     cwd: repoRoot,
 });
-const files = new TextDecoder()
-    .decode(named.stdout)
-    .split("\n")
-    .map((f) => f.trim())
-    .filter((f) => f.length > 0 && existsSync(f));
+const namedPaths = new TextDecoder().decode(named.stdout).split("\0").filter(Boolean);
+
+// Joined to the repository root, because that is what git printed them relative to.
+// Unjoined, these resolve against the caller's directory and vanish the moment the caller
+// is anywhere else, and an empty scan is indistinguishable from a clean one.
+const files = namedPaths.filter((f) => existsSync(join(repoRoot, f)));
+
+if (namedPaths.length > 0 && files.length === 0) {
+    await write({
+        ran: false,
+        reason: `git named ${namedPaths.length} changed file(s) and none of them exist under ${repoRoot}`,
+    });
+    console.error("semgrep: none of the changed files are readable, skipped");
+    process.exit(0);
+}
 
 if (files.length === 0) {
-    await write({ tool: "semgrep", ran: true, scanned: 0, findings: [] });
+    await write({ ran: true, how: semgrep.how, scanned: 0 });
     console.log("semgrep: the diff touches no readable file");
     process.exit(0);
 }
@@ -133,6 +153,11 @@ const proc = Bun.spawnSync(
         "--quiet",
         "--metrics",
         "off",
+        // Every path here is one whoever opened the change chose, and a filename is
+        // allowed to start with a dash. Without `--`, a file called
+        // `--config=https://...` is a second ruleset and `--autofix` is a linter rewriting
+        // the tree ten lenses are reading.
+        "--",
         ...files,
     ],
     { cwd: repoRoot },
@@ -145,12 +170,20 @@ try {
     parsed = JSON.parse(stdout);
 } catch {
     const stderr = new TextDecoder().decode(proc.stderr).slice(0, 500);
-    await write({ tool: "semgrep", ran: false, reason: `semgrep returned no JSON: ${stderr}`, findings: [] });
+    await write({ ran: false, reason: `semgrep returned no JSON: ${stderr}` });
     console.error(`semgrep: could not parse output, skipped`);
     process.exit(0);
 }
 
 const results = parsed.results ?? [];
+
+// Semgrep parses what it can and skips the rest of a construct it cannot read, so a file
+// in this list got less than a full scan. A count alone would leave the lens asserting
+// coverage of files nothing read, so each one carries its path and the reason.
+const errors = (parsed.errors ?? []).map((e) => ({
+    path: e.path,
+    message: String(e.message ?? "").slice(0, 300),
+}));
 
 const findings = results.slice(0, MAX_FINDINGS).map((r) => ({
     rule: r.check_id,
@@ -162,17 +195,17 @@ const findings = results.slice(0, MAX_FINDINGS).map((r) => ({
 }));
 
 await write({
-    tool: "semgrep",
     ran: true,
     how: semgrep.how,
     scanned: files.length,
     raised: results.length,
     truncated: Math.max(0, results.length - findings.length),
-    errors: (parsed.errors ?? []).length,
+    errors,
     findings,
 });
 
 console.log(
     `semgrep: ${results.length} raised over ${files.length} file(s)` +
-        `${results.length > findings.length ? `, ${results.length - findings.length} beyond the cap` : ""}`,
+        `${results.length > findings.length ? `, ${results.length - findings.length} beyond the cap` : ""}` +
+        `${errors.length > 0 ? `, ${errors.length} file(s) only partly read` : ""}`,
 );

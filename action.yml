@@ -48,10 +48,10 @@ inputs:
         description: |
             Newline-separated globs to keep out of the review, one per line. These become
             a git pathspec on the diff every lens reads, so an excluded file is not in the
-            diff at all. A glob matches from the repository root, so `build/**` matches a
-            top-level build directory and `**/build/**` matches one at any depth. The
-            second form also matches an App Router `app/build/` route. Set to an empty
-            string to review everything.
+            diff at all. A glob matches the whole path from the repository root, so
+            `build/**` covers a top-level build directory and `**/build/**` covers one at
+            any depth, the top-level one included. The second form also matches an App
+            Router `app/build/` route. Set to an empty string to review everything.
         required: false
         default: |
             **/*.lock
@@ -210,8 +210,6 @@ runs:
               echo "pr=${PR_NUMBER:-$DEFAULT_PR}" >>"$GITHUB_OUTPUT"
               echo "head=${HEAD_SHA:-$DEFAULT_HEAD}" >>"$GITHUB_OUTPUT"
 
-        # review/run.sh is what /codeferret:review runs too. A review is one sequence of
-        # steps, and keeping one copy of it is the only thing that stops the two drifting.
         - name: Run the review
           id: review
           shell: bash
@@ -226,9 +224,6 @@ runs:
               EXCLUDE_PATHS: ${{ inputs.exclude-paths }}
               BASE: ${{ steps.target.outputs.base }}
               PR: ${{ steps.target.outputs.pr }}
-              # A disposable runner is what bypassPermissions is for, and a classifier
-              # that refused a lens mid-review would narrow it for the price of a full
-              # one. On somebody's own machine /codeferret:review passes `auto` instead.
               PERMISSION_MODE: bypassPermissions
           run: |
               out="$RUNNER_TEMP/codeferret/build"
@@ -242,9 +237,18 @@ runs:
                   "$RUNNER_TEMP/codeferret" \
                   "$GITHUB_WORKSPACE" || status=$?
 
+              # In the single-line `name=value` form, GitHub reads a value's second line
+              # onward as more outputs to set, so the helper uses the delimiter form for
+              # every file, one-line values included.
               emit() {
                   if [ -f "$out/$1" ]; then
-                      echo "$1=$(cat "$out/$1")" >>"$GITHUB_OUTPUT"
+                      {
+                          printf '%s<<CF_EOF\n' "$1"
+                          # cat alone would run the value into the delimiter:
+                          # extract-findings.ts writes these files with no trailing newline.
+                          printf '%s\n' "$(cat "$out/$1")"
+                          printf 'CF_EOF\n'
+                      } >>"$GITHUB_OUTPUT"
                   fi
               }
 
@@ -256,24 +260,49 @@ runs:
               emit cost-usd
               emit output-tokens
 
-              # Otherwise what a review cost is only visible by downloading an artifact,
-              # which nobody does until the bill arrives.
+              # extract-findings.ts writes the cost before it writes the findings count, so
+              # a run that produced none arrives here with some of these files missing. A
+              # blank cell reads as a zero, and `ms=$(...)` below is a bare assignment,
+              # which under `set -e` would take the step down before either warning is
+              # written.
+              val() {
+                  if [ -f "$out/$1" ]; then cat "$out/$1"; else printf 'n/a'; fi
+              }
+
               if [ -f "$out/cost-usd" ]; then
+                  # extract-findings.ts prints the same figure to one decimal, and two
+                  # surfaces disagreeing over one run's duration read as two runs. The
+                  # guard is for val's own `n/a`, which bash reads as n divided by a and
+                  # then refuses to divide by zero.
+                  clock=n/a
+                  ms=$(val duration-ms)
+                  case $ms in
+                  '' | *[!0-9]*) ;;
+                  *)
+                      tenths=$(( (ms * 10 + 30000) / 60000 ))
+                      clock="$(( tenths / 10 )).$(( tenths % 10 ))"
+                      ;;
+                  esac
+
+                  denied=0
+                  if [ -f "$out/permission-denials" ]; then
+                      denied=$(cat "$out/permission-denials")
+                  fi
+
                   {
                       printf '### CodeFerret\n\n'
-                      printf '| | |\n|---|---|\n'
-                      printf '| Findings | %s |\n' "$(cat "$out/findings-count")"
-                      printf '| Cost | $%s |\n' "$(cat "$out/cost-usd")"
-                      printf '| Output tokens | %s |\n' "$(cat "$out/output-tokens")"
-                      printf '| Wall clock | %s min |\n' "$(( $(cat "$out/duration-ms") / 60000 ))"
+                      printf '| Measure | Value |\n|---|---|\n'
+                      printf '| Findings | %s |\n' "$(val findings-count)"
+                      printf '| Cost | $%s |\n' "$(val cost-usd)"
+                      printf '| Output tokens | %s |\n' "$(val output-tokens)"
+                      printf '| Wall clock | %s min |\n' "$clock"
 
-                      denied=$(cat "$out/permission-denials")
                       if [ "$denied" != "0" ]; then
-                          printf '\n> %s tool call(s) were refused, so a lens reviewed less than it appears to.\n' "$denied"
+                          printf '\n> [!WARNING]\n> %s tool call(s) were refused, so a lens reviewed less than it appears to.\n' "$denied"
                       fi
 
                       if [ "$status" != "0" ]; then
-                          printf '\n> The review failed after this point. Read the step log.\n'
+                          printf '\n> [!WARNING]\n> The review failed after this point. Read the step log.\n'
                       fi
                   } >>"$GITHUB_STEP_SUMMARY"
               fi

@@ -14,10 +14,6 @@
  * decides its own scope; `exclude-paths` is about what deserves a reader's attention, not
  * a machine's.
  *
- * One caveat travels with every finding: a lockfile carries every dependency, not only
- * the ones this diff touched, so a vulnerability here may predate the change entirely.
- * Working out which is which is the static-analysis lens's job, and it has the diff.
- *
  * Usage: bun review/tools/osv-scanner.ts <build-dir>
  */
 
@@ -26,17 +22,20 @@ import { basename, join } from "node:path";
 
 const MAX_FINDINGS = 100;
 
-// Pinned, like every lens and every other tool.
-const IMAGE = "ghcr.io/google/osv-scanner:v2.2.4";
+// Pinned by digest, like every lens and every other tool: a tag is a mutable pointer, and
+// a review job holds a write token.
+const IMAGE =
+    "ghcr.io/google/osv-scanner:v2.2.4@sha256:f7ba4be68bac8086b1f88fd598fdca1ca67239c79ad2c2b5c78e03a82e5187c4";
 
 // What OSV can read. A name not on this list is not a manifest, and scanning the whole
-// tree instead would report the repository rather than the change.
+// tree instead would report the repository rather than the change. `bun.lockb` is not
+// here: it is Bun's binary lockfile, v2.2.4 answers it with "could not determine extractor
+// suitable to this file", and every name on this list was checked against that release.
 const MANIFESTS = new Set([
     "package-lock.json",
     "yarn.lock",
     "pnpm-lock.yaml",
     "bun.lock",
-    "bun.lockb",
     "composer.lock",
     "Gemfile.lock",
     "poetry.lock",
@@ -64,8 +63,27 @@ const out = join(buildDir, "tool-osv-scanner.json");
 const topLevel = Bun.spawnSync(["git", "rev-parse", "--show-toplevel"]);
 const repoRoot = new TextDecoder().decode(topLevel.stdout).trim() || process.cwd();
 
+// Every exit writes the same keys, for the reason semgrep.ts does: the lens is asked to
+// account for what each report held and whether the tool ran, and it cannot do that from a
+// shape that changes with the path taken.
 async function write(report: Record<string, unknown>): Promise<void> {
-    await Bun.write(out, `${JSON.stringify(report, null, 2)}\n`);
+    const full = {
+        tool: "osv-scanner",
+        ran: false,
+        how: null,
+        reason: null,
+        scanned: 0,
+        manifests: [],
+        raised: 0,
+        truncated: 0,
+        caveat:
+            "A lockfile holds every dependency, not only the ones this diff touched, so a" +
+            " vulnerability here may predate the change. Check the diff before blaming it on" +
+            " this pull request.",
+        findings: [],
+        ...report,
+    };
+    await Bun.write(out, `${JSON.stringify(full, null, 2)}\n`);
 }
 
 function runner(): { argv: string[]; how: string } | null {
@@ -86,12 +104,7 @@ function runner(): { argv: string[]; how: string } | null {
 const osv = runner();
 
 if (!osv) {
-    await write({
-        tool: "osv-scanner",
-        ran: false,
-        reason: "neither osv-scanner nor docker is on PATH",
-        findings: [],
-    });
+    await write({ ran: false, reason: "neither osv-scanner nor docker is on PATH" });
     console.log("osv-scanner: no osv-scanner and no docker, skipped");
     process.exit(0);
 }
@@ -99,7 +112,7 @@ if (!osv) {
 const argsFile = join(buildDir, "diff-args");
 
 if (!existsSync(argsFile)) {
-    await write({ tool: "osv-scanner", ran: false, reason: `no ${argsFile}`, findings: [] });
+    await write({ ran: false, reason: `no ${argsFile}` });
     console.error(`osv-scanner: ${argsFile} is missing, skipped`);
     process.exit(0);
 }
@@ -109,90 +122,115 @@ if (!existsSync(argsFile)) {
 const range = (await Bun.file(argsFile).text()).split("\0").filter(Boolean)[0];
 
 if (!range) {
-    await write({ tool: "osv-scanner", ran: false, reason: "no range in diff-args", findings: [] });
+    await write({ ran: false, reason: "no range in diff-args" });
     console.error("osv-scanner: diff-args names no range, skipped");
     process.exit(0);
 }
 
-const named = Bun.spawnSync(["git", "diff", "--name-only", "--diff-filter=d", range], { cwd: repoRoot });
+// -z because git backslash-quotes any path outside ASCII unless it is asked not to, and a
+// quoted path neither matches a manifest name nor exists on disk.
+const named = Bun.spawnSync(["git", "diff", "--name-only", "-z", "--diff-filter=d", range], {
+    cwd: repoRoot,
+});
 const manifests = new TextDecoder()
     .decode(named.stdout)
-    .split("\n")
-    .map((f) => f.trim())
+    .split("\0")
     .filter((f) => f.length > 0 && MANIFESTS.has(basename(f)) && existsSync(join(repoRoot, f)));
 
 if (manifests.length === 0) {
-    await write({ tool: "osv-scanner", ran: true, how: osv.how, scanned: 0, raised: 0, findings: [] });
+    await write({ ran: true, how: osv.how, scanned: 0 });
     console.log("osv-scanner: the diff changes no dependency manifest");
     process.exit(0);
 }
 
-const proc = Bun.spawnSync(
-    [...osv.argv, "scan", "source", "--format", "json", ...manifests.flatMap((m) => ["--lockfile", m])],
-    { cwd: repoRoot },
-);
-
-// It exits non-zero when it finds something, which is the normal case here.
-const stdout = new TextDecoder().decode(proc.stdout);
-let parsed: { results?: Array<Record<string, any>> };
-
-try {
-    parsed = JSON.parse(stdout);
-} catch {
-    const stderr = new TextDecoder().decode(proc.stderr).slice(0, 500);
-    await write({
-        tool: "osv-scanner",
-        ran: false,
-        reason: `osv-scanner returned no JSON: ${stderr}`,
-        findings: [],
-    });
-    console.error("osv-scanner: could not parse output, skipped");
-    process.exit(0);
-}
-
+// One invocation per manifest, rather than one carrying all of them. Handed several, the
+// scanner gives up on the first file it cannot read and writes nothing at all: a
+// `bun.lockb` in the diff took a valid `package-lock.json` down with it, exit 127 and an
+// empty stdout, and the report then said the tool had not run. A failure should cost only
+// the manifest it belongs to. The price is a process per manifest, and a diff that changes
+// more than two or three of them is not the usual case.
 const findings: Array<Record<string, unknown>> = [];
+const attempts: Array<Record<string, unknown>> = [];
 
-for (const result of parsed.results ?? []) {
-    const path = String(result.source?.path ?? "").replace(/^\/src\//, "");
+for (const manifest of manifests) {
+    const proc = Bun.spawnSync([...osv.argv, "scan", "source", "--format", "json", "--lockfile", manifest], {
+        cwd: repoRoot,
+    });
 
-    for (const pkg of result.packages ?? []) {
-        for (const vuln of pkg.vulnerabilities ?? []) {
-            findings.push({
-                rule: vuln.id,
-                file: path,
-                // OSV reports a package, not a position. Anchoring it is a judgement the
-                // lens makes: the line where this dependency is declared is worth more to
-                // a reader than the first line of a lockfile.
-                line: null,
-                package: pkg.package?.name,
-                version: pkg.package?.version,
-                ecosystem: pkg.package?.ecosystem,
-                severity: pkg.groups?.find((g: any) => g.ids?.includes(vuln.id))?.max_severity,
-                aliases: vuln.aliases,
-                message: vuln.summary,
-            });
+    // It exits non-zero when it finds something, which is the normal case here, so the
+    // code is recorded rather than read. Whether stdout is valid JSON is the signal.
+    let parsed: { results?: Array<Record<string, any>> };
+
+    try {
+        parsed = JSON.parse(new TextDecoder().decode(proc.stdout));
+    } catch {
+        const stderr = new TextDecoder().decode(proc.stderr).trim().slice(0, 300);
+        attempts.push({
+            manifest,
+            ok: false,
+            exit: proc.exitCode,
+            detail: stderr || "no JSON on stdout",
+        });
+        console.error(`osv-scanner: ${manifest} could not be scanned (exit ${proc.exitCode})`);
+        continue;
+    }
+
+    attempts.push({ manifest, ok: true, exit: proc.exitCode });
+
+    for (const result of parsed.results ?? []) {
+        for (const pkg of result.packages ?? []) {
+            for (const vuln of pkg.vulnerabilities ?? []) {
+                findings.push({
+                    rule: vuln.id,
+                    // The path the scanner echoes back is the bind mount's when it ran in
+                    // the container and the host's when it ran as a binary, and neither
+                    // anchors. The manifest this invocation was handed is repo-relative,
+                    // which is what post-review.ts keys its diff map on.
+                    file: manifest,
+                    // OSV reports a package, not a position. Anchoring it is a judgement the
+                    // lens makes: the line where this dependency is declared is worth more to
+                    // a reader than the first line of a lockfile.
+                    line: null,
+                    package: pkg.package?.name,
+                    version: pkg.package?.version,
+                    ecosystem: pkg.package?.ecosystem,
+                    severity: pkg.groups?.find((g: any) => g.ids?.includes(vuln.id))?.max_severity,
+                    aliases: vuln.aliases,
+                    message: vuln.summary,
+                });
+            }
         }
     }
+}
+
+const succeeded = attempts.filter((a) => a.ok);
+const failed = attempts.filter((a) => !a.ok);
+
+if (succeeded.length === 0) {
+    await write({
+        ran: false,
+        how: osv.how,
+        reason: `no manifest could be scanned: ${failed.map((f) => `${f.manifest} (${f.detail})`).join("; ")}`,
+        manifests: attempts,
+    });
+    console.error(`osv-scanner: all ${manifests.length} manifest(s) failed, skipped`);
+    process.exit(0);
 }
 
 const kept = findings.slice(0, MAX_FINDINGS);
 
 await write({
-    tool: "osv-scanner",
     ran: true,
     how: osv.how,
-    scanned: manifests.length,
-    manifests,
+    scanned: succeeded.length,
+    manifests: attempts,
     raised: findings.length,
     truncated: findings.length - kept.length,
-    caveat:
-        "A lockfile holds every dependency, not only the ones this diff touched, so a" +
-        " vulnerability here may predate the change. Check the diff before blaming it on" +
-        " this pull request.",
     findings: kept,
 });
 
 console.log(
-    `osv-scanner: ${findings.length} raised over ${manifests.length} manifest(s)` +
+    `osv-scanner: ${findings.length} raised over ${succeeded.length} manifest(s)` +
+        `${failed.length > 0 ? `, ${failed.length} could not be scanned` : ""}` +
         `${findings.length > kept.length ? `, ${findings.length - kept.length} beyond the cap` : ""}`,
 );

@@ -164,6 +164,7 @@ if (marketplace) {
 // One plugin, one namespace: a duplicated name, or one that disagrees with its
 // directory, leaves a lens silently unreachable.
 const seenSkillNames = new Map<string, string>();
+const bundled = new Set<string>();
 
 for (const entry of readdirSync("lenses/skills", { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
@@ -178,11 +179,7 @@ for (const entry of readdirSync("lenses/skills", { withFileTypes: true })) {
         continue;
     }
 
-    // The flag hides the skill from the slash menu, which costs `/codeferret:<lens>` and
-    // buys nothing: on 2.1.220 the skill still registers and the model still sees it.
-    if (/^user-invocable:\s*false\s*$/m.test(text)) {
-        fail(skillFile, "has `user-invocable: false`, which only hides `/codeferret:" + entry.name + "`");
-    }
+    bundled.add(entry.name);
 
     // Parse it rather than match it. Claude Code's frontmatter parser is lenient enough
     // that an unquoted `: ` in a description loads fine and only breaks wherever
@@ -203,6 +200,12 @@ for (const entry of readdirSync("lenses/skills", { withFileTypes: true })) {
         continue;
     }
 
+    // The flag hides the skill from the slash menu, which costs `/codeferret:<lens>` and
+    // buys nothing: on 2.1.220 the skill still registers and the model still sees it.
+    if (skill["user-invocable"] === false) {
+        fail(skillFile, "has `user-invocable: false`, which only hides `/codeferret:" + entry.name + "`");
+    }
+
     // A lens agent loads its skill through the Skill tool, which counts as model
     // invocation. Left in, this flag costs one lens with nothing to say about it.
     if (skill["disable-model-invocation"] === true) {
@@ -213,7 +216,7 @@ for (const entry of readdirSync("lenses/skills", { withFileTypes: true })) {
     // a code review tool would fire lenses during unrelated work. prepare-skill.ts
     // rewrites them.
     if (!String(skill.description ?? "").startsWith(`CodeFerret review lens ${entry.name}.`)) {
-        fail(skillFile, `description is not scoped — run: bun scripts/prepare-skill.ts ${skillFile} ${entry.name}`);
+        fail(skillFile, `description is not scoped. Run: bun scripts/prepare-skill.ts ${skillFile} ${entry.name}`);
     }
 
     const declared = typeof skill.name === "string" ? skill.name.trim() : "";
@@ -230,6 +233,32 @@ for (const entry of readdirSync("lenses/skills", { withFileTypes: true })) {
 }
 
 console.log(`OK lenses/skills: ${seenSkillNames.size} bundled lens(es), names unique`);
+
+// Until this check, PROVENANCE.tsv was the one list of lenses nothing read back, which
+// is how static-analysis came to be bundled without a row in it.
+const provenanceFile = "lenses/skills/PROVENANCE.tsv";
+
+if (!existsSync(provenanceFile)) {
+    fail(provenanceFile, "is missing, so nothing records where the bundled lenses came from");
+} else {
+    const recorded = new Set(
+        (await Bun.file(provenanceFile).text())
+            .split("\n")
+            .slice(1)
+            .map((line) => line.split("\t")[0].trim())
+            .filter(Boolean),
+    );
+
+    for (const lens of bundled) {
+        if (!recorded.has(lens)) fail(provenanceFile, `has no row for bundled lens '${lens}'`);
+    }
+
+    for (const lens of recorded) {
+        if (!bundled.has(lens)) fail(provenanceFile, `records '${lens}', which is not bundled`);
+    }
+
+    console.log(`OK ${provenanceFile}: ${recorded.size} row(s), one per bundled lens`);
+}
 
 function entries(value: unknown): string[] {
     return String(value ?? "")
@@ -269,6 +298,14 @@ for (const [input, file] of [
     ["exclude-paths", "review/defaults/exclude-paths.txt"],
     ["tools", "review/defaults/tools.txt"],
 ] as const) {
+    // The loop is here for a maintainer who edited action.yml and not the defaults.
+    // Deleting the file is the neighbouring mistake, and an unguarded read of a missing
+    // one ends the run in an unhandled rejection halfway through the checks.
+    if (!existsSync(file)) {
+        fail(file, `is missing, so a session has no \`${input}\` default to read`);
+        continue;
+    }
+
     const documented = entries(action?.inputs?.[input]?.default);
     const shipped = entries(await Bun.file(file).text());
 

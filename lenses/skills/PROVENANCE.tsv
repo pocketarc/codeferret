@@ -9,6 +9,7 @@ copilot-web-design-reviewer	github/awesome-copilot	5b6da4c588e94363078273d94f812
 cursor-thermo-nuclear-review	cursor/plugins	14d9dfa06283faa94bf9931d3e98c189bc375680	cursor-team-kit/skills/thermo-nuclear-code-quality-review
 mattpocock-code-review	mattpocock/skills	2ab958093e83e0ec752e6c1c5932da465bf23e0c	skills/engineering/code-review
 sentry-security-review	getsentry/skills	e7a87fa72645158f9b5e722cbb1c7e09266f48f1	skills/security-review
+static-analysis	(first-party)	-	lenses/skills/static-analysis
 vercel-next-best-practices	vercel-labs/openreview	672deb21e70e471e0536d5ad7a67c14b8359e97e	.agents/skills/next-best-practices
 writing-review	(first-party)	-	lenses/skills/writing-review
 wshobson-code-review-excellence	wshobson/agents	c4b82b0ad771190355eb8e204b1329732a18449a	plugins/developer-essentials/skills/code-review-excellence

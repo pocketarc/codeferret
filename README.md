@@ -26,9 +26,20 @@ steps:
           claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 ```
 
-The rest of that file is a concurrency group, so three pushes in a row do not buy three
-full reviews; a gate that skips pull requests from forks, which cannot read the secret;
-and a 60-minute timeout. The action checks the repository out and installs what it needs.
+The rest of that file is:
+
+- A concurrency group, so three pushes in a row do not buy three full reviews.
+- A gate on drafts, so a push to unfinished work costs nothing. The review runs when the
+  author marks the pull request ready.
+- A gate on forks, which cannot read the secret.
+- A gate on author association, which is what limits who can spend the budget to an
+  owner, a member or a collaborator.
+- A 60-minute timeout.
+- A step that uploads the run directory as an artifact and keeps it for 14 days. It holds
+  `findings.json`, which carries every finding including the ones the review suppressed,
+  so whoever can read the repository's artifacts can read those too.
+
+The action checks the repository out and installs what it needs.
 
 `@v1` moves with each 1.x release. Pin a full version, `@v1.0.0`, to hold a revision.
 
@@ -51,10 +62,10 @@ Then, in any repository:
 
 It works out what to diff against (the base of your open pull request, or the default
 branch), dispatches the lenses, and prints what they found as `path:line` you can click.
-It can include uncommitted work if you ask. When the branch has a pull request, the work
-is pushed, and nothing is modified locally, it offers to post the review; otherwise the
-findings stay in the terminal. A comment is anchored to a line GitHub holds, and a file
-you have edited since is a file whose lines have moved.
+It can include uncommitted work if you ask. It offers to post the review when three
+things hold: the branch has an open pull request, your commits are pushed, and your
+working tree is clean. Otherwise the findings stay in the terminal. A comment is anchored
+to a line GitHub holds, and a file you have edited since is a file whose lines have moved.
 
 Posting uses your `gh` credential, which is usually scoped to everything you can reach.
 Export a fine-grained token as `GITHUB_TOKEN` if you would rather it were not — `gh` takes
@@ -63,8 +74,9 @@ that in preference to its own.
 `/codeferret:install-workflow` writes the action's workflow into the repository you are
 in, for when you would rather have this run on every pull request.
 
-Lenses run in parallel, so twelve of them take about as long as three and cost a good
-deal more. One twelve-lens run over a 47-file diff came to $31.80 and 19 minutes on Opus.
+Lenses run in parallel, so fourteen of them take about as long as three and cost a good
+deal more. One fourteen-lens run came to $36.00 and 20m46s on Opus, and returned 97
+findings.
 `/codeferret:review` says how many lenses it is about to dispatch, and waits; the action
 reports what each run cost in the job summary.
 

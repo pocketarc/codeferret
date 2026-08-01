@@ -4,8 +4,8 @@ on:
     pull_request:
         types: [opened, synchronize, ready_for_review, reopened]
 
-# Without this, three pushes in a row cost three full reviews and you read the last one.
-# The fixture branches here are pushed repeatedly, so it adds up faster than elsewhere.
+# The fixture branches here are pushed repeatedly, and a full review costs several dollars,
+# so cancelling a superseded run saves more than it would in most repositories.
 concurrency:
     group: codeferret-${{ github.event.pull_request.number }}
     cancel-in-progress: true

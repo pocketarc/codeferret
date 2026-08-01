@@ -112,16 +112,20 @@ fi
 
 : >"$BUILD/lens-list.txt"
 
-# `-- .` first so the excludes attach to a positive pathspec; without it git treats a
-# list of pure exclusions as matching nothing.
+# A positive pathspec comes first, because git treats a list of pure exclusions as
+# matching nothing. It is `:(top)` rather than `.` because git resolves a pathspec
+# against the process's own directory, and every lens runs diff.sh from wherever its
+# session started. With `.`, a run started in a subdirectory reviews that subdirectory
+# and says nothing about the rest of the change.
 PATHSPEC_ARGS=()
 while IFS= read -r glob; do
     glob=$(printf '%s' "$glob" | tr -d '[:space:]')
     [ -z "$glob" ] && continue
 
-    # A glob reaches here from a workflow input and ends up in a prompt a lens is told
-    # to run. Globs need none of these, and a single quote alone was enough to close the
-    # quoting below and run whatever followed.
+    # A glob arrives from a workflow input or from whatever /codeferret:review was given.
+    # None of the characters below belong in one. The list reaches git as argv now,
+    # through the NUL-separated file written further down, so there is no shell left for
+    # a quote to break out of. The check stays for whatever consumes the list next.
     case $glob in
     *[\'\"\;\$\`\\\&\|\<\>]*)
         echo "exclude path '$glob' contains a shell metacharacter" >&2
@@ -130,9 +134,15 @@ while IFS= read -r glob; do
     esac
 
     if [ "${#PATHSPEC_ARGS[@]}" -eq 0 ]; then
-        PATHSPEC_ARGS+=("--" ".")
+        PATHSPEC_ARGS+=("--" ":(top)")
     fi
-    PATHSPEC_ARGS+=(":(exclude)$glob")
+
+    # `glob` magic, so a leading `**/` matches zero or more directories. Git matches a
+    # bare pathspec with fnmatch, where `**/` still needs a `/` earlier in the path: the
+    # default `**/.next/**` excludes `apps/web/.next/` and leaves the top-level `.next/`
+    # in, which is where `next build` writes in a repository holding one app. Under glob
+    # magic `out/**` and `build/**` stay anchored at the root, which is what they mean.
+    PATHSPEC_ARGS+=(":(top,exclude,glob)$glob")
 done <<<"${EXCLUDE_PATHS:-}"
 
 for lens in "${LENSES[@]}"; do
@@ -177,9 +187,8 @@ for lens in "${LENSES[@]}"; do
 
 done
 
-# Naming a commit and nothing else diffs it against the working tree, so uncommitted work
-# is in scope; a three-dot range covers committed work alone. The action only ever reviews
-# what is pushed, but a session is usually looking at a branch still being written.
+# The action only ever reviews what is pushed. A session is usually on a branch still
+# being written, which is what INCLUDE_WORKING_TREE is for.
 #
 # Pin HEAD to the commit it is now. A review runs for twenty minutes and whoever started
 # it is often still working: a lens found the tree moving under it mid-review and had to

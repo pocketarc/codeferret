@@ -11,8 +11,6 @@ concurrency:
 
 jobs:
     review:
-        # Three conditions, for three different reasons.
-        #
         # GitHub withholds the secret from a pull request whose branch lives on a fork,
         # whoever opened it, so a fork's run would fail deep inside the review with an
         # empty token rather than at the gate. Author association is no substitute: a
@@ -41,6 +39,10 @@ jobs:
             pull-requests: write
 
         steps:
+            # `v1` is a mutable tag, moved to each new release, so you get fixes without
+            # editing this file. Pin `@v1.2.0` or a commit SHA instead if you would rather
+            # read what runs before it runs: this job holds your OAuth token and
+            # `pull-requests: write`, and it runs an agent with Bash.
             - name: CodeFerret
               uses: pocketarc/codeferret@v1
               with:
@@ -49,6 +51,12 @@ jobs:
             # CodeFerret posts only new findings. A finding the orchestrator marked as
             # already answered is in findings.json and nowhere else, so without this
             # artifact a mistaken mark costs a real finding and nobody ever knows.
+            #
+            # The same upload includes run.json, the whole orchestrator session: every tool
+            # call every lens made, and everything it got back, including the contents of
+            # any file a lens read. On a public repository anyone can download the
+            # artifact. Point `path` at findings.json alone if the session should stay
+            # private.
             - name: Keep the run for inspection
               if: always()
               uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

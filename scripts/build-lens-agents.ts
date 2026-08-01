@@ -34,7 +34,7 @@ process.chdir(join(import.meta.dir, ".."));
 // tool's old name. Check the list against a real dispatch before adding to it.
 //
 // `Agent` is deliberately absent. A lens that spawns a general-purpose subagent hands it
-// the full tool set, `Write` and `Edit` included, and every lens shares one checkout — so
+// the full tool set, `Write` and `Edit` included, and every lens shares one checkout, so
 // the one thing this list exists to prevent would go through the gap. The action closes
 // it at the CLI; a session has only this list. Some skills fan out into subagents and
 // will do their passes one after another instead.
@@ -62,7 +62,7 @@ const brief = await Bun.file("review/lens-brief.md").text();
 const schema = (await Bun.file("review/lens-schema.json").text()).trim();
 
 // Text meant for one lens and no other belongs in that lens's own system prompt. Routed
-// through the orchestrator instead — as the `REVIEW.md` instruction was — it becomes a
+// through the orchestrator instead (as the `REVIEW.md` instruction was), it becomes a
 // line the orchestrator has to hand to the right lens and no one else, every run, and
 // nothing downstream can tell when it gets that wrong.
 async function extrasFor(lens: string): Promise<string> {

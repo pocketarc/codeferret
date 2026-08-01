@@ -43,6 +43,10 @@ interface Merged {
 const SEVERITY_ORDER = ["critical", "high", "medium", "low", "nit", "question"];
 const MAX_BODY = 60000;
 const RETRY_AFTER_MS = 60_000;
+
+// GitHub is trusted about how long to wait, up to a point. A minute of runner time is
+// cheap next to losing the review; an hour of it, on a review nobody is waiting on, is not.
+const MAX_RETRY_AFTER_MS = 300_000;
 const MAX_INLINE = 40;
 
 const [findingsPath, baseRef, headSha, prNumber] = process.argv.slice(2);
@@ -355,8 +359,32 @@ if (process.env.DRY_RUN) {
     process.exit(0);
 }
 
-async function postReview(payload: unknown): Promise<Response> {
-    return fetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}/reviews`, {
+interface Posted {
+    ok: boolean;
+    status: number;
+    /** Read once here: a response body cannot be read twice, and several branches below need it. */
+    detail: string;
+    /** How long GitHub asked us to wait, when the response was a rate limit. */
+    retryAfterMs: number | null;
+}
+
+/**
+ * A secondary rate limit comes back as 403 or 429, and both carry `retry-after`. Match only
+ * one of those statuses, or sleep a fixed minute of our own, and the retry goes out after a
+ * minute against a limit that asked for two: the wait is spent and it is refused again.
+ */
+function rateLimitWait(response: Response, detail: string): number | null {
+    const limited =
+        response.status === 429 || (response.status === 403 && /secondary rate limit/i.test(detail));
+
+    if (!limited) return null;
+
+    const asked = Number(response.headers.get("retry-after")) * 1000;
+    return asked > 0 ? Math.min(asked, MAX_RETRY_AFTER_MS) : RETRY_AFTER_MS;
+}
+
+async function postReview(payload: unknown): Promise<Posted> {
+    const response = await fetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}/reviews`, {
         method: "POST",
         headers: {
             Authorization: `Bearer ${token}`,
@@ -366,44 +394,44 @@ async function postReview(payload: unknown): Promise<Response> {
         },
         body: JSON.stringify(payload),
     });
+
+    const detail = await response.text();
+
+    return {
+        ok: response.ok,
+        status: response.status,
+        detail,
+        retryAfterMs: rateLimitWait(response, detail),
+    };
 }
 
-let response = await postReview({
-    commit_id: headSha,
-    body: reviewBody,
-    event: "COMMENT",
-    comments,
-});
+/** Post, and if GitHub asked for a pause rather than refusing, wait it out and try once more. */
+async function postWaitingOutALimit(payload: unknown, what: string): Promise<Posted> {
+    const first = await postReview(payload);
+
+    if (first.ok) return first;
+
+    console.error(`${what} rejected (${first.status}): ${first.detail}`);
+
+    if (first.retryAfterMs === null) return first;
+
+    console.error(`waiting ${Math.round(first.retryAfterMs / 1000)}s, then trying the ${what} once more`);
+    await Bun.sleep(first.retryAfterMs);
+
+    const second = await postReview(payload);
+    if (!second.ok) console.error(`${what} rejected again (${second.status}): ${second.detail}`);
+
+    return second;
+}
+
+const inlineReview = { commit_id: headSha, body: reviewBody, event: "COMMENT", comments };
+
+// Falling straight through to the body would turn every anchored finding into a line in a
+// wall of text, over a wait GitHub was willing to grant.
+let response = await postWaitingOutALimit(inlineReview, "inline review");
 
 if (!response.ok && comments.length > 0) {
     // The reviews endpoint is all-or-nothing: one rejected anchor creates no comments.
-    const detail = await response.text();
-    console.error(`inline review rejected (${response.status}): ${detail}`);
-
-    // A secondary rate limit is GitHub asking for a pause, not refusing the review. A
-    // 90-finding run tripped it on 82 comments and fell straight through to the body,
-    // which turns every anchored finding into a line in a wall of text over a wait
-    // GitHub was willing to grant.
-    if (response.status === 403 && /secondary rate limit/i.test(detail)) {
-        console.error(`waiting ${RETRY_AFTER_MS / 1000}s, then trying the inline review once more`);
-        await Bun.sleep(RETRY_AFTER_MS);
-
-        response = await postReview({
-            commit_id: headSha,
-            body: reviewBody,
-            event: "COMMENT",
-            comments,
-        });
-
-        if (response.ok) {
-            const created = (await response.json()) as { html_url?: string };
-            console.log(`posted: ${created.html_url ?? "(no url returned)"}`);
-            process.exit(0);
-        }
-
-        console.error(`inline review rejected again (${response.status})`);
-    }
-
     console.error("retrying as a body-only review so the findings still land");
 
     const appendix = inline
@@ -414,20 +442,25 @@ if (!response.ok && comments.length > 0) {
         )
         .join("\n\n");
 
-    response = await postReview({
-        commit_id: headSha,
-        body: `${reviewBody}\n\n### Findings\n\nGitHub rejected the inline anchors for this review, so they are listed here instead.\n\n${appendix}`.slice(
-            0,
-            MAX_BODY,
-        ),
-        event: "COMMENT",
-    });
+    // This is the findings' last chance, and it goes out moments after a limit may have
+    // been tripped, so it waits one out too.
+    response = await postWaitingOutALimit(
+        {
+            commit_id: headSha,
+            body: `${reviewBody}\n\n### Findings\n\nGitHub rejected the inline anchors for this review, so they are listed here instead.\n\n${appendix}`.slice(
+                0,
+                MAX_BODY,
+            ),
+            event: "COMMENT",
+        },
+        "body-only review",
+    );
 }
 
 if (!response.ok) {
-    console.error(`review post failed (${response.status}): ${await response.text()}`);
+    console.error(`review post failed (${response.status}): ${response.detail}`);
     process.exit(1);
 }
 
-const created = (await response.json()) as { html_url?: string };
+const created = JSON.parse(response.detail) as { html_url?: string };
 console.log(`posted: ${created.html_url ?? "(no url returned)"}`);

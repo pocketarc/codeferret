@@ -16,3 +16,15 @@ jobs:
 
             - name: Validate manifests
               run: bun scripts/validate-manifests.ts
+
+    shellcheck:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout
+              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+            # SC2016 fires on every backtick inside a single-quoted printf format, and
+            # these scripts write markdown into a prompt, so every SC2016 hit here is a
+            # false positive.
+            - name: Shellcheck
+              run: shellcheck -e SC2016 review/*.sh scripts/*.sh

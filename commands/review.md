@@ -24,24 +24,30 @@ already run what you wrote.
 ## 1. Find out what this checkout supports
 
 ```sh
-CLAUDE_PLUGIN_ROOT="<plugin>" bash "<plugin>/review/local-preflight.sh" <base-ref if the user gave one>
+CLAUDE_PLUGIN_ROOT="<plugin>" bash "<plugin>/review/local-preflight.sh" "<base-ref if the user gave one>"
 ```
 
 It prints one `key=value` per line. Read them all before doing anything else.
 
 Stop when you see any of these, and name every one you saw:
 
-- `plugin=missing`, or no output at all beyond `No such file or directory` — the plugin
-  root did not resolve, so nothing below will work.
-- `repo=missing` — this is not a git repository.
-- `head=none` — this repository has no commits yet.
-- `bun=missing` — the review cannot read its own findings back. Install Bun from
+- No output at all beyond `No such file or directory`. The plugin root did not resolve,
+  so nothing below will work.
+- A `plugin=` value starting with `unset:` or `mismatch:`. The rest of that value is the
+  plugin root the script you just ran sits in, so say it: otherwise every `<plugin>` you
+  substitute below comes from a root holding none of the review scripts, or from nothing.
+- `repo=missing`. This is not a git repository.
+- `head=none`. This repository has no commits yet.
+- `bun=missing`. The review cannot read its own findings back. Install Bun from
   https://bun.sh.
-- `base_resolves=no` — name the ref that failed. When `base=none` there was nothing to
+- `base_resolves=no`. Name the ref that failed. When `base=none` there was nothing to
   infer one from, so ask for it: `/codeferret:review origin/main`. Otherwise the ref is
   not in this checkout, and `git fetch origin` usually settles it.
-- `shallow=yes` — a shallow clone has no merge base to diff against. `git fetch
+- `shallow=yes`. A shallow clone has no merge base to diff against. `git fetch
   --unshallow` fixes it, but the fetch goes to the network, so ask first.
+- `merge_base=none`. `<base>` and `HEAD` share no history, which is what a grafted or
+  filtered clone looks like too. Both diffs below are taken against the merge base, so
+  there is nothing for a lens to read.
 
 Carry on, but say so, when `gh=missing` or `gh=unauthenticated`: nothing can be posted,
 earlier comments cannot be read so findings already answered will be raised again, and
@@ -52,8 +58,8 @@ the base ref falls back to the default branch rather than a pull request's.
 A `<base>...HEAD` diff covers committed work only. When `dirty` is not `0`, say how many
 tracked files are uncommitted and ask which the user wants:
 
-- **Committed work only** — the same diff the action would review.
-- **Uncommitted work as well** — diffs the working tree against `merge_base`.
+- Committed work only: the same diff the action would review.
+- Uncommitted work as well: the working tree diffed against `merge_base`.
 
 When `untracked` is not `0`, say that too, whichever they pick. A git diff never shows an
 untracked file, so a newly written one is invisible to every lens until `git add -N
@@ -81,7 +87,7 @@ The review runs as its own `claude` process rather than in this session. It read
 and pull request comments, written by whoever opened them; this session holds the user's
 editor, shell and MCP servers, and there is no reason to introduce the two.
 
-Run it in the background — it takes tens of minutes, which is longer than a foreground
+Run it in the background. It takes tens of minutes, which is longer than a foreground
 command is allowed.
 
 Change the command below where these apply:
@@ -89,9 +95,9 @@ Change the command below where these apply:
 - When the user named lenses, set `LENSES` to those instead, one per line.
 - To review uncommitted work as well, pass the `merge_base` value in place of `<base>`
   and add `INCLUDE_WORKING_TREE=1`.
-- When there is no open pull request, or `gh` is unavailable, leave the `PR`,
-  `OWN_LOGIN`, `GITHUB_TOKEN` and `GITHUB_REPOSITORY` lines out entirely. Without them,
-  the review cannot skip a finding somebody has already answered.
+- When `pr` is `none`, or `gh` is unavailable, leave the `PR`, `OWN_LOGIN`,
+  `GITHUB_TOKEN` and `GITHUB_REPOSITORY` lines out entirely. Without them, the review
+  cannot skip a finding somebody has already answered.
 
 ```sh
 LENSES="$(cat "<plugin>/review/defaults/lenses.txt")" \
@@ -100,15 +106,16 @@ LENSES="$(cat "<plugin>/review/defaults/lenses.txt")" \
   MODEL=opus \
   PERMISSION_MODE=auto \
   RESOLVE_THREADS=0 \
-  PR=<pr, or leave unset when there is none> \
+  PR="<pr>" \
   OWN_LOGIN="$(gh api user --jq .login)" \
   GITHUB_TOKEN="$(gh auth token)" \
   GITHUB_REPOSITORY="$(gh repo view --json nameWithOwner --jq .nameWithOwner)" \
-  bash "<plugin>/review/run.sh" <base> "<plugin>" "<git-dir>/codeferret/run" <toplevel>
+  bash "<plugin>/review/run.sh" "<base>" "<plugin>" "<git-dir>/codeferret/run" "<toplevel>"
 ```
 
-`PERMISSION_MODE=auto` lets a lens run the reads it needs and refuses the rest. The
-action uses `bypassPermissions` because a runner is disposable and this machine is not.
+Under `PERMISSION_MODE=auto`, Claude Code's permission classifier passes the reads a lens
+needs and refuses the rest. The action uses `bypassPermissions` because a runner is
+disposable and this machine is not.
 
 Everything the run writes lands in `<git-dir>/codeferret/run/build/`, and the findings in
 `findings.json` beside `run.json`.
@@ -119,7 +126,7 @@ Read `<git-dir>/codeferret/run/build/findings.json`. Group its findings by file,
 order, and by line within a file:
 
 ```
-path/to/file.ts:42 — One-line title
+path/to/file.ts:42: One-line title
 
 The finding body.
 ```
@@ -137,10 +144,11 @@ anyone who wants them.
 
 Close with the summary, and then the lenses: name every lens whose `ok` is false and say
 what happened. Nothing else in the output says so. A lens marked `ok` having found
-nothing is not one of these — half the set is domain lenses, and one with nothing in its
-domain says why in `detail`, which is worth repeating in a line. Say the same about anything in
-`build/permission-denials` above zero, and about what the run cost, which
-`review/run.sh` prints as it finishes.
+nothing is not one of these. Half the set is domain lenses, and one with nothing in its
+domain says why in `detail`, which is worth repeating in a line.
+
+Then print the refusal count in `build/permission-denials` when it is above zero, and
+what the run cost, which `review/run.sh` prints as it finishes.
 
 Finally, say where the findings file is, and offer to work through them.
 
@@ -159,7 +167,7 @@ GITHUB_TOKEN="$(gh auth token)" \
   GITHUB_REPOSITORY="$(gh repo view --json nameWithOwner --jq .nameWithOwner)" \
   EXCLUDE_PATHS="$(cat "<plugin>/review/defaults/exclude-paths.txt")" \
   bun "<plugin>/review/post-review.ts" \
-      "<git-dir>/codeferret/run/build/findings.json" <base> <head> <pr>
+      "<git-dir>/codeferret/run/build/findings.json" "<base>" "<head>" "<pr>"
 ```
 
 `<base>` here is always the ref step 1 reported, even when step 4 used `merge_base`.

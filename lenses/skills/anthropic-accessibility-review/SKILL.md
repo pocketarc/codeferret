@@ -5,6 +5,7 @@ description: "CodeFerret review lens anthropic-accessibility-review. A CodeFerre
 
 # /accessibility-review
 
+> If you see unfamiliar placeholders or need to check which tools are connected, see CONNECTORS.md.
 
 Audit a design or page for WCAG 2.1 AA accessibility compliance.
 
@@ -14,7 +15,7 @@ Audit a design or page for WCAG 2.1 AA accessibility compliance.
 /accessibility-review $ARGUMENTS
 ```
 
-Audit for accessibility: @$1
+Audit for accessibility: the diff under review
 
 ## WCAG 2.1 AA Quick Reference
 
@@ -108,16 +109,6 @@ Audit for accessibility: @$1
 2. **[Major fix]** — Improves [what] for [who]
 3. **[Minor fix]** — Nice to have
 ```
-
-## If Connectors Available
-
-If **~~design tool** is connected:
-- Inspect color values, font sizes, and touch targets directly from Figma
-- Check component ARIA roles and keyboard behavior in the design spec
-
-If **~~project tracker** is connected:
-- Create tickets for each accessibility finding with severity and WCAG criterion
-- Link findings to existing accessibility remediation epics
 
 ## Tips
 

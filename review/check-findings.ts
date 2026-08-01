@@ -2,18 +2,28 @@
 /**
  * Check merged findings against the shape post-review.ts reads.
  *
- * Only the action runs the orchestrator under `--json-schema`. Nothing enforces
- * merged-schema.json on a review driven from a Claude Code session, and post-review.ts
- * does not validate what it is handed: a finding with no `line` fails its anchor check
- * and ends up in the body, one with no `status` is posted as new, and one whose `file`
- * carries a leading slash matches nothing in the diff map. All three look like an
- * ordinary review.
+ * The action and `/codeferret:review` both run the orchestrator under `--json-schema`,
+ * but that is a request to the model rather than a check on what comes back, and
+ * post-review.ts validates nothing it is handed. So this is the only thing standing
+ * between the orchestrator's output and a posted review: a finding with no `line` fails
+ * its anchor check and ends up in the body, one with no `status` is posted as new, and
+ * one whose `file` carries a leading slash matches nothing in the diff map. All three
+ * look like an ordinary review.
+ *
+ * Where this and the schema disagree, this file is the stricter one on purpose: a leading
+ * slash and an empty string both satisfy the schema, and neither survives posting.
  *
  * Usage: bun check-findings.ts <findings.json>
  */
 
-const SEVERITIES = ["critical", "high", "medium", "low", "nit", "question"];
-const STATUSES = ["new", "already-reported", "declined"];
+import schema from "./merged-schema.json";
+
+// Read from the schema rather than restated here. Two hand-kept copies of an enum drift
+// silently, and the drift would show up as a status added to the schema, emitted by the
+// orchestrator, and rejected here, throwing away a review that has already been paid for.
+const findingProperties = schema.properties.findings.items.properties;
+const SEVERITIES: string[] = findingProperties.severity.enum;
+const STATUSES: string[] = findingProperties.status.enum;
 
 const [path] = process.argv.slice(2);
 
