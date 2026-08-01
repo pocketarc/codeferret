@@ -25,9 +25,17 @@ a finished thread. The template turns thread resolution off to match. Offer the 
 with Bash, so a token that can write contents is a token that can push. Taking the upgrade
 means setting `resolve-threads: 'true'` in the same edit.
 
+There is a second permission, commented out in the template: `actions: read`. Offer it too,
+and say what it buys. A review is one comment, and nothing GitHub's comment APIs return
+carries a review body, so a run works out what it said last time by reading the previous
+run's `findings.json` out of the `codeferret-run` artifact. That read is the only thing
+`actions: read` is used for. Without it every finding counts as new, so the review repeats
+itself on every push. `actions: read` grants read access to the repository's workflow runs
+and their artifacts, and nothing more.
+
 Say what the workflow uploads. The last step keeps `findings.json` as an artifact for 14
-days, which holds every finding including the ones the review suppressed, so whoever can
-read the repository's artifacts can read those.
+days. That file holds every finding: the ones the review suppressed, and the ones it did
+not print in full. Whoever can read the repository's artifacts can read those.
 
 The template references `pocketarc/codeferret@v1`, which is not a pin. It is a tag this
 repository moves to each new release, so the workflow follows those releases without being

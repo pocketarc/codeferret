@@ -3,8 +3,8 @@
 Like CodeRabbit, but it uses your Claude subscription, and goes even deeper.
 
 CodeFerret reviews a diff through fourteen independent code review skills at once, then
-merges their findings into a single review with inline comments. Each finding records
-which of the fourteen found it, so agreement between them stays visible.
+merges their findings into a single review comment. Each finding records which of the
+fourteen found it, so agreement between them stays visible.
 
 There are two ways to run it: as a GitHub action on every pull request, or as a Claude
 Code plugin on the branch in front of you.
@@ -19,6 +19,7 @@ to:
 permissions:
     contents: read # write instead to let it resolve finished threads
     pull-requests: write
+    # actions: read # so a finding is not raised again on every push
 
 steps:
     - uses: pocketarc/codeferret@v1
@@ -31,6 +32,12 @@ steps:
 can write contents is a token that can push. On `read`, everything else works and nothing
 tries to close a thread.
 
+`actions: read` costs nothing much and is worth taking. A review is one comment, and
+nothing GitHub's comment APIs return carries a review body, so a run works out what it
+already said by reading the previous run's `findings.json` out of the `codeferret-run`
+artifact. That read is all the permission is used for. Without it every finding counts as
+new and the review says the same things on every push.
+
 The rest of that file is:
 
 - A concurrency group, so three pushes in a row do not buy three full reviews.
@@ -40,9 +47,10 @@ The rest of that file is:
 - A gate on author association, limiting who can spend the budget to an owner, a member
   or a collaborator.
 - A 60-minute timeout.
-- A step that uploads `findings.json` as an artifact and keeps it for 14 days. That file
-  carries every finding including the ones the review suppressed, so whoever can read the
-  repository's artifacts can read those too.
+- A step that uploads `findings.json` as an artifact and keeps it for 14 days. The comment
+  carries the critical and high findings in full. That file carries every finding, the
+  suppressed ones included, and it is what the next run reads to know what was said before.
+  Whoever can read the repository's artifacts can read all of it.
 
 The action checks the repository out and installs what it needs. It also runs semgrep and
 osv-scanner before the review, from the runner's binaries if they are there and from
@@ -76,8 +84,9 @@ The command works out what to diff against (the base of your open pull request, 
 default branch), dispatches the lenses, and prints what they found as `path:line` you can
 click. Ask, and it includes uncommitted work. It offers to post the review when three
 things hold: the branch has an open pull request, your commits are pushed, and your
-working tree is clean. Otherwise the findings stay in the terminal. A comment is anchored
-to a line GitHub holds, and a file you have edited since is a file whose lines have moved.
+working tree is clean. Otherwise the findings stay in the terminal. Every line in a review
+belongs to the commit the lenses read, and a file you have edited since is a file whose
+lines have moved.
 
 Posting uses your `gh` credential, which is usually scoped to everything you can reach.
 Export a fine-grained token as `GITHUB_TOKEN` if you would rather it were not: `gh` takes
@@ -119,8 +128,8 @@ merged:
 Two pull requests exercise different things:
 
 - `test/fixture-defects` against `test/fixture` is the realistic case. Its diff touches
-  7 files, and some findings root-cause into files the diff does not touch, which is
-  what exercises the out-of-diff anchoring path.
+  7 files, and some findings root-cause into files the diff does not touch, which is what
+  measures whether a lens follows a defect out of the changed lines.
 - `test/fixture-defects` against `main` puts the whole fixture in one diff, so every
   lens reads every file.
 

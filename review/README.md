@@ -1,7 +1,7 @@
 # How CodeFerret works
 
 Several review skills read the same diff independently. The orchestrator then merges
-their findings into a single pull request (PR) review with inline comments.
+their findings into a single review comment on the pull request (PR).
 
 ## Shape
 
@@ -9,11 +9,13 @@ their findings into a single pull request (PR) review with inline comments.
 orchestrator session  ──dispatch──>  one subagent per lens (parallel)
                                      each loads its skill, returns JSON
        │
-       └──merge──> findings.json ──anchor check──> one PR review
+       └──merge──> findings.json ──render──> one PR review comment
+                        │
+                        └──artifact──> the next run's suppression
 ```
 
 A run is one orchestrator and N lens subagents. The orchestrator merges the findings.
-`post-review.ts` checks which findings GitHub can anchor, then posts the review.
+`post-review.ts` renders them into one review body and posts it.
 
 There are two ways in, and both call `run.sh`, which is the whole sequence: build the
 prompts, read what has already been said, run the orchestrator, check what comes back.
@@ -127,18 +129,23 @@ The plugin `run.sh` builds is also called `codeferret`, and so is the installed 
 plugin passed with `--plugin-dir` takes the namespace and shadows the installed copy, which
 is the behaviour you want: the built one holds exactly the lenses this run asked for.
 
-Print the review without posting it. The head has to be the commit the run pinned, which
-is the text after `...` in the first NUL-separated field of `build/diff-args`:
+Print the review without posting it. The head is the commit the lenses read, which the
+review is recorded against. It is the text after `...` in the first NUL-separated field of
+`build/diff-args`:
 
 ```sh
 DRY_RUN=1 GITHUB_TOKEN=x GITHUB_REPOSITORY=pocketarc/codeferret \
   bun review/post-review.ts "$RT/codeferret/build/findings.json" \
-  test/fixture "$(tr '\0' '\n' <"$RT/codeferret/build/diff-args" | sed -n '1s/.*\.\.\.//p')" 1
+  "$(tr '\0' '\n' <"$RT/codeferret/build/diff-args" | sed -n '1s/.*\.\.\.//p')" 1
 ```
 
-The findings file has to be the one in the run's own `build/`, because `post-review.ts`
-reads `diff-args` beside it for both the range and the pathspec the lenses reviewed under,
-and refuses to anchor against a commit they did not read.
+Use the findings file in the run's own `build/`. `post-review.ts` reads `existing.json`
+beside it to know which threads are the run's own, and a run's findings and a different
+run's threads need not describe the same pull request.
+
+The body needs `GITHUB_SERVER_URL` and `GITHUB_RUN_ID` to link the run holding the
+artifact. A runner sets both. By hand and under `local-post.sh` they are unset, and the
+body says where the findings are without linking anything.
 
 Budget roughly 15 minutes and several dollars per run on Opus with three lenses. Lenses
 run in parallel, so adding more of them costs money and not time: the full fourteen,
@@ -175,11 +182,13 @@ the orchestrator's last turn alone, and undercounted one full run sixtyfold.
 | `local-run.sh`, `local-post.sh` | What `/codeferret:review` runs, so a session pastes no paths. |
 | `defaults/` | The `lenses`, `exclude-paths` and `tools` defaults as plain lists, for a session that cannot read a YAML default. Generated from action.yml. |
 | `fetch-existing.ts` | Reads the discussion already on the pull request, for the orchestrator to match findings against. |
+| `fetch-previous.ts` | Reads the previous run's findings out of its artifact, which is the other half of that match. |
+| `unzip.ts` | Reads one file out of an artifact's zip, with `unzip.test.ts` beside it. |
 | `extract-findings.ts` | Reads the merged findings out of the run log, and what the run cost. |
 | `summary.ts` | Renders those numbers into the action's job summary. |
 | `check-findings.ts` | Checks those findings against the shape `post-review.ts` reads, and drops what it cannot use. |
-| `post-review.ts` | Anchors the findings against the diff, then posts the review. |
-| `review-body.ts` | The anchoring and rendering behind it, with `review-body.test.ts` beside it. |
+| `post-review.ts` | Renders the review body and posts it. |
+| `review-body.ts` | The rendering behind it, with `review-body.test.ts` beside it. |
 | `lib.ts`, `lib.sh` | The contracts more than one process depends on: the thread marker, the `diff-args` reader, the guards on a value that reaches a command line. |
 
 ## Why it is built this way
@@ -217,19 +226,20 @@ model answers it.
 
 ### The orchestrator also decides what has been said before
 
-Every push re-runs the whole review, so without this the second push posts the same 37
-comments again and the pull request becomes unreadable. Matching a new finding against
-an earlier comment is the same question as merging two lenses' findings: the line has
-often moved, and the earlier run may have anchored somewhere else. So the orchestrator
-marks each finding `new`, `already-reported`, or `declined`, and `post-review.ts` posts
-only the new ones.
+Every push re-runs the whole review, so without this the second push says the same 37
+things again and the pull request becomes unreadable. Matching a new finding against an
+earlier one is the same question as merging two lenses' findings: the line has often
+moved, and the words are rewritten every run. So the orchestrator marks each finding
+`new`, `already-reported`, or `declined`, and `post-review.ts` posts only the new ones.
 
-It reads the whole discussion, every author included. A defect a human already raised
-does not need raising again, and a reply is where the answer to a finding lives: "we
-don't want that" makes a finding `declined`, which the review reports separately from
-the ones merely said before. Two things a reply cannot do, both in `orchestrator.md`: it
-cannot make a security defect safe by asserting the code is intentional, and it cannot
-settle a finding it does not address.
+It matches against two files. `build/previous.json` holds what the last run reported, and
+that is where a repeat is caught. `build/existing.json` holds the discussion on the pull
+request, every author included. A defect a human already raised does not need raising
+again, and a reply is where the answer to a finding lives: "we don't want that" makes a
+finding `declined`, which the review reports separately from the ones merely said before.
+Two things a reply cannot do, both in `orchestrator.md`: it cannot make a security defect
+safe by asserting the code is intentional, and it cannot settle a finding it does not
+address.
 
 Two rules keep that safe. The orchestrator marks a finding `new` whenever it is unsure,
 because a repeated comment costs the author seconds while a suppressed finding is one
@@ -240,13 +250,41 @@ findings shows up as a number.
 An outdated comment does not count as covering anything. GitHub collapses a comment when
 the line it referred to changes, so a defect that survived an edit still needs saying.
 
+### The previous run's findings come out of its artifact
+
+Nothing GitHub's comment APIs return carries a review body. `fetch-existing.ts` reads
+`reviewThreads`, which is inline comments, and `issues/{n}/comments`, which is the
+conversation; a review body is neither. The whole review is a body now, so without this the
+run after it could see none of it. This predates the change: on the last run before it, the
+cap at forty comments left 60 findings of 100 in the body alone, and every one of those was
+going to be raised as new on every push for as long as the pull request stayed open.
+
+So `fetch-previous.ts` fetches the newest unexpired `codeferret-run` artifact for this
+pull request's branch, reads `findings.json` out of the zip, and writes the file, line,
+title and status of each finding to `build/previous.json`. The bodies are left behind:
+matching is on the file and the title, and carrying a previous review's prose into this
+run's context buys nothing.
+
+The newest artifact wins whatever its run concluded, because a run that ends red still
+posts. `check-findings.ts` drops what it cannot use, the review lands, and the job goes red
+over what was dropped; those findings were said, so they count as said.
+
+Reading an artifact needs `actions: read`, which the shipped workflow does not grant. So
+every failure is a line on stderr and a file holding no findings. No permission, no
+artifact, a retention window that has closed, and a first run all mean the same thing:
+every finding is new. That is what happened before this existed, so a repository that
+grants nothing is exactly where it was. `unzip.ts` reads the archive itself rather than
+shelling out to `unzip`. That binary is not on every runner, and it is rarely in the
+container a `command-prefix` points at, where a missing binary would look identical to a
+pull request with no previous run.
+
 ### Excluded paths are excluded in git
 
 The `exclude-paths` input becomes a pathspec on the diff command each lens is given, so
 a lockfile is not in the diff at all. `build-prompts.sh` writes that pathspec to
-`build/diff-args`, and `post-review.ts` reads the same file back when it works out which
-lines are anchorable, so a finding can never point at a file the lenses never saw. Two
-constructions of the same pathspec drifted once and produced exactly that.
+`build/diff-args`, and everything downstream that needs it reads that file back rather than
+building its own. Two constructions of the same pathspec drifted once, and the anchor map
+`post-review.ts` built then covered files no lens had read.
 
 ### Text for one lens goes in that lens's own prompt
 
@@ -278,17 +316,24 @@ gives: it made the routing a judgement remade every run. Nothing needed it. A le
 wants a path this run wrote can take it from the directory holding the `diff-args` file its
 dispatch already names, which is how `static-analysis` finds the tool reports.
 
-### A comment shows the claim and nothing else
+### A finding shows the claim and nothing else
 
 No severity, no lens attribution, no count of how many lenses agreed. All three stay in
-`findings.json`, and severity still orders the findings, but none of it reaches the
-reader.
+`findings.json`, and severity still orders the findings, but none of it is printed beside
+a finding.
 
 Severity is withheld because a lens assigns it without the context that decides it. A
 missing index is critical on a large table and irrelevant on a small one, and the lens
 cannot tell which. Displaying the guess turns the lens's ignorance into the reader's
 permission to skip. The same argument rules out filtering by severity: a label too
 unreliable to show is far too unreliable to hide findings with.
+
+Which findings the body prints in full is a different question, and severity does decide
+that one. The critical and high findings go in the comment; everything else is behind a
+link to the run, where `findings.json` holds all of them. Nothing is hidden by that, which
+is what made it acceptable: the reader who acts on a review is an agent reading the file,
+and the comment is what tells a person whether to stop and look. Hiding a low finding from
+the file would be the filtering the paragraph above rules out.
 
 Agreement between lenses is withheld because it tracks how conspicuous a defect is, not
 how much it matters. On a ten-lens run the most-corroborated finding was a cache-key nit
@@ -307,25 +352,43 @@ any it is unsure about. Each closure carries a reason, and the review body carri
 reasons, so a wrong call is visible.
 
 Which threads are the run's own is decided by two things together: the login the review
-posts under, and a hidden marker `post-review.ts` writes into every comment.
+posts under, and a hidden marker earlier versions wrote into every inline comment.
 `github-actions[bot]` is the login of every workflow posting with `github.token`, so the
-login alone would put another workflow's threads on the list this run may close.
+login alone would put another workflow's threads on the list this run may close. Nothing
+writes the marker now, and the threads it identifies are the ones those versions left
+behind, still open on pull requests that were reviewed before this change.
 
 A resolved thread also settles its finding: `resolved: true` marks it `declined` with no
 reading of replies. That makes resolving a thread the way to dismiss a finding for good.
 It also takes write access, which commenting does not.
 
 Outside CI the review posts under a person's own account, so `RESOLVE_THREADS=0` renders
-`resolve-none.md` in place of `resolve-judge.md` and the orchestrator closes nothing. The
-each policy is its own file, so the prompt states one policy whichever way the run goes.
+`resolve-none.md` in place of `resolve-judge.md` and the orchestrator closes nothing. Each
+policy is its own file, so the prompt states one policy whichever way the run goes.
 
-### `post-review.ts` anchors the findings
+### The review is one comment
 
-Whether a line sits inside a diff hunk is exact, and a wrong answer is expensive: the
-review API is atomic, so a single bad anchor makes the API return 422 and create no
-comments at all. Lenses also self-report `in_diff` incorrectly, so `post-review.ts`
-checks the value against the diff. Findings it cannot anchor go in the review body. If
-GitHub rejects the batch, `post-review.ts` posts the review body alone.
+It used to be up to forty inline comments plus a body. That existed because a comment was
+the only way to deliver a finding, and it made a forty-comment pull request out of a review
+nobody had read yet. What acts on a review here is usually an agent, and what it reads is
+`findings.json` in the run's artifact, which is complete: every finding with its body, its
+severity and the lenses that found it, the suppressed ones included. So the comment is for
+the person deciding whether to stop, and the file is for whoever fixes it.
+
+That leaves a body carrying the summary, the counts, `lens_health`, the critical and high
+findings in full, and a link to the run for the rest. `review-body.ts` bounds it: the short
+sections that make the review honest are assembled first, the listing takes what is left,
+and it drops whole findings from the end rather than being cut at a character offset, which
+would land inside a `<details>` or a fenced block and leave GitHub rendering the wreckage.
+
+A good deal went with the inline comments, and it is worth knowing why it was there.
+Whether a line sat inside a diff hunk was checked here rather than taken from the lens's
+own `in_diff`, which was wrong on every run; the reviews API is atomic, so one bad anchor
+returned 422 and created no comments at all. Findings outside the diff went into the body
+under a heading of their own. A cap at forty kept the batch under a secondary rate limit
+that had refused 95 comments twice, sixty seconds apart, and every one of them was lost.
+None of it applies to a body with no comments in it, and all of it comes back with the
+first inline comment anyone adds.
 
 ### `lens_health` covers every lens dispatched
 
@@ -467,6 +530,13 @@ dispatch whenever it changes.
    does not give. Weigh it: the review agent runs with `bypassPermissions` and Bash, so a
    token that can write contents is a token that can push. Without it everything else
    works and nothing tries to close a thread.
+
+   Add `actions: read` to stop a finding being raised on every push. It is the permission
+   that lets a run read the previous run's findings out of the `codeferret-run` artifact,
+   which is the only record of what the last review said. Without it every finding counts
+   as new and the review repeats itself. It grants read access to the repository's workflow
+   runs and their artifacts, and nothing else. The template ships it commented out, so
+   taking it is a decision rather than a default.
 
 2. Set `CLAUDE_CODE_OAUTH_TOKEN` as a repository secret. Create the token with
    `claude setup-token`.

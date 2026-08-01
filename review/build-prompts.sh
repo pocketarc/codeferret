@@ -253,6 +253,7 @@ fi
 sed -e "s|__BASE__|$(sed_escape "$BASE")|g" \
     -e "s|__HEAD__|$(sed_escape "$HEAD_SHA")|g" \
     -e "s|__EXISTING__|$(sed_escape "$BUILD/existing.json")|g" \
+    -e "s|__PREVIOUS__|$(sed_escape "$BUILD/previous.json")|g" \
     -e "/__LENS_LIST__/r $BUILD/lens-list.txt" \
     -e "/__LENS_LIST__/d" \
     -e "/__DISPATCH__/r $BUILD/dispatch.txt" \
@@ -261,11 +262,13 @@ sed -e "s|__BASE__|$(sed_escape "$BASE")|g" \
     -e "/__RESOLVE__/d" \
     "$ACTION/review/orchestrator.md" >"$BUILD/orchestrator.txt"
 
-# The orchestrator reads this file whether or not there was a pull request to fetch
-# comments from, and fetch-existing.ts overwrites it when there was. The keys have to be
-# the ones STEP 3 names: a branch with no pull request is the ordinary case in a session,
-# and an object with neither key reaches the step that decides what to suppress.
+# The orchestrator reads both files whether or not there was a pull request to fetch
+# anything from, and fetch-existing.ts and fetch-previous.ts overwrite them when there was.
+# The keys have to be the ones STEP 3 names: a branch with no pull request is the ordinary
+# case in a session, and an object with none of them reaches the step that decides what to
+# suppress.
 printf '{"threads": [], "conversation": []}\n' >"$BUILD/existing.json"
+printf '{"findings": []}\n' >"$BUILD/previous.json"
 
 echo "built ${#LENSES[@]} lens(es): ${LENSES[*]}"
 echo "  plugin: $PLUGIN"

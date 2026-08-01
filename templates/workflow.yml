@@ -37,6 +37,12 @@ jobs:
             # `resolve-threads` to 'true' in the same edit.
             contents: read
             pull-requests: write
+            # Uncomment to stop a finding being raised on every push. The review is one
+            # comment, and nothing GitHub's comment APIs return carries a review body, so a
+            # run reads what the last one found out of the `codeferret-run` artifact below.
+            # That read needs `actions: read`. Without it the run reads nothing, every
+            # finding counts as new, and the review says the same things over again.
+            # actions: read
 
         steps:
             # `v1` is a mutable tag, moved to each new release, so you get fixes without
@@ -52,9 +58,11 @@ jobs:
                   # and every one of those decisions is refused.
                   resolve-threads: 'false'
 
-            # CodeFerret posts only new findings. A finding the orchestrator marked as
-            # already answered is in findings.json and nowhere else, so without this
-            # artifact a mistaken mark costs a real finding and nobody ever knows.
+            # CodeFerret posts only new findings, and only the critical and high ones in
+            # full. Everything else is in findings.json and nowhere else: a finding the
+            # orchestrator marked as already answered, the body of a finding the comment
+            # did not print, and what the next run reads to know what was said before. Keep
+            # this step.
             #
             # findings.json alone, not the whole directory. Beside it sits run.json, the
             # orchestrator's final result object, which is not secret-masked and whose

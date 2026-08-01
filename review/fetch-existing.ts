@@ -209,12 +209,14 @@ try {
     console.error(`could not list review threads: ${threadError}`);
 }
 
-// post-review.ts ends every inline comment with the marker. The login is not enough on its
-// own: `github-actions[bot]` is the identity of every workflow posting with `github.token`,
-// so matching on it alone puts another workflow's threads on the list of ones this run may
-// resolve, and resolving takes that workflow's words off the page. The marker alone is
-// enough, because nothing else writes it, and that is what keeps a thread posted before the
-// marker existed from becoming permanently unresolvable: the login still identifies those.
+// Earlier versions of post-review.ts ended every inline comment with the marker, and those
+// threads are still open on pull requests this script runs against. The login is not enough
+// on its own: `github-actions[bot]` is the identity of every workflow posting with
+// `github.token`, so matching on it alone puts another workflow's threads on the list of
+// ones this run may resolve, and resolving takes that workflow's words off the page. The
+// marker alone is enough, because nothing else writes it, and that is what keeps a thread
+// posted before the marker existed from becoming permanently unresolvable: the login still
+// identifies those.
 const threads = raw.map((t) => {
     const root = t.comments.nodes[0];
     const body = root?.body ?? "";

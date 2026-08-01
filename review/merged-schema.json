@@ -59,7 +59,7 @@
                     },
                     "existing_comment_url": {
                         "type": "string",
-                        "description": "Required when status is 'already-reported' or 'declined': the url of the thread that covers it."
+                        "description": "The url of the thread that covers this finding, when a thread is what settled it. A finding matched against the previous run's findings has no comment of its own, so leave this out in that case."
                     },
                     "found_by": {
                         "type": "array",
@@ -80,7 +80,7 @@
                     },
                     "in_diff": {
                         "type": "boolean",
-                        "description": "False when this line is not part of the reviewed diff. Report it anyway: it gets moved into the review body rather than dropped."
+                        "description": "False when this line is not part of the reviewed diff. Report it either way: the review is a comment on the pull request rather than on a line, so nothing is dropped for sitting outside the diff."
                     },
                     "severity": {
                         "type": "string",

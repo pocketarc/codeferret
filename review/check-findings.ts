@@ -6,8 +6,8 @@
  * but that is a request to the model rather than a check on what comes back, and
  * post-review.ts validates nothing it is handed. So this is the only thing standing
  * between the orchestrator's output and a posted review: a finding with no `status` is
- * posted as new, and one whose `file` carries a leading slash matches nothing in the diff
- * map. Both look like an ordinary review.
+ * posted as new, one with no `title` is a bullet with no claim on it, and a `file` with a
+ * leading slash is a path nobody can open. All three look like an ordinary review.
  *
  * The shape itself is read out of merged-schema.json rather than mirrored here, so the
  * contract has one home. Three rules the schema cannot state are added below.
@@ -62,9 +62,8 @@ const EXTRA: Record<string, (value: unknown) => string | null> = {
 /**
  * Faults post-review.ts survives, so none of them is worth losing a finding over.
  *
- * `found_by` and `in_diff` are never read. A finding with no usable `line` fails its
- * anchor check and is listed in the review body under its file, which is worth more to a
- * reader than a finding nobody sees.
+ * `found_by` and `in_diff` are never read. A finding with no usable `line` is listed under
+ * its file alone, which is worth more to a reader than a finding nobody sees.
  */
 const TOLERATED = new Set([
     "findings[].found_by",
@@ -188,18 +187,11 @@ const problems: Problem[] = [];
 
 walk(merged, schema, "", problems);
 
-// post-review.ts reads neither of these, so neither is worth losing a review over.
-merged.findings.forEach((raw, i) => {
-    const f = record(raw);
-    if (!f) return;
-
-    if ((f.status === "already-reported" || f.status === "declined") && !f.existing_comment_url) {
-        problems.push({
-            path: `findings[${i}].existing_comment_url`,
-            message: `is '${String(f.status)}' but names no url, so it links nowhere`,
-        });
-    }
-});
+// A finding used to have to name the comment that covered it before it could be called
+// `already-reported`. Most cannot now: the match is against the previous run's
+// findings file rather than against a thread, and a review body is not a comment anyone
+// can link to. The url is still copied where a thread is what settled it, and the review
+// renders the link only when it is there.
 
 const label = (problem: Problem): string => {
     const owner = problem.path.match(/^findings\[(\d+)\]/)?.[1];

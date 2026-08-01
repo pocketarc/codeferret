@@ -1,10 +1,10 @@
 /**
- * The anchoring and rendering a posted review is built from.
+ * The rendering a posted review is built from.
  *
  * Separated from post-review.ts so that `bun test` can reach it. Every function here is
  * pure over strings and JSON, and each one has a failure mode nothing downstream would
- * report: an off-by-one in the hunk walk anchors every comment a line out, and a budget
- * that goes negative drops the findings the body exists to carry.
+ * report: markdown a model did not mean to write renders as debris, and a budget that goes
+ * negative drops the findings the body exists to carry.
  */
 
 export interface Finding {
@@ -38,8 +38,16 @@ export interface Merged {
 
 const SEVERITY_ORDER = ["critical", "high", "medium", "low", "nit", "question"];
 
+/**
+ * The severities the body carries in full.
+ *
+ * Everything else is in the findings file, which is what the agent doing the fixing reads.
+ * A person reading the pull request gets the two that decide whether to stop and look.
+ */
+export const LISTED = new Set(["critical", "high"]);
+
+/** GitHub refuses a review body over 65536 characters. The difference is headroom. */
 export const MAX_BODY = 60000;
-export const MAX_INLINE = 40;
 
 // The orchestrator writes both the summary and the notes, and nothing bounds what a model
 // produces. Left unbounded, a runaway summary eats the length the findings need.
@@ -52,6 +60,24 @@ export function severityRank(s: string): number {
 
 export function plural(n: number, word: string): string {
     return `${n} ${word}${n === 1 ? "" : "s"}`;
+}
+
+/**
+ * The workflow run this review came out of, or null when nothing names one.
+ *
+ * The body points at the run for every finding it does not list, and `local-post.sh` posts
+ * from somebody's own machine, where there is no run and no artifact. So the environment
+ * decides whether that sentence carries a link, rather than a URL being assembled out of
+ * empty variables and going nowhere.
+ */
+export function runUrl(env: Record<string, string | undefined>): string | null {
+    const server = env.GITHUB_SERVER_URL;
+    const repo = env.GITHUB_REPOSITORY;
+    const id = env.GITHUB_RUN_ID;
+
+    if (!server || !repo || !id) return null;
+
+    return `${server}/${repo}/actions/runs/${id}`;
 }
 
 const FENCE = /^\s*(```+|~~~+)/;
@@ -134,8 +160,9 @@ export function escapeInline(text: string): string {
 }
 
 /**
- * One finding as a bullet, for the sections of the body that list findings rather than
- * anchor them.
+ * One finding as a bullet: where it is, what it is, and the body in full.
+ *
+ * The position comes first because the reader is usually an agent about to open the file.
  *
  * The continuation indent is two spaces. Four after a blank line is an indented code
  * block in markdown, which takes the formatting out of the body and stops it wrapping.
@@ -151,15 +178,14 @@ export function bullet(f: Finding): string {
         .map((line, i) => (fenced[i] ? line : line.replace(/^(\s*)#/, "$1\\#")))
         .join("\n  ");
 
-    return `- **${escapeInline(f.title)}**\n\n  \`${where(f)}\`\n\n  ${body}\n\n  _${f.category}_`;
+    return `- \`${where(f)}\` — **${escapeInline(f.title)}**\n\n  ${body}\n\n  _${f.category}_`;
 }
 
 /**
  * Where a finding sits, for a reader.
  *
- * A finding with no usable line reaches the body rather than a comment, so the path alone
- * is what there is to say. Interpolating the number regardless printed the word
- * "undefined" beside the file.
+ * A finding with no usable line still reaches the body, so the path alone is what there is
+ * to say. Interpolating the number regardless printed the word "undefined" beside the file.
  */
 export function where(f: Finding): string {
     if (!Number.isInteger(f.line)) return f.file;
@@ -194,150 +220,59 @@ export function details(summary: string, body: string, open = false): string {
     return `<details${open ? " open" : ""}>\n<summary>${summary}</summary>\n\n${body}\n</details>`;
 }
 
-/** A heading, a reason, and findings listed under it. The only sections that can run long. */
+/** A heading, a reason, and findings listed under it. The one section that can run long. */
 export interface Listing {
     heading: string;
     lead: string;
     items: Finding[];
 }
 
-export type Section = string | Listing;
-
-function isListing(section: Section): section is Listing {
-    return typeof section !== "string";
-}
-
 /**
- * Join the sections into one body no longer than GitHub accepts.
+ * Join the review into one body no longer than GitHub accepts.
  *
- * Everything except the finding listings is short, and it is the part that makes the
- * review honest: the counts, the lens health, what was suppressed, and the caveats saying
- * what the run could not check. So the listings get whatever length the rest leaves, and
- * they lose whole findings from the end rather than being cut at a character offset. An
- * offset lands inside a `<details>`, a fenced block, or a finding's own markup, and
- * GitHub renders the wreckage. What did not fit is counted and pointed at the artifact.
- *
- * Listings are filled in the order given, so put the one that matters most first.
+ * Everything but the listing is short, and it is the part that makes the review honest:
+ * the counts, the lens health, what was suppressed, and the caveats saying what the run
+ * could not check. So the listing gets whatever length the rest leaves, and it loses whole
+ * findings from the end rather than being cut at a character offset. An offset lands
+ * inside a `<details>`, a fenced block, or a finding's own markup, and GitHub renders the
+ * wreckage. What did not fit is counted, and the reader is sent to the findings file,
+ * which holds every finding whatever the body had room for.
  */
-export function assemble(sections: Section[]): string {
-    let budget =
-        MAX_BODY -
-        sections
-            .filter((s): s is string => typeof s === "string")
-            .reduce((total, s) => total + s.length + 2, 0);
+export function assemble(head: string[], listing: Listing | null, tail: string[]): string {
+    let budget = MAX_BODY - [...head, ...tail].reduce((total, s) => total + s.length + 2, 0);
 
-    const rendered: string[] = [];
+    const rendered = [...head];
 
-    for (const section of sections) {
-        if (!isListing(section)) {
-            rendered.push(section);
-            continue;
-        }
-
-        const frame = `### ${section.heading}\n\n${section.lead}\n\n`;
+    if (listing) {
+        const heading = `### ${listing.heading}\n\n${listing.lead}`;
         // Reserved for the omission line, so saying what went missing cannot itself be
         // the thing that does not fit.
-        budget -= frame.length + 200;
+        budget -= heading.length + 2 + 200;
 
         const kept: string[] = [];
-        for (const finding of section.items) {
+        for (const finding of listing.items) {
             const text = bullet(finding);
             if (text.length + 2 > budget) break;
             kept.push(text);
             budget -= text.length + 2;
         }
 
-        const missing = section.items.length - kept.length;
-        const omission =
-            missing > 0
-                ? `\n\n- _${plural(missing, "further finding")} left out for length. Every one of them is in \`findings.json\` in the \`codeferret-run\` artifact._`
-                : "";
+        const missing = listing.items.length - kept.length;
 
-        rendered.push(`${frame}${kept.join("\n\n")}${omission}`);
+        if (missing > 0) {
+            kept.push(
+                `- _${plural(missing, "further finding")} left out for length. Every one of them is in the findings file._`,
+            );
+        }
+
+        rendered.push([heading, ...kept].join("\n\n"));
     }
+
+    rendered.push(...tail);
 
     const body = rendered.join("\n\n");
 
     // Reached only when the short sections alone exceed the limit, which takes a
     // lens_health list or a suppressed list of a size nothing here has seen.
     return body.length > MAX_BODY ? clamp(body, MAX_BODY) : body;
-}
-
-/**
- * Right-side line numbers per file that appear anywhere in a unified diff's hunks.
- *
- * A `+++` line is a header only when a `---` line precedes it, so an added line whose own
- * text begins with `++` cannot be read as one. A header this does not recognise clears the
- * current file rather than leaving the previous one named: losing an anchor demotes a
- * finding into the review body, while misplacing one fails the whole atomic review with
- * 422 and creates no comments at all. `+++ /dev/null` on a deleted file is the form that
- * reached a live run.
- */
-export function anchorableLines(diff: string): Map<string, Set<number>> {
-    const byFile = new Map<string, Set<number>>();
-    let currentFile: string | null = null;
-    let rightLine = 0;
-    let previous = "";
-
-    for (const line of diff.split("\n")) {
-        const header = line.startsWith("+++ ") && previous.startsWith("--- ");
-        previous = line;
-
-        if (header) {
-            const named = line.match(/^\+\+\+ b\/(.+)$/)?.[1];
-            currentFile = named ?? null;
-            if (currentFile && !byFile.has(currentFile)) byFile.set(currentFile, new Set());
-            continue;
-        }
-
-        const hunk = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
-        if (hunk) {
-            rightLine = Number(hunk[1]);
-            continue;
-        }
-
-        if (!currentFile || line.startsWith("-")) continue;
-        if (line.startsWith("+") || line.startsWith(" ")) {
-            byFile.get(currentFile)?.add(rightLine);
-            rightLine += 1;
-        }
-    }
-
-    return byFile;
-}
-
-/** Whether a finding can be anchored inline, given the lines the diff makes commentable. */
-export function anchorable(f: Finding, lines: Set<number> | undefined): boolean {
-    // A finding with no `line` used to pass: `undefined <= undefined` is false, so the
-    // loop below never ran and the guard stayed true. It reached GitHub as a comment with
-    // no line, and the reviews endpoint answers 422 for the whole batch.
-    if (lines === undefined || !Number.isInteger(f.line)) return false;
-
-    const start = f.end_line ? Math.min(f.line, f.end_line) : f.line;
-    const end = f.end_line ? Math.max(f.line, f.end_line) : f.line;
-
-    for (let n = start; n <= end; n += 1) {
-        if (!lines.has(n)) return false;
-    }
-
-    return true;
-}
-
-/**
- * How long to wait before retrying a refused review, or null when it was not a rate limit.
- *
- * A secondary rate limit comes back as 403 or 429, and both carry `retry-after`. Match only
- * one of those statuses, or sleep a fixed minute of our own, and the retry goes out after a
- * minute against a limit that asked for two: the wait is spent and it is refused again.
- */
-export function rateLimitWait(status: number, retryAfter: string | null, detail: string): number | null {
-    const RETRY_AFTER_MS = 60_000;
-    const MAX_RETRY_AFTER_MS = 300_000;
-
-    const limited = status === 429 || (status === 403 && /secondary rate limit/i.test(detail));
-
-    if (!limited) return null;
-
-    const asked = Number(retryAfter) * 1000;
-    return asked > 0 ? Math.min(asked, MAX_RETRY_AFTER_MS) : RETRY_AFTER_MS;
 }

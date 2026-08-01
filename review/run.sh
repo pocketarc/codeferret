@@ -19,10 +19,12 @@
 #                     Use `auto` on somebody's own machine: it passes the reads a lens
 #                     needs and refuses the rest, and refusals land in the run log.
 #   PREFIX            prefix for `claude` and `bun`, for a containerised toolchain.
-#   PR                pull request number. Set it to have earlier comments read, which
-#                     stops a finding being raised twice.
+#   PR                pull request number. Set it to have the earlier comments and the
+#                     previous run's findings read, which stops a finding being raised
+#                     twice.
 #   OWN_LOGIN         the account the review posts under. fetch-existing.ts marks a thread
-#                     `mine` when the login and the hidden marker both match.
+#                     `mine` when the login and the marker earlier versions wrote both
+#                     match.
 #   TOOLS             whitespace-separated static analysis tools to run before the review,
 #                     naming files in review/tools/. Their reports are read by the
 #                     `static-analysis` lens, which decides which findings hold. These run
@@ -100,6 +102,16 @@ if [ -n "${PR:-}" ]; then
         $PREFIX bun "$ACTION/review/fetch-existing.ts" \
             "$PR" "$BUILD/existing.json" ${OWN_LOGIN:+"$OWN_LOGIN"} ||
         echo "could not read this pull request's comments. Every finding will count as new." >&2
+
+    # What the last run said is in its own findings file and nowhere a comment fetch can
+    # reach: the review is one body, and a review body is neither a thread nor a
+    # conversation comment. Reading the artifact back needs `actions: read`, which the
+    # shipped workflow does not grant, so this is allowed to come back empty.
+    # fetch-previous.ts reports its own failures, so the `||` is for a failure before it
+    # can.
+    printf '%s' "$token" |
+        $PREFIX bun "$ACTION/review/fetch-previous.ts" "$PR" "$BUILD/previous.json" ||
+        echo "could not read the previous run's findings. Every finding will count as new." >&2
 fi
 
 # Overriding one of `tools` and `lenses` without the other is the ordinary customisation,

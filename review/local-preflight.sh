@@ -119,8 +119,8 @@ else
     say shallow no
 fi
 
-# Untracked files cannot appear in any diff, so they say nothing about whether the
-# review is anchorable. Counting them as dirty would block posting over a scratch file.
+# Untracked files cannot appear in any diff, so they say nothing about whether the review
+# still describes the tree. Counting them as dirty would block posting over a scratch file.
 say dirty "$(git status --porcelain --untracked-files=no | wc -l | tr -d '[:space:]')"
 say untracked "$(git ls-files --others --exclude-standard | wc -l | tr -d '[:space:]')"
 
@@ -140,11 +140,11 @@ fi
 
 say pr "${PR:-none}"
 
-# The question is whether GitHub holds this commit, because that is what a review's
-# comments anchor to, so ask the pull request when there is one. `origin/<branch>` only
-# moves on a fetch or on a push from this clone: it says no to work pushed from another
-# machine or the web UI, and yes to a commit a force-push elsewhere has already taken
-# away, which posts a review that 422s on every comment at once.
+# The question is whether GitHub holds this commit, because that is the one recorded on
+# the review, so ask the pull request when there is one. `origin/<branch>` only moves on a
+# fetch or on a push from this clone: it says no to work pushed from another machine or the
+# web UI, and yes to a commit a force-push elsewhere has already taken away, which posts a
+# review naming a commit GitHub does not hold.
 REMOTE_HEAD=""
 
 if [ -n "$PR_HEAD" ]; then

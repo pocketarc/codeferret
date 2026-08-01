@@ -21,6 +21,10 @@ jobs:
         permissions:
             contents: read
             pull-requests: write
+            # The template ships this commented out, because it is a permission a consumer
+            # has to grant. This repository grants it so that every fixture run exercises
+            # the path that reads the previous run's findings out of the artifact below.
+            actions: read
 
         steps:
             - name: Checkout the head commit

@@ -171,18 +171,17 @@ CLAUDE_PLUGIN_ROOT="<plugin>" bash "<plugin>/review/local-preflight.sh" "<base>"
 ```
 
 Offer to post only when the fresh output says `pr` is a number, `gh=ok`, `pushed=yes` and
-`dirty=0`. Otherwise name whichever of those is not true and leave it. A comment is
-anchored to a commit GitHub holds, so a review of work GitHub has never seen lands on the
-wrong lines or on none. `dirty=0` still applies when the review covered committed work
-only, because the lenses read files as they find them.
+`dirty=0`. Otherwise name whichever of those is not true and leave it. Every line the
+review names is a line of the commit the lenses read, so a review of work GitHub has never
+seen sends its reader to code that is not there. `dirty=0` still applies when the review
+covered committed work only, because the lenses read files as they find them.
 
 Ask before posting. It writes to a pull request other people are reading.
 
 ```sh
-bash "<plugin>/review/local-post.sh" "<plugin>" "<base>" "<pr>"
+bash "<plugin>/review/local-post.sh" "<plugin>" "<pr>"
 ```
 
-`<base>` here is always the ref step 1 reported, even when step 4 used `merge_base`.
 `local-post.sh` takes the head from the run itself, refuses when HEAD has moved since, and
 refuses when the pull request's head is a different commit. Report what it says rather than
 working around it.

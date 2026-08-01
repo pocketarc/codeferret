@@ -145,7 +145,7 @@ inputs:
         required: false
         default: ''
     head-sha:
-        description: Commit to anchor comments against. Defaults to the pull request head.
+        description: Commit the review is recorded against. Defaults to the pull request head.
         required: false
         default: ''
     checkout:
@@ -205,8 +205,8 @@ runs:
         # `head-sha` before the event, because outside a `pull_request` event the event
         # value is empty and actions/checkout falls back to the default branch. A
         # workflow_dispatch run passing base-ref, pr-number and head-sha then had every
-        # lens review the wrong tree, and post-review.ts threw on a commit the checkout
-        # did not contain, after the whole review had been paid for.
+        # lens review the wrong tree, and the review was posted against a commit holding
+        # none of what it described, after the whole thing had been paid for.
         - name: Check out the head commit
           if: inputs.checkout != 'skip' && steps.probe.outputs.present == 'false'
           uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -333,16 +333,14 @@ runs:
           # The step above fails on anything run.sh could not finish. A review that is
           # already written and already paid for is worth posting even then, so the
           # condition is not that step's exit code. It is check-findings.ts having passed,
-          # because a findings file that failed the shape check posts a comment with no
-          # line on it and GitHub rejects the whole review with a 422. The run still ends
-          # red either way.
+          # because a findings file that fails the shape check outright holds nothing worth
+          # posting. The run still ends red either way.
           if: ${{ !cancelled() && inputs.post != 'false' && steps.review.outputs.findings-checked == 'ok' }}
           shell: bash
           env:
               GITHUB_TOKEN: ${{ inputs.github-token }}
               GITHUB_REPOSITORY: ${{ github.repository }}
               PREFIX: ${{ inputs.command-prefix }}
-              BASE: ${{ steps.target.outputs.base }}
               PR: ${{ steps.target.outputs.pr }}
               HEAD: ${{ steps.target.outputs.head }}
           run: |
@@ -353,4 +351,4 @@ runs:
 
               $PREFIX bun "$GITHUB_ACTION_PATH/review/post-review.ts" \
                   "$RUNNER_TEMP/codeferret/build/findings.json" \
-                  "$BASE" "$HEAD" "$PR"
+                  "$HEAD" "$PR"

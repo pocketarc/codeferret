@@ -6,11 +6,13 @@
  */
 
 /**
- * Stamped into every inline comment by post-review.ts and required by fetch-existing.ts
- * before it will call a thread the run's own.
+ * What fetch-existing.ts looks for before it will call a review thread the run's own, which
+ * decides which threads a run may resolve.
  *
- * A wire protocol between two processes: change it at one end only and no thread is ever
- * recognised again, nothing is resolved, and nothing reports a problem.
+ * Nothing writes it any more: a review is one body now and creates no threads at all. The
+ * threads it identifies are the ones earlier versions posted, which are still on open pull
+ * requests and still worth closing when their defect goes. Change the string and those
+ * threads become unrecognisable, nothing is resolved, and nothing reports a problem.
  */
 export const MARKER = "<!-- codeferret -->";
 

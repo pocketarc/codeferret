@@ -1,7 +1,7 @@
 # CodeFerret
 
 CodeFerret reviews a diff through several independent code review skills ("lenses") at
-once, then merges their findings into one review with inline comments.
+once, then merges their findings into one review comment.
 
 There are two ways to run it. As a GitHub composite action (`action.yml`) it reviews
 a pull request and posts the review. As a Claude Code plugin it adds `/codeferret:review`,
@@ -58,8 +58,11 @@ and more. They are all deliberate, and they are the measuring instrument. If you
 them, there is nothing left to score a review against.
 
 `backend/app/Support/Sanitizer.php` on `test/fixture` is a no-op on purpose. It sits
-*outside* the reviewed diff, so a finding against it exercises the out-of-diff anchoring
-path. Leave it alone.
+*outside* the reviewed diff, so a lens has to follow a defect out of the changed lines to
+find it. That used to exercise a code path of its own as well, because a finding there
+could not be anchored to a comment and went to a section of the body kept for those. The
+section is gone and the file still earns its place: it is what catches a lens that stops
+at the diff boundary. Leave it alone.
 
 The scoring key lives outside the repository. Do not add it. A reviewer that can read
 the answers cannot be measured.
@@ -86,10 +89,12 @@ input description shipped once. Quote any string that contains `: `.
 Each of these is a rule and the one fact that makes it stick. `review/README.md` carries
 the arguments behind them.
 
-- A lens's `in_diff` field is unreliable. On every run so far, a lens reported an
-  out-of-diff finding as in-diff. `post-review.ts` checks each line against the diff
-  hunks instead of the lens's claim. Do not remove that check: the review API is atomic,
-  so a single bad anchor fails the whole request with 422 and no comments are posted.
+- A lens's `in_diff` field is unreliable, and nothing reads it. On every run that used
+  inline comments, a lens reported an out-of-diff finding as in-diff. `post-review.ts`
+  checked each line against the diff hunks itself, because the reviews API is atomic and a
+  single bad anchor failed the whole request with 422 and created no comments at all. The
+  review is one comment now, so there is no anchor to be wrong about. Both the check and
+  that failure come back the moment anyone adds an inline comment.
 - Do not ask the orchestrator for counts. It narrated "27 by three lenses" when the
   answer was 31. `post-review.ts` computes totals, quorum, and severity spread.
 - A lens that returns zero findings is probably broken. One spent $1.28, exited 0,
@@ -110,15 +115,15 @@ the arguments behind them.
   for that reason: a lens needing a path this run wrote can find it beside the diff
   arguments its dispatch already names. `REVIEW.md` goes to `mattpocock-code-review` alone.
   Do not broaden it to every lens.
-- Do not put severity or lens agreement into a comment. Both are in `findings.json`
-  and severity orders the findings, but neither is displayed. For the same reason, do not
-  add severity filtering.
-- A cap on tool input is not that filtering. `review/tools/*` cap what they hand the
-  lens at 100 findings, sorted so the cap takes the low end. That bounds what one lens is
-  asked to read, not what a reader is told: everything raised stays in
-  `build/tool-*.json`. Cap the input, never the findings. `post-review.ts` caps the
-  comments too, at 40, because GitHub refuses a review carrying more. The rest go into the
-  body, where the reader still sees every one.
+- Do not put severity or lens agreement into a comment. Both are in `findings.json`,
+  and severity orders the findings and decides which ones the comment prints in full, but
+  neither is shown against a finding. For the same reason, do not add severity filtering.
+  Deciding what a comment reprints is not deciding what is reported: `findings.json` carries
+  every finding whatever the comment has room for.
+- A cap on tool input is not that filtering either. `review/tools/*` cap what they hand
+  the lens at 100 findings, sorted so the cap takes the low end. That bounds what one lens
+  is asked to read, not what a reader is told: everything raised stays in
+  `build/tool-*.json`. Cap the input, never the findings.
 - Lenses must not modify the working tree. Every lens reads the same checkout at once,
   so one edit corrupts every other lens's review. `Edit`, `Write`, `NotebookEdit` and
   `Agent` are all kept off the tool list in `agents/`, and `run.sh` denies the first three
@@ -144,19 +149,30 @@ the arguments behind them.
   `new` whenever it is unsure. If you tighten that, you trade duplicate comments for
   findings nobody sees. `findings.json` in the `codeferret-run` artifact holds every
   finding with its status, including the hidden ones.
+- What the last run said is in its findings file, not on the pull request. Nothing
+  GitHub's comment APIs return carries a review body: `reviewThreads` holds inline comments
+  and `issues/{n}/comments` holds the conversation, and a review body is neither. So a
+  review that is one body is invisible to the run after it, and 60 findings of 100 would
+  have been raised again on every push. `fetch-previous.ts` reads the previous run's
+  `codeferret-run` artifact instead, and `build/previous.json` is what the orchestrator
+  matches against, on file and title. It needs `actions: read`, which the shipped workflow
+  does not grant, so every failure there is a line on stderr and an empty file. Keep it
+  that way: a permission a consumer has to grant cannot be one a review depends on.
 - Resolving a thread is a judgement, not a rule. `isOutdated` is evidence the
   orchestrator weighs, not a gate: a fix landing elsewhere leaves a thread current, and an
   unrelated edit above one makes a live thread outdated. Do not turn it back into a
   condition. `post-review.ts` then refuses any thread `fetch-existing.ts` did not mark
-  `mine`, which is the non-model half of the same guard.
+  `mine`, which is the non-model half of the same guard. The only threads left to close are
+  the ones earlier versions opened, because a body-only review creates none.
 - A reply cannot make a security defect safe. The carve-out is written into
   `orchestrator.md`, because "this is intentional" on a vulnerability would otherwise
   silence it for good. Keep it if you touch the decline rules.
-- `post-review.ts` reads the range and the pathspec back out of `build/diff-args`. It used
-  to build the pathspec itself, the two drifted, and the anchor map then covered files no
-  lens had read. `local-post.sh` re-resolved `HEAD` for the same reason and could anchor
-  against a commit the lenses never read. `review/lib.ts` holds the one reader. Do not
-  reintroduce a second construction of either half.
+- Whatever needs the range or the pathspec reads `build/diff-args`. `post-review.ts`
+  built the pathspec itself once, the two drifted, and the anchor map then covered files no
+  lens had read. `local-post.sh` re-resolved `HEAD` for the same reason and could post a
+  review taken at one commit against another. `review/lib.ts` holds the one reader, which
+  `review/tools/*` call; `local-post.sh` parses the file by hand for the commit alone. Do
+  not reintroduce a second construction of either half.
 - The action posts on `findings-checked`, not on the findings file existing.
   `check-findings.ts` drops a finding it cannot use and writes the rest back, so the run
   ends red and the review still lands. A findings file that fails it outright holds nothing

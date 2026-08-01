@@ -175,13 +175,13 @@ for (const manifest of manifests) {
                 findings.push({
                     rule: vuln.id,
                     // The path the scanner echoes back is the bind mount's when it ran in
-                    // the container and the host's when it ran as a binary, and neither
-                    // anchors. The manifest this invocation was handed is repo-relative,
-                    // which is what post-review.ts keys its diff map on.
+                    // the container and the host's when it ran as a binary, and a reader
+                    // can open neither. The manifest this invocation was handed is
+                    // repo-relative, which is what every other path in a review is.
                     file: manifest,
-                    // OSV reports a package, not a position. Anchoring it is a judgement the
-                    // lens makes: the line where this dependency is declared is worth more to
-                    // a reader than the first line of a lockfile.
+                    // OSV reports a package, not a position. Where to point is a judgement
+                    // the lens makes: the line where this dependency is declared is worth
+                    // more to a reader than the first line of a lockfile.
                     line: null,
                     package: pkg.package?.name,
                     version: pkg.package?.version,
