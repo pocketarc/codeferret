@@ -141,14 +141,20 @@ for lens in "${LENSES[@]}"; do
     fi
 done
 
-# A two-dot range against a commit diffs the working tree, so uncommitted work is in
-# scope; a three-dot range against HEAD covers committed work alone. The action only
-# ever reviews what is pushed, but a session is usually looking at a branch that is
-# still being written.
+# Naming a commit and nothing else diffs it against the working tree, so uncommitted work
+# is in scope; a three-dot range covers committed work alone. The action only ever reviews
+# what is pushed, but a session is usually looking at a branch still being written.
+#
+# Pin HEAD to the commit it is now. A review runs for twenty minutes and whoever started
+# it is often still working: a lens found the tree moving under it mid-review and had to
+# re-anchor its whole review against a snapshot it took itself. In CI this resolves to the
+# same checked-out commit either way.
+HEAD_SHA=$(git -C "$WORKSPACE" rev-parse HEAD 2>/dev/null || echo HEAD)
+
 if [ -n "${INCLUDE_WORKING_TREE:-}" ]; then
     RANGE="$BASE"
 else
-    RANGE="$BASE...HEAD"
+    RANGE="$BASE...$HEAD_SHA"
 fi
 
 # The pathspec runs to several hundred characters. Handing it to the orchestrator as
@@ -177,6 +183,7 @@ sed_escape() {
 # Indent the dispatch prompt so it sits as a block inside the orchestrator's prompt.
 # Matching `^.` rather than `^` keeps blank lines free of trailing whitespace.
 sed -e "s|__BASE__|$(sed_escape "$BASE")|g" \
+    -e "s|__HEAD__|$(sed_escape "$HEAD_SHA")|g" \
     -e "s|__DIFF_SCRIPT__|$(sed_escape "$BUILD/diff.sh")|g" \
     "$ACTION/review/lens-dispatch.md" |
     sed -e 's|^.|    &|' >"$BUILD/dispatch.txt"

@@ -216,32 +216,52 @@ runs:
           run: |
               out="$RUNNER_TEMP/codeferret/build"
 
+              # A failed run is when its cost and its refusal count matter most, so the
+              # exit code is held until everything the run did manage to write is out.
+              status=0
               bash "$GITHUB_ACTION_PATH/review/run.sh" \
                   "$BASE" \
                   "$GITHUB_ACTION_PATH" \
                   "$RUNNER_TEMP/codeferret" \
-                  "$GITHUB_WORKSPACE"
+                  "$GITHUB_WORKSPACE" || status=$?
 
-              echo "findings-file=$out/findings.json" >>"$GITHUB_OUTPUT"
-              echo "findings-count=$(cat "$out/findings-count")" >>"$GITHUB_OUTPUT"
-              echo "cost-usd=$(cat "$out/cost-usd")" >>"$GITHUB_OUTPUT"
-              echo "output-tokens=$(cat "$out/output-tokens")" >>"$GITHUB_OUTPUT"
+              emit() {
+                  if [ -f "$out/$1" ]; then
+                      echo "$1=$(cat "$out/$1")" >>"$GITHUB_OUTPUT"
+                  fi
+              }
+
+              if [ -f "$out/findings.json" ]; then
+                  echo "findings-file=$out/findings.json" >>"$GITHUB_OUTPUT"
+              fi
+
+              emit findings-count
+              emit cost-usd
+              emit output-tokens
 
               # Otherwise what a review cost is only visible by downloading an artifact,
               # which nobody does until the bill arrives.
-              {
-                  printf '### CodeFerret\n\n'
-                  printf '| | |\n|---|---|\n'
-                  printf '| Findings | %s |\n' "$(cat "$out/findings-count")"
-                  printf '| Cost | $%s |\n' "$(cat "$out/cost-usd")"
-                  printf '| Output tokens | %s |\n' "$(cat "$out/output-tokens")"
-                  printf '| Wall clock | %s min |\n' "$(( $(cat "$out/duration-ms") / 60000 ))"
+              if [ -f "$out/cost-usd" ]; then
+                  {
+                      printf '### CodeFerret\n\n'
+                      printf '| | |\n|---|---|\n'
+                      printf '| Findings | %s |\n' "$(cat "$out/findings-count")"
+                      printf '| Cost | $%s |\n' "$(cat "$out/cost-usd")"
+                      printf '| Output tokens | %s |\n' "$(cat "$out/output-tokens")"
+                      printf '| Wall clock | %s min |\n' "$(( $(cat "$out/duration-ms") / 60000 ))"
 
-                  denied=$(cat "$out/permission-denials")
-                  if [ "$denied" != "0" ]; then
-                      printf '\n> %s tool call(s) were refused, so a lens reviewed less than it appears to.\n' "$denied"
-                  fi
-              } >>"$GITHUB_STEP_SUMMARY"
+                      denied=$(cat "$out/permission-denials")
+                      if [ "$denied" != "0" ]; then
+                          printf '\n> %s tool call(s) were refused, so a lens reviewed less than it appears to.\n' "$denied"
+                      fi
+
+                      if [ "$status" != "0" ]; then
+                          printf '\n> The review failed after this point. Read the step log.\n'
+                      fi
+                  } >>"$GITHUB_STEP_SUMMARY"
+              fi
+
+              exit "$status"
 
         - name: Post the review
           if: inputs.post != 'false'

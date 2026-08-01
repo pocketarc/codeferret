@@ -65,7 +65,7 @@ the code it runs, and that code should not change between runs.
 | `../agents/` | One agent per bundled lens, and a generic one for a lens that is not bundled. Generated. |
 | `../lenses/skills/` | The bundled skills, one directory per lens. |
 | `lens-brief.md` | The half of a lens's prompt that never varies, and the body of every agent. `__SKILL_LINE__` and `__SCHEMA__` are substituted. |
-| `lens-dispatch.md` | The half that does: which diff to read. `__BASE__`, `__RANGE__`, and `__PATHSPEC__` are substituted. |
+| `lens-dispatch.md` | The half that does: which diff to read. `__BASE__`, `__HEAD__`, and `__DIFF_SCRIPT__` are substituted. |
 | `lens-schema.json` | The shape each lens returns. Prompted but not enforced, because subagents do not inherit `--json-schema`. |
 | `orchestrator.md` | The orchestrator's prompt template. |
 | `merged-schema.json` | The shape the orchestrator returns. Enforced, because a script parses it. |

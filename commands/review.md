@@ -53,6 +53,11 @@ When `untracked` is not `0`, say that too, whichever they pick. A git diff never
 untracked file, so a newly written one is invisible to every lens until `git add -N
 <path>` puts it in the index.
 
+Committed work is pinned to the commit HEAD is at when the run starts, so the user can
+carry on committing while it runs. Uncommitted work cannot be: the lenses read the tree
+as they go, and editing under them means they review different files from each other.
+Say so if they pick it.
+
 ## 3. Settle the lenses
 
 Use the lenses named in `$ARGUMENTS`. Otherwise use every line of
