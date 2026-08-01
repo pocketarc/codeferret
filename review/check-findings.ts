@@ -2,10 +2,10 @@
 /**
  * Check merged findings against the shape post-review.ts reads.
  *
- * Only the action runs the orchestrator under `--json-schema`. A review driven from a
- * Claude Code session has nothing enforcing merged-schema.json, and post-review.ts
- * trusts what it is handed: a finding with no `line` fails its anchor check and moves
- * quietly into the body, one with no `status` is posted as new, and one whose `file`
+ * Only the action runs the orchestrator under `--json-schema`. Nothing enforces
+ * merged-schema.json on a review driven from a Claude Code session, and post-review.ts
+ * does not validate what it is handed: a finding with no `line` fails its anchor check
+ * and ends up in the body, one with no `status` is posted as new, and one whose `file`
  * carries a leading slash matches nothing in the diff map. All three look like an
  * ordinary review.
  *
@@ -96,7 +96,7 @@ for (const [i, raw] of merged.findings.entries()) {
     checkEnum(label, "status", f.status, STATUSES);
 
     // The diff map post-review.ts builds is keyed on the paths git prints, which never
-    // carry a leading slash. One that does anchors nowhere and is demoted in silence.
+    // carry a leading slash, so one that does matches nothing.
     if (typeof f.file === "string" && f.file.startsWith("/")) {
         problem(label, `\`file\` must be repo-relative, got '${f.file}'`);
     }

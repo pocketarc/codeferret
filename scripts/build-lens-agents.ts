@@ -3,8 +3,8 @@
  * Render the lens agent definitions the plugin ships.
  *
  * A plugin's agents load when the session starts, so they cannot be written per run the
- * way the action writes them into RUNNER_TEMP. What actually varies per run is the base
- * ref and the pathspec, and both move into the dispatch prompt (review/lens-dispatch.md)
+ * way the action writes them into RUNNER_TEMP. The base ref and the pathspec are what
+ * varies per run, and both live in the dispatch prompt (review/lens-dispatch.md)
  * instead. That leaves the skill name and the output schema, which are fixed per lens.
  *
  * Everything in agents/ is generated from review/lens-brief.md by this script. Run it
@@ -20,10 +20,9 @@ import { existsSync, readdirSync } from "node:fs";
 // set rather than subtracting from it also leaves out every MCP tool, which a diff
 // review has no use for and which the action drops with --strict-mcp-config.
 //
-// A name this Claude Code does not know is dropped without a word, so a lens can end up
-// searching with one hand tied and nothing says so. `Grep`, `Glob` and `TodoWrite` were
-// all in this list and all silently absent; searching goes through Bash here. Check the
-// list against a real dispatch before adding to it.
+// A tool name Claude Code does not recognise is dropped with no warning. `Grep`, `Glob`
+// and `TodoWrite` were all in this list and all silently absent, which is why searching
+// goes through Bash here. Check the list against a real dispatch before adding to it.
 const TOOLS = "Read, Bash, WebFetch, WebSearch, Skill, Agent";
 
 const AGENTS_DIR = "agents";
@@ -55,8 +54,8 @@ for (const entry of readdirSync("lenses/skills", { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     if (!existsSync(`lenses/skills/${entry.name}/SKILL.md`)) continue;
 
-    // The generic agent below claims this name, and it is written last, so a lens
-    // called `lens` would lose its own agent without a word.
+    // The generic agent below takes this name and is written last, so a lens called
+    // `lens` would silently get the generic agent instead of its own.
     if (entry.name === "lens") {
         console.error("a lens cannot be named `lens`: the generic dispatch agent has that name");
         process.exit(1);

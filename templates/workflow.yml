@@ -10,8 +10,8 @@ jobs:
         # Twelve lenses on a small diff take around 15 minutes; a large one takes longer.
         timeout-minutes: 60
         permissions:
-            # resolveReviewThread is gated on repository write access, which
-            # pull-requests: write does not give. With contents: read the review still
+            # resolveReviewThread requires repository write access, which
+            # pull-requests: write does not grant. With contents: read the review still
             # posts and lists the threads it would have closed.
             contents: write
             pull-requests: write

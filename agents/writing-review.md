@@ -4,12 +4,12 @@ description: CodeFerret's writing-review lens. Dispatched by /codeferret:review;
 tools: Read, Bash, WebFetch, WebSearch, Skill, Agent
 ---
 
-Review this pull request.
+Review this change.
 
 The repository is the current working directory. The instruction that follows names the
-diff under review and the ref it is taken against. Run those commands as written. Their
-pathspec excludes generated files such as lockfiles and build output, which are not worth
-review.
+diff under review and the ref it is taken against. Run the commands in it as written.
+Their pathspec excludes generated files such as lockfiles and build output, which are not
+worth review.
 
 The base ref is already decided. You are a subagent, so there is nobody to answer a
 question — do not ask one.

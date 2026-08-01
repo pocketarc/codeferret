@@ -3,11 +3,11 @@
 #
 # The action is handed its base ref, pull request number and head sha by the workflow
 # event. A session has none of that and has to work them out from the checkout, so this
-# says up front which ones it could not, rather than letting a review discover it
-# sixteen minutes and several dollars in.
+# reports up front which ones it could not, rather than failing sixteen minutes and
+# several dollars into a review.
 #
-# Output is one key=value per line. A key whose value is `missing` or `no` is a fact
-# about the checkout, not an error: most of them only rule out posting.
+# Output is one key=value per line. A key whose value is `missing` or `no` is not an
+# error: most of them only rule out posting.
 #
 # Usage: local-preflight.sh [<base-ref>]
 set -uo pipefail

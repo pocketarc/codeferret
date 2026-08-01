@@ -12,9 +12,14 @@ orchestrator session  ──dispatch──>  one subagent per lens (parallel)
        └──merge──> findings.json ──anchor check──> one PR review
 ```
 
-A run is one CI job, one orchestrator session, and N lens subagents. The orchestrator
-merges the findings. `post-review.ts` checks which findings GitHub can anchor, then
-posts the review.
+A run is one orchestrator and N lens subagents. The orchestrator merges the findings.
+`post-review.ts` checks which findings GitHub can anchor, then posts the review.
+
+There are two ways in, and they share everything below the dispatch. The action runs the
+orchestrator as `claude -p` in a CI job. `/codeferret:review` runs it in the Claude Code
+session you are already sitting in, against the branch in front of you. Both render their
+prompts with `build-prompts.sh` and dispatch the same agents. Two things differ: a
+session can also review uncommitted work, and only the action posts a review by itself.
 
 ## Adding a lens
 
@@ -22,7 +27,8 @@ A lens name resolves in one of two places, so you can add a lens to the action o
 single repository.
 
 To add a lens for every repository that uses the action, put the skill under
-`lenses/skills/<name>/` here. It loads namespaced as `codeferret:<name>`.
+`lenses/skills/<name>/` here, then run `bun scripts/build-lens-agents.ts` to give it an
+agent. It loads namespaced as `codeferret:<name>`.
 
 To add a lens for one repository only, put the skill under that repository's own
 `.claude/skills/<name>/`. It loads under its bare name.
@@ -52,14 +58,21 @@ the code it runs, and that code should not change between runs.
 
 | File | Role |
 |---|---|
-| `../action.yml` | The composite action: its inputs, and the three steps of a run. |
-| `../lenses/` | The bundled skills, packaged as a Claude Code plugin. |
-| `lens-brief.md` | The per-lens prompt template. `__SKILL__`, `__BASE__`, and `__SCHEMA__` are substituted. |
+| `../action.yml` | The composite action: its inputs, and the steps of a run. |
+| `../.claude-plugin/` | The plugin and marketplace manifests. The repository root is the plugin. |
+| `../commands/` | `/codeferret:review` and `/codeferret:install-workflow`. |
+| `../agents/` | One agent per bundled lens, and a generic one for a lens that is not bundled. Generated. |
+| `../lenses/skills/` | The bundled skills, one directory per lens. |
+| `lens-brief.md` | The half of a lens's prompt that never varies, and the body of every agent. `__SKILL_LINE__` and `__SCHEMA__` are substituted. |
+| `lens-dispatch.md` | The half that does: which diff to read. `__BASE__`, `__RANGE__`, and `__PATHSPEC__` are substituted. |
 | `lens-schema.json` | The shape each lens returns. Prompted but not enforced, because subagents do not inherit `--json-schema`. |
 | `orchestrator.md` | The orchestrator's prompt template. |
 | `merged-schema.json` | The shape the orchestrator returns. Enforced, because a script parses it. |
 | `build-prompts.sh` | Assembles the run's plugin and the orchestrator prompt. |
+| `local-preflight.sh` | Works out from the checkout what the workflow event would otherwise supply. |
+| `defaults/` | The `lenses` and `exclude-paths` defaults as plain lists, for a session that cannot read a YAML default. |
 | `extract-findings.ts` | Reads the merged findings out of the run log. |
+| `check-findings.ts` | Checks those findings against the shape `post-review.ts` reads. |
 | `post-review.ts` | Anchors the findings against the diff, then posts the review. |
 
 ## Why it is built this way
@@ -170,10 +183,35 @@ invisible at twenty.
 **MCP servers are disabled.** `--strict-mcp-config` with no config file disables them.
 They added roughly 28k tokens per session, and a diff review uses nothing they provide.
 
-**The run's plugin is assembled in `RUNNER_TEMP`, not in the repository under review.**
-Each lens subagent needs the base ref in its prompt, so agent definitions are per-run
-and cannot ship pre-built. Building them outside the workspace also leaves the calling
-repository's tree untouched.
+**A lens agent ships pre-built. Only its diff is per-run.** What changes between runs is
+the base ref and the pathspec, and both travel in the message the orchestrator sends. What
+does not change — which skill to load, the output schema, report-do-not-repair — is the
+agent's own system prompt, so `agents/` is rendered once by `scripts/build-lens-agents.ts`
+and checked in. That split is what lets a session run the same lenses the action does:
+Claude Code loads a plugin's agents when the session starts, and nothing can add more
+halfway through.
+
+**The action still assembles its plugin in `RUNNER_TEMP`, not in the repository under
+review.** It copies in only the lenses named for that run, so an unrequested lens has no
+agent to dispatch and no skill to load, which is a second lock on the `lenses` input
+besides the list in the prompt. Building it outside the workspace also leaves the calling
+repository's tree untouched. A session skips all of this: it has the plugin installed
+already.
+
+**A bundled lens's `description` is rewritten.** Upstream wrote each one to win an
+invocation: `writing-review` asks to be used "proactively whenever writing, reviewing, or
+rewriting text". That is right for a skill somebody installed deliberately and wrong for
+twelve that arrived inside a code review tool. Once the plugin is installed, those
+descriptions put a lens in front of the model during unrelated work. `prepare-skill.ts`
+replaces them all, and nothing downstream reads them, because a lens agent is told which
+skill to load by name.
+
+**A lens agent names the tools it gets rather than subtracting from the default set.**
+Naming them leaves out every MCP tool, which a diff review has no use for and which
+`--strict-mcp-config` already removes for the action. The catch is that a name Claude Code
+does not recognise is dropped in silence, so the list has to be checked against a real
+dispatch whenever it changes: `Grep`, `Glob`, and `TodoWrite` were all in the list, none
+of them reached the agent, and nothing said so.
 
 ## Using the action in another repository
 

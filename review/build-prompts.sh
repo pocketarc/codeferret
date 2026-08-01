@@ -9,7 +9,7 @@
 # Lens names arrive on stdin, one per line.
 #
 # Set PROMPTS_ONLY=1 to render the prompts and skip building the plugin. A Claude Code
-# session already has the lenses loaded, so it needs the prompts and nothing else.
+# session already has the lenses loaded, so only the prompts are left to build.
 #
 # Usage: build-prompts.sh <base-ref> <action-path> <plugin-out-dir> <workspace> [<lenses-file>]
 set -euo pipefail
@@ -39,7 +39,7 @@ if [ -z "$PROMPTS_ONLY" ]; then
     mkdir -p "$PLUGIN/.claude-plugin" "$PLUGIN/agents" "$PLUGIN/skills"
 
     # The shipped manifest points `skills` at the repository's own layout, which is not
-    # this one. All the run plugin needs from it is a name to namespace by.
+    # this one. Only the name matters here.
     printf '{"name": "%s", "version": "0.0.0", "description": "CodeFerret run plugin."}\n' \
         "$NAMESPACE" >"$PLUGIN/.claude-plugin/plugin.json"
 fi
@@ -77,9 +77,8 @@ for lens in "${LENSES[@]}"; do
             exit 1
         fi
 
-        # Only what was asked for goes into the plugin. A lens with no agent and no
-        # skill in there cannot be dispatched even by mistake, which is a guarantee the
-        # `lenses` input is worth having on top of the list below.
+        # Only what was asked for goes into the plugin. The list below is only a prompt;
+        # a lens whose agent and skill are both absent cannot be dispatched at all.
         if [ -z "$PROMPTS_ONLY" ]; then
             cp "$ACTION/agents/$lens.md" "$PLUGIN/agents/$lens.md"
             cp -R "$ACTION/lenses/skills/$lens" "$PLUGIN/skills/$lens"
@@ -116,17 +115,17 @@ for lens in "${LENSES[@]}"; do
 done
 
 # A two-dot range against a commit diffs the working tree, so uncommitted work is in
-# scope; three dots against HEAD is committed work alone. The action only ever reviews
-# what is pushed, but a session is usually looking at a branch that is still being
-# written.
+# scope; a three-dot range against HEAD covers committed work alone. The action only
+# ever reviews what is pushed, but a session is usually looking at a branch that is
+# still being written.
 if [ -n "${INCLUDE_WORKING_TREE:-}" ]; then
     RANGE="$BASE"
 else
     RANGE="$BASE...HEAD"
 fi
 
-# Indent the dispatch prompt so it reads as a block inside the orchestrator's prompt,
-# leaving blank lines free of trailing whitespace.
+# Indent the dispatch prompt so it sits as a block inside the orchestrator's prompt.
+# Matching `^.` rather than `^` keeps blank lines free of trailing whitespace.
 sed -e "s|__BASE__|$BASE|g" -e "s|__RANGE__|$RANGE|g" -e "s|__PATHSPEC__|$PATHSPEC|g" \
     "$ACTION/review/lens-dispatch.md" |
     sed -e 's|^.|    &|' >"$BUILD/dispatch.txt"

@@ -5,12 +5,13 @@
  * `name` becomes the local directory name: one plugin means one namespace, and more
  * than one upstream ships a skill called `security-review`.
  *
- * `user-invocable: false` is removed. A skill carrying it never registers as a skill,
- * and a lens subagent loads its skill by name.
+ * `user-invocable: false` is removed, which keeps `/codeferret:<lens>` available for
+ * running one lens by hand. On 2.1.220 the flag hides the slash menu entry and nothing
+ * else: the skill still registers, and the model still sees it.
  *
- * `description` is replaced. Upstream wrote it to win the skill an invocation —
+ * `description` is replaced. Upstream wrote it to win the skill an invocation:
  * writing-review asks to be used "proactively whenever writing, reviewing, or
- * rewriting text" — which is right for a skill somebody installed on purpose and wrong
+ * rewriting text". That is right for a skill somebody installed on purpose and wrong
  * for twelve that arrived together inside a code review tool. Left alone, installing
  * CodeFerret means a lens fires while you are drafting a blog post. A lens agent is
  * told which skill to load by name, so nothing downstream reads this.

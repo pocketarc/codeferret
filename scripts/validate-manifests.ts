@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Parse every manifest the two front doors depend on, and check its shape.
+ * Parse every manifest the action and the plugin depend on, and check its shape.
  *
  * GitHub validates workflow syntax when you push, but it does not validate an action
  * manifest until a run tries to load it. A composite action with a YAML error
@@ -103,9 +103,9 @@ if (manifest) {
     console.log(`✔ ${manifestFile} — plugin '${manifest.name}' ${manifest.version}`);
 }
 
-// build-prompts.sh hardcodes the namespace it builds every `codeferret:<lens>` dispatch
-// from. If that drifts from the manifest, every one of them names an agent that is not
-// there.
+// build-prompts.sh hardcodes the namespace for every `codeferret:<lens>` dispatch it
+// builds. If that drifts from the manifest, every dispatch names an agent that does not
+// exist.
 const buildScript = await Bun.file("review/build-prompts.sh").text();
 const hardcoded = buildScript.match(/^NAMESPACE=(\S+)$/m)?.[1];
 
@@ -172,14 +172,15 @@ for (const entry of readdirSync("lenses/skills", { withFileTypes: true })) {
         continue;
     }
 
-    // A skill carrying this flag never registers as a skill, leaving its lens agent
-    // with nothing to load.
+    // The flag hides the skill from the slash menu, which costs `/codeferret:<lens>` and
+    // buys nothing: on 2.1.220 the skill still registers and the model still sees it.
     if (/^user-invocable:\s*false\s*$/m.test(text)) {
-        fail(skillFile, "has `user-invocable: false`, so it will not register as a skill");
+        fail(skillFile, "has `user-invocable: false`, which only hides `/codeferret:" + entry.name + "`");
     }
 
-    // Upstream descriptions ask to be invoked; twelve of them arriving inside a code
-    // review tool would fire during unrelated work. prepare-skill.ts rewrites them.
+    // Upstream descriptions are written to get the skill invoked; twelve of them inside
+    // a code review tool would fire lenses during unrelated work. prepare-skill.ts
+    // rewrites them.
     if (!text.includes(`description: CodeFerret review lens '${entry.name}'`)) {
         fail(skillFile, `description is not scoped — run: bun scripts/prepare-skill.ts ${skillFile} ${entry.name}`);
     }
@@ -213,8 +214,8 @@ for (const lens of entries(action?.inputs?.lenses?.default)) {
 }
 
 // A session cannot read a YAML default, so these lists exist for it to cat. action.yml
-// stays the documented one. Comparing entries rather than text keeps a reindent of the
-// block scalar from failing the build over a non-difference.
+// stays the documented default. Entries are compared rather than text, so reindenting
+// the block scalar does not fail the build over a non-difference.
 for (const [input, file] of [
     ["lenses", "review/defaults/lenses.txt"],
     ["exclude-paths", "review/defaults/exclude-paths.txt"],
@@ -229,9 +230,8 @@ for (const [input, file] of [
     }
 }
 
-
-// agents/ is generated from review/lens-brief.md, and re-rendering it is the only thing
-// that notices an edit somebody made to a generated file by hand.
+// agents/ is generated from review/lens-brief.md, and re-rendering it is the only way
+// to catch a hand edit to a generated file.
 const agents = Bun.spawnSync(["bun", "scripts/build-lens-agents.ts", "--check"]);
 process.stdout.write(new TextDecoder().decode(agents.stdout));
 
@@ -257,8 +257,8 @@ const workflowFiles = readdirSync(".github/workflows")
     .filter((entry) => entry.endsWith(".yml") || entry.endsWith(".yaml"))
     .map((entry) => `.github/workflows/${entry}`);
 
-// The template /codeferret:install-workflow writes sits outside .github/, so nothing
-// else — here or on GitHub — would ever parse it.
+// The template that /codeferret:install-workflow writes sits outside .github/, so
+// nothing else parses it, here or on GitHub.
 const template = "templates/workflow.yml";
 if (existsSync(template)) workflowFiles.push(template);
 
@@ -271,8 +271,9 @@ for (const file of workflowFiles) {
     else console.log(`✔ ${file} — jobs: ${jobs.join(", ")}`);
 }
 
-// The workflow this repository runs on itself says `uses: ./`. Shipping that shape to
-// somebody else's repository gives them a workflow that resolves to their own checkout.
+// The workflow this repository runs on itself has `uses: ./`. Shipping that shape to
+// somebody else's repository would give them a workflow that resolves to their own
+// checkout.
 if (existsSync(template) && !/uses:\s*pocketarc\/codeferret@/.test(await Bun.file(template).text())) {
     fail(template, "does not use pocketarc/codeferret@<ref>, so it would not run anywhere else");
 }

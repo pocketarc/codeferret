@@ -3,11 +3,11 @@ description: Review this repository's diff through CodeFerret's review lenses.
 argument-hint: "[base-ref] [lens…]"
 ---
 
-Review this repository's diff through several review lenses at once and print what they
-find. Work through the steps in order.
+Review this repository's diff through several lenses at once and print what they find.
+Work through the steps in order.
 
-`$ARGUMENTS` holds what the user typed. Its first word, if there is one, is the ref to
-diff against; anything after that names the lenses to run. Both are optional.
+`$ARGUMENTS` holds what the user typed. Its first word is the ref to diff against;
+anything after that names the lenses to run. Both are optional.
 
 Throughout, `<plugin>` is `${CLAUDE_PLUGIN_ROOT}`, and `<git-dir>`, `<base>`, `<head>`
 and the rest come from step 1. Substitute them yourself rather than relying on a shell
@@ -28,14 +28,14 @@ Stop, and say which line stopped you, when:
 - `head=none` — this repository has no commits yet.
 - `base_resolves=no` — name the ref that failed. When `base=none` there was nothing to
   infer one from, so ask for it: `/codeferret:review origin/main`. Otherwise the ref is
-  simply not in this checkout, and `git fetch origin` usually settles it.
+  not in this checkout, and `git fetch origin` usually settles it.
 - `shallow=yes` — a shallow clone has no merge base to diff against. `git fetch
-  --unshallow` fixes it, and it goes to the network, so ask first.
+  --unshallow` fixes it, but the fetch goes to the network, so ask first.
 
 Carry on, but say so, when:
 
 - `bun=missing` — the findings cannot be checked or posted, and everything else works.
-  Bun installs from https://bun.sh.
+  Install Bun from https://bun.sh.
 - `gh=missing` or `gh=unauthenticated` — nothing can be posted, and the base ref falls
   back to the repository's default branch rather than a pull request's.
 
@@ -50,10 +50,10 @@ files are uncommitted and ask which the user wants:
 
 ## 3. Settle the lenses
 
-Lenses named in `$ARGUMENTS` win. Otherwise read `<plugin>/review/defaults/lenses.txt`,
-which is the set the action runs.
+Use the lenses named in `$ARGUMENTS`. Otherwise read
+`<plugin>/review/defaults/lenses.txt`, which is the set the action runs.
 
-Before dispatching, say how many lenses are about to run and that twelve of them take
+Before dispatching, say how many lenses are about to run, and that twelve lenses take
 around 15 minutes and cost several dollars on Opus. Let the user stop you there.
 
 ## 4. Build the prompts
@@ -65,7 +65,7 @@ printf '<one lens per line>\n' | \
   bash "<plugin>/review/build-prompts.sh" <base> "<plugin>" "<git-dir>/codeferret/run" "<repo root>"
 ```
 
-Reviewing uncommitted work as well: pass `merge_base` as `<base>` and add
+To review uncommitted work as well, pass `merge_base` as `<base>` and add
 `INCLUDE_WORKING_TREE=1` to that environment.
 
 When `pr` is a number and `gh=ok`, collect what has already been said on that pull
@@ -78,9 +78,9 @@ GITHUB_TOKEN="$(gh auth token)" \
       "<git-dir>/codeferret/run/build/existing.json" "$(gh api user --jq .login)"
 ```
 
-Run it after building the prompts, which writes an empty file in its place. A failure
-here is worth a mention and nothing more: an empty file costs duplicate comments, where
-stopping costs the whole review.
+Run it after building the prompts. `build-prompts.sh` creates that directory and puts an
+empty placeholder in the file. A failure here is worth a mention and nothing more: an
+empty file costs duplicate comments, where stopping costs the whole review.
 
 ## 5. Run the review
 
@@ -88,7 +88,7 @@ Read `<git-dir>/codeferret/run/build/orchestrator.txt` and follow it exactly. It
 prompt the action gives its own orchestrator, so it already says how to dispatch, how to
 merge, and what to account for.
 
-Two things it leaves out, because a GitHub Actions run settles them elsewhere:
+Three things it leaves out, because a GitHub Actions run settles them elsewhere:
 
 - Pass `model: opus` on every Agent call, unless the user asked for something else. The
   action runs its lenses on Opus and the findings are worth what the model is.
@@ -103,8 +103,8 @@ Two things it leaves out, because a GitHub Actions run settles them elsewhere:
 bun "<plugin>/review/check-findings.ts" "<git-dir>/codeferret/findings-<head>.json"
 ```
 
-Correct the file and check it again if it reports a problem. Do not print findings that
-did not pass.
+If the check reports a problem, correct the file and check it again. Do not print
+findings that did not pass.
 
 ## 6. Print what they found
 
@@ -125,16 +125,16 @@ conspicuous a defect is rather than how much it matters. Both are in the finding
 for anyone who wants them.
 
 Close with the summary, and then the lenses: name every lens whose `ok` is false and say
-what it did. A lens that returned nothing is more likely broken than satisfied, and this
-is the only place that shows.
+what happened. A lens that returned nothing is more likely broken than satisfied, and
+nothing else in the output says so.
 
-Finally, say where the findings file is, and offer to work through the findings.
+Finally, say where the findings file is, and offer to work through them.
 
 ## 7. Offer to post it
 
 Only when `pr` is a number, `gh=ok`, `pushed=yes` and `dirty=0`. Otherwise name whichever
 of those is not true and leave it: comments are anchored to a commit GitHub holds, so a
-review posted from work GitHub has never seen lands on the wrong lines or on none.
+review of work that GitHub has never seen lands on the wrong lines, or on none.
 
 Ask before posting. It writes to a pull request other people are reading.
 
