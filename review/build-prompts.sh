@@ -8,8 +8,8 @@
 #
 # Lens names arrive on stdin, one per line.
 #
-# Set PROMPTS_ONLY=1 to render the prompts and skip building the plugin. A Claude Code
-# session already has the lenses loaded, so only the prompts are left to build.
+# Set RESOLVE_THREADS=0 where the review posts under somebody's own account rather than
+# CodeFerret's, which is every run outside CI.
 #
 # Usage: build-prompts.sh <base-ref> <action-path> <plugin-out-dir> <workspace> [<lenses-file>]
 set -euo pipefail
@@ -21,7 +21,7 @@ WORKSPACE=${4:?missing workspace}
 LENSES_FILE=${5:-}
 
 BUILD="$PLUGIN/build"
-PROMPTS_ONLY=${PROMPTS_ONLY:-}
+RESOLVE_THREADS=${RESOLVE_THREADS:-1}
 
 # The base ref arrives from a workflow input or from whatever the caller typed, and it
 # reaches a prompt that tells a lens to run `git log <base>..HEAD`. Git refs cannot hold
@@ -47,17 +47,14 @@ if ! grep -q "\"name\"[[:space:]]*:[[:space:]]*\"$NAMESPACE\"" "$MANIFEST"; then
 fi
 
 rm -rf "$PLUGIN"
-mkdir -p "$BUILD"
 
-if [ -z "$PROMPTS_ONLY" ]; then
-    # Agents and skills must share one plugin to share a namespace.
-    mkdir -p "$PLUGIN/.claude-plugin" "$PLUGIN/agents" "$PLUGIN/skills"
+# Agents and skills must share one plugin to share a namespace.
+mkdir -p "$BUILD" "$PLUGIN/.claude-plugin" "$PLUGIN/agents" "$PLUGIN/skills"
 
-    # The shipped manifest points `skills` at the repository's own layout, which is not
-    # this one. Only the name matters here.
-    printf '{"name": "%s", "version": "0.0.0", "description": "CodeFerret run plugin."}\n' \
-        "$NAMESPACE" >"$PLUGIN/.claude-plugin/plugin.json"
-fi
+# The shipped manifest points `skills` at the repository's own layout, which is not this
+# one. Only the name matters here.
+printf '{"name": "%s", "version": "0.0.0", "description": "CodeFerret run plugin."}\n' \
+    "$NAMESPACE" >"$PLUGIN/.claude-plugin/plugin.json"
 
 LENSES=()
 while IFS= read -r lens; do
@@ -110,18 +107,14 @@ for lens in "${LENSES[@]}"; do
 
         # Only what was asked for goes into the plugin. The list below is only a prompt;
         # a lens whose agent and skill are both absent cannot be dispatched at all.
-        if [ -z "$PROMPTS_ONLY" ]; then
-            cp "$ACTION/agents/$lens.md" "$PLUGIN/agents/$lens.md"
-            cp -R "$ACTION/lenses/skills/$lens" "$PLUGIN/skills/$lens"
-        fi
+        cp "$ACTION/agents/$lens.md" "$PLUGIN/agents/$lens.md"
+        cp -R "$ACTION/lenses/skills/$lens" "$PLUGIN/skills/$lens"
 
         printf -- '- `%s:%s`\n' "$NAMESPACE" "$lens" >>"$BUILD/lens-list.txt"
     elif [ -f "$WORKSPACE/.claude/skills/$lens/SKILL.md" ]; then
         # A lens the action does not bundle has no agent of its own, so the generic one
         # takes the skill name at dispatch instead.
-        if [ -z "$PROMPTS_ONLY" ]; then
-            cp "$ACTION/agents/lens.md" "$PLUGIN/agents/lens.md"
-        fi
+        cp "$ACTION/agents/lens.md" "$PLUGIN/agents/lens.md"
 
         # Name the lens on the line too. Two of these would otherwise be the same entry
         # twice, and lens_health could not say which one came back empty.
@@ -196,10 +189,21 @@ sed -e "s|__BASE__|$(sed_escape "$BASE")|g" \
     -e "/__DISPATCH__/d" \
     "$ACTION/review/orchestrator.md" >"$BUILD/orchestrator.txt"
 
+# Only CodeFerret's own account can tell its threads from a person's. Anywhere else the
+# review posts as whoever ran it, and closing a thread would take their words off the
+# page along with everyone else's.
+if [ "$RESOLVE_THREADS" = "0" ]; then
+    cat >>"$BUILD/orchestrator.txt" <<'NO_RESOLVE'
+
+One correction to STEP 4: leave `resolve` empty and close nothing. This run comments
+under a person's own account rather than CodeFerret's, so `mine` marks their threads as
+well as yours and there is no way to tell them apart. Still say in `notes` which threads
+you would have closed and why.
+NO_RESOLVE
+fi
+
 [ -f "$BUILD/existing.json" ] || printf '{"existing": []}\n' >"$BUILD/existing.json"
 
 echo "built ${#LENSES[@]} lens(es): ${LENSES[*]}"
-if [ -z "$PROMPTS_ONLY" ]; then
-    echo "  plugin: $PLUGIN"
-fi
+echo "  plugin: $PLUGIN"
 echo "  prompt: $BUILD/orchestrator.txt"

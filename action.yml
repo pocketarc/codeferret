@@ -194,58 +194,33 @@ runs:
               echo "pr=${PR_NUMBER:-$DEFAULT_PR}" >>"$GITHUB_OUTPUT"
               echo "head=${HEAD_SHA:-$DEFAULT_HEAD}" >>"$GITHUB_OUTPUT"
 
-        - name: Assemble the lens plugin and prompts
-          shell: bash
-          env:
-              LENSES: ${{ inputs.lenses }}
-              BASE: ${{ steps.target.outputs.base }}
-              EXCLUDE_PATHS: ${{ inputs.exclude-paths }}
-          run: |
-              bash "$GITHUB_ACTION_PATH/review/build-prompts.sh" \
-                  "$BASE" \
-                  "$GITHUB_ACTION_PATH" \
-                  "$RUNNER_TEMP/codeferret" \
-                  "$GITHUB_WORKSPACE" \
-                  <<<"$LENSES"
-
-        - name: Collect comments from earlier runs
-          if: steps.target.outputs.pr != ''
-          shell: bash
-          env:
-              GITHUB_TOKEN: ${{ inputs.github-token }}
-              GITHUB_REPOSITORY: ${{ github.repository }}
-              PREFIX: ${{ inputs.command-prefix }}
-              PR: ${{ steps.target.outputs.pr }}
-          run: |
-              $PREFIX bun "$GITHUB_ACTION_PATH/review/fetch-existing.ts" \
-                  "$PR" "$RUNNER_TEMP/codeferret/build/existing.json" || true
-
+        # review/run.sh is what /codeferret:review runs too. A review is one sequence of
+        # steps, and keeping one copy of it is the only thing that stops the two drifting.
         - name: Run the review
           id: review
           shell: bash
           env:
               CLAUDE_CODE_OAUTH_TOKEN: ${{ inputs.claude-code-oauth-token }}
+              GITHUB_TOKEN: ${{ inputs.github-token }}
+              GITHUB_REPOSITORY: ${{ github.repository }}
               PREFIX: ${{ inputs.command-prefix }}
               MODEL: ${{ inputs.model }}
+              LENSES: ${{ inputs.lenses }}
+              EXCLUDE_PATHS: ${{ inputs.exclude-paths }}
+              BASE: ${{ steps.target.outputs.base }}
+              PR: ${{ steps.target.outputs.pr }}
+              # A disposable runner is what bypassPermissions is for, and a classifier
+              # that refused a lens mid-review would narrow it for the price of a full
+              # one. On somebody's own machine /codeferret:review passes `auto` instead.
+              PERMISSION_MODE: bypassPermissions
           run: |
               out="$RUNNER_TEMP/codeferret/build"
 
-              $PREFIX claude -p "$(cat "$out/orchestrator.txt")" \
-                  --model "$MODEL" \
-                  --output-format json \
-                  --json-schema "$(cat "$GITHUB_ACTION_PATH/review/merged-schema.json")" \
-                  --permission-mode bypassPermissions \
-                  --strict-mcp-config \
-                  --no-session-persistence \
-                  --disallowed-tools Edit Write NotebookEdit \
-                  --plugin-dir "$RUNNER_TEMP/codeferret" \
-                  >"$out/run.json"
-
-              $PREFIX bun "$GITHUB_ACTION_PATH/review/extract-findings.ts" \
-                  "$out/run.json" "$out/findings.json"
-
-              $PREFIX bun "$GITHUB_ACTION_PATH/review/check-findings.ts" \
-                  "$out/findings.json"
+              bash "$GITHUB_ACTION_PATH/review/run.sh" \
+                  "$BASE" \
+                  "$GITHUB_ACTION_PATH" \
+                  "$RUNNER_TEMP/codeferret" \
+                  "$GITHUB_WORKSPACE"
 
               echo "findings-file=$out/findings.json" >>"$GITHUB_OUTPUT"
               echo "findings-count=$(cat "$out/findings-count")" >>"$GITHUB_OUTPUT"
@@ -261,6 +236,11 @@ runs:
                   printf '| Cost | $%s |\n' "$(cat "$out/cost-usd")"
                   printf '| Output tokens | %s |\n' "$(cat "$out/output-tokens")"
                   printf '| Wall clock | %s min |\n' "$(( $(cat "$out/duration-ms") / 60000 ))"
+
+                  denied=$(cat "$out/permission-denials")
+                  if [ "$denied" != "0" ]; then
+                      printf '\n> %s tool call(s) were refused, so a lens reviewed less than it appears to.\n' "$denied"
+                  fi
               } >>"$GITHUB_STEP_SUMMARY"
 
         - name: Post the review

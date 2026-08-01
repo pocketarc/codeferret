@@ -64,9 +64,19 @@ const costUsd =
     last.total_cost_usd ?? Object.values(models).reduce((total, m) => total + (m.costUSD ?? 0), 0);
 const durationMs = last.duration_ms ?? 0;
 
+// A permission mode that refuses something a lens needed narrows the review without
+// narrowing anything a reader can see. Same argument as lens_health: it becomes a
+// number, or it becomes silence.
+const denials: Array<{ tool_name?: string; tool_input?: { command?: string } }> = Array.isArray(
+    last.permission_denials,
+)
+    ? last.permission_denials
+    : [];
+
 await Bun.write(join(dir, "cost-usd"), costUsd.toFixed(2));
 await Bun.write(join(dir, "output-tokens"), String(outputTokens));
 await Bun.write(join(dir, "duration-ms"), String(durationMs));
+await Bun.write(join(dir, "permission-denials"), String(denials.length));
 
 const health = structured.lens_health ?? [];
 const broken = health.filter((h: { ok?: boolean }) => h.ok === false);
@@ -88,4 +98,12 @@ for (const h of health) {
 
 if (broken.length > 0) {
     console.log(`\n${broken.length} lens(es) did not report normally; the review is less complete than it looks.`);
+}
+
+if (denials.length > 0) {
+    console.log(`\n${denials.length} tool call(s) were refused by the permission mode:`);
+    for (const d of denials) {
+        console.log(`  ${d.tool_name ?? "?"}: ${d.tool_input?.command ?? JSON.stringify(d.tool_input).slice(0, 120)}`);
+    }
+    console.log("A lens that could not run what it needed reviewed less than it appears to.");
 }

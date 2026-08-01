@@ -3,17 +3,18 @@ description: Review this repository's diff through CodeFerret's review lenses.
 argument-hint: "[base-ref] [lens…]"
 ---
 
-Review this repository's diff through several lenses at once and print what they find.
-Work through the steps in order.
+Review this repository's diff and print what the lenses find. Work through the steps in
+order.
 
 `$ARGUMENTS` holds what the user typed: a ref to diff against, then the lenses to run.
 Both parts are optional, so decide by looking. A word is a lens when a directory of that
 name sits under `<plugin>/lenses/skills/` or `.claude/skills/`, and the base ref
 otherwise. `/codeferret:review caveman-review` names a lens, not a ref.
 
-Throughout, `<plugin>` is `${CLAUDE_PLUGIN_ROOT}`, and `<git-dir>`, `<base>`, `<head>`
-and the rest come from step 1. Substitute them yourself rather than relying on a shell
-variable: each command runs in its own shell, so nothing you export survives.
+Throughout, `<plugin>` is `${CLAUDE_PLUGIN_ROOT}`, and `<git-dir>`, `<toplevel>`,
+`<base>`, `<head>` and `<pr>` come from step 1. Substitute them yourself rather than
+relying on a shell variable: each command runs in its own shell, so nothing you export
+survives.
 
 ## 1. Find out what this checkout supports
 
@@ -28,18 +29,17 @@ Stop, and say which line stopped you, when:
 - `plugin=missing` — the plugin root did not resolve, so nothing below will work.
 - `repo=missing` — this is not a git repository.
 - `head=none` — this repository has no commits yet.
+- `bun=missing` — the review cannot read its own findings back. Install Bun from
+  https://bun.sh.
 - `base_resolves=no` — name the ref that failed. When `base=none` there was nothing to
   infer one from, so ask for it: `/codeferret:review origin/main`. Otherwise the ref is
   not in this checkout, and `git fetch origin` usually settles it.
 - `shallow=yes` — a shallow clone has no merge base to diff against. `git fetch
   --unshallow` fixes it, but the fetch goes to the network, so ask first.
 
-Carry on, but say so, when:
-
-- `bun=missing` — the findings cannot be checked or posted, and everything else works.
-  Install Bun from https://bun.sh.
-- `gh=missing` or `gh=unauthenticated` — nothing can be posted, and the base ref falls
-  back to the repository's default branch rather than a pull request's.
+Carry on, but say so, when `gh=missing` or `gh=unauthenticated`: nothing can be posted,
+earlier comments cannot be read so findings already answered will be raised again, and
+the base ref falls back to the default branch rather than a pull request's.
 
 ## 2. Settle what is under review
 
@@ -55,74 +55,54 @@ untracked file, so a newly written one is invisible to every lens until `git add
 
 ## 3. Settle the lenses
 
-Use the lenses named in `$ARGUMENTS`. Otherwise read
+Use the lenses named in `$ARGUMENTS`. Otherwise use every line of
 `<plugin>/review/defaults/lenses.txt`, which is the set the action runs.
 
-Before dispatching, say how many lenses are about to run, and what that costs: the full
-twelve took 19 minutes and $31.80 on Opus over a 47-file diff, and the bill scales with
-the number of lenses rather than the wait. Let the user stop you there.
+Before running, say how many lenses that is and what it costs: the full twelve took 19
+minutes and $31.80 on Opus over a 47-file diff, and the bill scales with the number of
+lenses rather than the wait. Let the user stop you there.
 
-## 4. Build the prompts
+## 4. Run it
+
+The review runs as its own `claude` process rather than in this session. It reads a diff,
+and pull request comments, written by whoever opened them; this session holds the user's
+editor, shell and MCP servers, and there is no reason to introduce the two.
+
+Run it in the background — it takes tens of minutes, which is longer than a foreground
+command is allowed.
 
 ```sh
-cat "<plugin>/review/defaults/lenses.txt" | \
+LENSES="$(cat "<plugin>/review/defaults/lenses.txt")" \
   EXCLUDE_PATHS="$(cat "<plugin>/review/defaults/exclude-paths.txt")" \
-  PROMPTS_ONLY=1 \
-  bash "<plugin>/review/build-prompts.sh" <base> "<plugin>" "<git-dir>/codeferret/run" <toplevel>
+  MODEL=opus \
+  PERMISSION_MODE=auto \
+  RESOLVE_THREADS=0 \
+  PR=<pr, or leave unset when there is none> \
+  OWN_LOGIN="$(gh api user --jq .login)" \
+  GITHUB_TOKEN="$(gh auth token)" \
+  GITHUB_REPOSITORY="$(gh repo view --json nameWithOwner --jq .nameWithOwner)" \
+  bash "<plugin>/review/run.sh" <base> "<plugin>" "<git-dir>/codeferret/run" <toplevel>
 ```
 
-`<toplevel>` is the working tree, which is where `.claude/skills/` and `REVIEW.md` live.
-Passing the git dir instead drops a repository's own lens and its standards without
-saying anything.
-
-When the user named lenses, swap the `cat` for `printf 'one\nper\nline\n'`. Do not retype
-the default list: it is twelve names you have already read, and a typo there is a lens
-that silently does not run.
+Set `LENSES` to the user's lenses instead when they named any, one per line.
 
 To review uncommitted work as well, pass `merge_base` as `<base>` and add
-`INCLUDE_WORKING_TREE=1` to that environment.
+`INCLUDE_WORKING_TREE=1`.
 
-When `pr` is a number and `gh=ok`, collect what has already been said on that pull
-request, so the review does not raise what somebody has already answered:
+Leave the `PR`, `OWN_LOGIN`, `GITHUB_TOKEN` and `GITHUB_REPOSITORY` lines out entirely
+when there is no open pull request or `gh` is unavailable. They are what lets the review
+skip a finding somebody has already answered.
 
-```sh
-GITHUB_TOKEN="$(gh auth token)" \
-  GITHUB_REPOSITORY="$(gh repo view --json nameWithOwner --jq .nameWithOwner)" \
-  bun "<plugin>/review/fetch-existing.ts" <pr> \
-      "<git-dir>/codeferret/run/build/existing.json" "$(gh api user --jq .login)"
-```
+`PERMISSION_MODE=auto` lets a lens run the reads it needs and refuses the rest. The
+action uses `bypassPermissions` because a runner is disposable and this machine is not.
 
-Run it after building the prompts. `build-prompts.sh` creates that directory and puts an
-empty placeholder in the file. A failure here is worth a mention and nothing more: an
-empty file costs duplicate comments, where stopping costs the whole review.
+Everything the run writes lands in `<git-dir>/codeferret/run/build/`, and the findings in
+`findings.json` beside `run.json`.
 
-## 5. Run the review
+## 5. Print what they found
 
-Read `<git-dir>/codeferret/run/build/orchestrator.txt` and follow it exactly. It is the
-prompt the action gives its own orchestrator, so it already says how to dispatch, how to
-merge, and what to account for.
-
-Three things it leaves out, because a GitHub Actions run settles them elsewhere:
-
-- Pass `model: opus` on every Agent call, unless the user asked for something else. The
-  action runs its lenses on Opus and the findings are worth what the model is.
-- Leave `resolve` empty, whatever step 4 of that prompt says. On a runner CodeFerret
-  comments under its own account and can tell its threads from a human's. Here it
-  comments as the user, so it cannot, and closing someone's thread takes their words off
-  the page.
-- Its result is a JSON object. Write that object to
-  `<git-dir>/codeferret/findings-<head>.json` instead of printing it, then check it:
-
-```sh
-bun "<plugin>/review/check-findings.ts" "<git-dir>/codeferret/findings-<head>.json"
-```
-
-If the check reports a problem, correct the file and check it again. Do not print
-findings that did not pass.
-
-## 6. Print what they found
-
-Group the findings by file, in diff order, and by line within a file:
+Read `<git-dir>/codeferret/run/build/findings.json`. Group its findings by file, in diff
+order, and by line within a file:
 
 ```
 path/to/file.ts:42 — One-line title
@@ -140,11 +120,13 @@ for anyone who wants them.
 
 Close with the summary, and then the lenses: name every lens whose `ok` is false and say
 what happened. A lens that returned nothing is more likely broken than satisfied, and
-nothing else in the output says so.
+nothing else in the output says so. Say the same about anything in
+`build/permission-denials` above zero, and about what the run cost, which
+`review/run.sh` prints as it finishes.
 
 Finally, say where the findings file is, and offer to work through them.
 
-## 7. Offer to post it
+## 6. Offer to post it
 
 Only when `pr` is a number, `gh=ok`, `pushed=yes` and `dirty=0`. Otherwise name whichever
 of those is not true and leave it: comments are anchored to a commit GitHub holds, so a
@@ -157,7 +139,7 @@ GITHUB_TOKEN="$(gh auth token)" \
   GITHUB_REPOSITORY="$(gh repo view --json nameWithOwner --jq .nameWithOwner)" \
   EXCLUDE_PATHS="$(cat "<plugin>/review/defaults/exclude-paths.txt")" \
   bun "<plugin>/review/post-review.ts" \
-      "<git-dir>/codeferret/findings-<head>.json" <base> <head> <pr>
+      "<git-dir>/codeferret/run/build/findings.json" <base> <head> <pr>
 ```
 
 `EXCLUDE_PATHS` has to be the list the lenses were given, or a finding can anchor to a

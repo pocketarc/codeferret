@@ -82,31 +82,21 @@ input description shipped once. Quote any string that contains `: `.
 Normally you want `/codeferret:review`. That is what the plugin is for, and it handles
 the base ref, the pathspec, and an uncommitted working tree for you.
 
-Use the sequence below when you need to reproduce what CI does rather than review
-something; these are the commands `action.yml` runs. Disable the installed plugin first
-(`/plugin`), because the plugin `build-prompts.sh` builds is also called `codeferret`,
-and two plugins cannot share a name in one session.
-
-Run it from a checkout of the branch you want reviewed:
+Underneath, both it and the action call `review/run.sh`, so you can run exactly what CI
+runs from a checkout of the branch you want reviewed:
 
 ```sh
-RT=$(mktemp -d)
-printf 'caveman-review\nsentry-security-review\n' \
-  | bash review/build-prompts.sh test/fixture "$PWD" "$RT/codeferret" "$PWD"
-
-claude -p "$(cat "$RT/codeferret/build/orchestrator.txt")" \
-  --model opus --output-format json \
-  --json-schema "$(cat review/merged-schema.json)" \
-  --permission-mode bypassPermissions --strict-mcp-config \
-  --no-session-persistence --disallowed-tools Edit Write NotebookEdit \
-  --plugin-dir "$RT/codeferret" \
-  > "$RT/codeferret/build/run.json"
-
-bun review/extract-findings.ts \
-  "$RT/codeferret/build/run.json" "$RT/codeferret/build/findings.json"
-
-bun review/check-findings.ts "$RT/codeferret/build/findings.json"
+LENSES=$'caveman-review\nsentry-security-review' \
+  bash review/run.sh test/fixture "$PWD" "$(mktemp -d)/codeferret" "$PWD"
 ```
+
+`PERMISSION_MODE` defaults to `bypassPermissions`, which is what CI passes. Pass `auto`
+to run it the way `/codeferret:review` does: a lens gets the reads it needs, anything
+else is refused, and refusals are counted in `build/permission-denials` rather than
+disappearing. The header of `run.sh` lists the rest.
+
+Disable the installed plugin first (`/plugin`), because the plugin `run.sh` builds is
+also called `codeferret`, and two plugins cannot share a name in one session.
 
 Print the review without posting it:
 

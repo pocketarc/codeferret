@@ -15,11 +15,12 @@ orchestrator session  ──dispatch──>  one subagent per lens (parallel)
 A run is one orchestrator and N lens subagents. The orchestrator merges the findings.
 `post-review.ts` checks which findings GitHub can anchor, then posts the review.
 
-There are two ways in, and they share everything below the dispatch. The action runs the
-orchestrator as `claude -p` in a CI job. `/codeferret:review` runs it in the Claude Code
-session you are already sitting in, against the branch in front of you. Both render their
-prompts with `build-prompts.sh` and dispatch the same agents. Two things differ: a
-session can also review uncommitted work, and only the action posts a review by itself.
+There are two ways in, and both call `run.sh`, which is the whole sequence: build the
+prompts, read what has already been said, run the orchestrator, check what comes back.
+The action calls it in a CI job. `/codeferret:review` calls it from a Claude Code session,
+against the branch in front of you. What differs between them are arguments to that
+script — a session reviews uncommitted work if you ask, closes no threads, and runs under
+a permission mode that refuses what a lens has no business doing.
 
 ## Adding a lens
 
@@ -68,6 +69,7 @@ the code it runs, and that code should not change between runs.
 | `lens-schema.json` | The shape each lens returns. Prompted but not enforced, because subagents do not inherit `--json-schema`. |
 | `orchestrator.md` | The orchestrator's prompt template. |
 | `merged-schema.json` | The shape the orchestrator returns. Enforced, because a script parses it. |
+| `run.sh` | One review, start to finish. Both front doors call this. |
 | `build-prompts.sh` | Assembles the run's plugin and the orchestrator prompt. |
 | `local-preflight.sh` | Works out from the checkout what the workflow event would otherwise supply. |
 | `defaults/` | The `lenses` and `exclude-paths` defaults as plain lists, for a session that cannot read a YAML default. |
@@ -197,6 +199,21 @@ agent to dispatch and no skill to load, which is a second lock on the `lenses` i
 besides the list in the prompt. Building it outside the workspace also leaves the calling
 repository's tree untouched. A session skips all of this: it has the plugin installed
 already.
+
+**The orchestrator runs in its own process, never in the session that asked for it.** A
+review reads two things written by whoever opened the pull request: the diff, and every
+comment on it. A Claude Code session holds an editor, a shell, and whatever MCP servers
+its owner has connected — mail, payments, error tracking. Untrusted text and that set of
+tools in one context is the whole of prompt injection, so `run.sh` spends a second
+process keeping them apart. The session reads `findings.json` back and nothing else.
+
+**Which permissions a lens gets is an argument, because a runner and a laptop are not the
+same machine.** CI passes `bypassPermissions`: the runner is disposable, and a classifier
+that refused a lens halfway would quietly narrow a review that cost $30 to produce.
+`/codeferret:review` passes `auto`, which lets a lens run `git diff`, `git log` and `rg`
+and turns down the rest — measured, not assumed. Either way `permission_denials` is
+counted out of the run log and reported, so a mode that starts eating lens commands shows
+up as a number rather than as a thinner review.
 
 **A bundled lens's `description` is rewritten.** Upstream wrote each one to win an
 invocation: `writing-review` asks to be used "proactively whenever writing, reviewing, or
