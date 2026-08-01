@@ -1,5 +1,5 @@
 name: CodeFerret
-description: Review a pull request through several independent review lenses, then post one merged review with inline comments.
+description: Like CodeRabbit, but it uses your Claude subscription, and goes even deeper.
 author: pocketarc
 
 branding:

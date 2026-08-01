@@ -1,6 +1,6 @@
 # CodeFerret
 
-Many lenses. One review.
+Like CodeRabbit, but it uses your Claude subscription, and goes even deeper.
 
 CodeFerret reviews a pull request through several independent code review skills at
 once, then merges their findings into a single review with inline comments. Each

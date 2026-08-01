@@ -2,13 +2,13 @@
     "name": "pocketarc",
     "owner": {
         "name": "pocketarc",
-        "url": "https://github.com/pocketarc"
+        "url": "https://pocketarc.com"
     },
     "plugins": [
         {
             "name": "codeferret",
             "source": "./",
-            "description": "Many lenses. One review. Reviews the diff through several independent review skills at once, then merges what they find.",
+            "description": "Like CodeRabbit, but it uses your Claude subscription, and goes even deeper.",
             "category": "Development",
             "tags": ["code-review", "security-review", "accessibility"]
         }
