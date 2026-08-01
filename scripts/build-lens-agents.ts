@@ -55,6 +55,13 @@ for (const entry of readdirSync("lenses/skills", { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     if (!existsSync(`lenses/skills/${entry.name}/SKILL.md`)) continue;
 
+    // The generic agent below claims this name, and it is written last, so a lens
+    // called `lens` would lose its own agent without a word.
+    if (entry.name === "lens") {
+        console.error("a lens cannot be named `lens`: the generic dispatch agent has that name");
+        process.exit(1);
+    }
+
     wanted.set(
         `${AGENTS_DIR}/${entry.name}.md`,
         agent(
@@ -105,7 +112,11 @@ for (const entry of existsSync(AGENTS_DIR) ? readdirSync(AGENTS_DIR) : []) {
 }
 
 if (problems > 0) {
-    console.error(`\n${problems} problem(s). Run \`bun scripts/build-lens-agents.ts\` to regenerate.`);
+    console.error(
+        check
+            ? "\nRun `bun scripts/build-lens-agents.ts` to regenerate."
+            : "\nThe agents were written. Deal with the files above by hand.",
+    );
     process.exit(1);
 }
 

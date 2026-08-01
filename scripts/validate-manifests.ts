@@ -103,6 +103,16 @@ if (manifest) {
     console.log(`✔ ${manifestFile} — plugin '${manifest.name}' ${manifest.version}`);
 }
 
+// build-prompts.sh hardcodes the namespace it builds every `codeferret:<lens>` dispatch
+// from. If that drifts from the manifest, every one of them names an agent that is not
+// there.
+const buildScript = await Bun.file("review/build-prompts.sh").text();
+const hardcoded = buildScript.match(/^NAMESPACE=(\S+)$/m)?.[1];
+
+if (hardcoded !== namespace) {
+    fail("review/build-prompts.sh", `NAMESPACE is '${hardcoded}', but ${manifestFile} declares '${namespace}'`);
+}
+
 const marketplaceFile = ".claude-plugin/marketplace.json";
 const marketplace = (await parseJson(marketplaceFile)) as {
     name?: string;
@@ -168,6 +178,12 @@ for (const entry of readdirSync("lenses/skills", { withFileTypes: true })) {
         fail(skillFile, "has `user-invocable: false`, so it will not register as a skill");
     }
 
+    // Upstream descriptions ask to be invoked; twelve of them arriving inside a code
+    // review tool would fire during unrelated work. prepare-skill.ts rewrites them.
+    if (!text.includes(`description: CodeFerret review lens '${entry.name}'`)) {
+        fail(skillFile, `description is not scoped — run: bun scripts/prepare-skill.ts ${skillFile} ${entry.name}`);
+    }
+
     const declared = text.match(/^name:\s*(.+)$/m)?.[1]?.trim();
 
     if (!declared) {
@@ -230,24 +246,35 @@ for (const entry of existsSync("commands") ? readdirSync("commands") : []) {
     if (!entry.endsWith(".md")) continue;
 
     const file = `commands/${entry}`;
-    const text = await Bun.file(file).text();
+    const frontmatter = (await Bun.file(file).text()).match(/^---\n([\s\S]*?)\n---\n/)?.[1];
 
-    if (!/^---$/m.test(text)) fail(file, "has no frontmatter");
-    else if (!/^description:\s*\S/m.test(text)) fail(file, "has no `description` in frontmatter");
+    if (frontmatter === undefined) fail(file, "has no frontmatter");
+    else if (!/^description:\s*\S/m.test(frontmatter)) fail(file, "has no `description` in frontmatter");
     else console.log(`✔ ${file}`);
 }
 
-const workflowDir = ".github/workflows";
-for (const entry of readdirSync(workflowDir)) {
-    if (!entry.endsWith(".yml") && !entry.endsWith(".yaml")) continue;
+const workflowFiles = readdirSync(".github/workflows")
+    .filter((entry) => entry.endsWith(".yml") || entry.endsWith(".yaml"))
+    .map((entry) => `.github/workflows/${entry}`);
 
-    const file = `${workflowDir}/${entry}`;
+// The template /codeferret:install-workflow writes sits outside .github/, so nothing
+// else — here or on GitHub — would ever parse it.
+const template = "templates/workflow.yml";
+if (existsSync(template)) workflowFiles.push(template);
+
+for (const file of workflowFiles) {
     const workflow = (await parse(file)) as { jobs?: Record<string, unknown> } | null;
     if (!workflow) continue;
 
     const jobs = Object.keys(workflow.jobs ?? {});
     if (jobs.length === 0) fail(file, "no jobs");
     else console.log(`✔ ${file} — jobs: ${jobs.join(", ")}`);
+}
+
+// The workflow this repository runs on itself says `uses: ./`. Shipping that shape to
+// somebody else's repository gives them a workflow that resolves to their own checkout.
+if (existsSync(template) && !/uses:\s*pocketarc\/codeferret@/.test(await Bun.file(template).text())) {
+    fail(template, "does not use pocketarc/codeferret@<ref>, so it would not run anywhere else");
 }
 
 if (failures > 0) {

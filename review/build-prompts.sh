@@ -35,19 +35,13 @@ rm -rf "$PLUGIN"
 mkdir -p "$BUILD"
 
 if [ -z "$PROMPTS_ONLY" ]; then
+    # Agents and skills must share one plugin to share a namespace.
     mkdir -p "$PLUGIN/.claude-plugin" "$PLUGIN/agents" "$PLUGIN/skills"
 
     # The shipped manifest points `skills` at the repository's own layout, which is not
     # this one. All the run plugin needs from it is a name to namespace by.
     printf '{"name": "%s", "version": "0.0.0", "description": "CodeFerret run plugin."}\n' \
         "$NAMESPACE" >"$PLUGIN/.claude-plugin/plugin.json"
-
-    # Agents and skills must share one plugin to share a namespace.
-    cp -R "$ACTION/agents/." "$PLUGIN/agents/"
-
-    if [ -d "$ACTION/lenses/skills" ]; then
-        cp -R "$ACTION/lenses/skills/." "$PLUGIN/skills/"
-    fi
 fi
 
 LENSES=()
@@ -83,10 +77,22 @@ for lens in "${LENSES[@]}"; do
             exit 1
         fi
 
+        # Only what was asked for goes into the plugin. A lens with no agent and no
+        # skill in there cannot be dispatched even by mistake, which is a guarantee the
+        # `lenses` input is worth having on top of the list below.
+        if [ -z "$PROMPTS_ONLY" ]; then
+            cp "$ACTION/agents/$lens.md" "$PLUGIN/agents/$lens.md"
+            cp -R "$ACTION/lenses/skills/$lens" "$PLUGIN/skills/$lens"
+        fi
+
         printf -- '- `%s:%s`\n' "$NAMESPACE" "$lens" >>"$BUILD/lens-list.txt"
     elif [ -f "$WORKSPACE/.claude/skills/$lens/SKILL.md" ]; then
         # A lens the action does not bundle has no agent of its own, so the generic one
         # takes the skill name at dispatch instead.
+        if [ -z "$PROMPTS_ONLY" ]; then
+            cp "$ACTION/agents/lens.md" "$PLUGIN/agents/lens.md"
+        fi
+
         {
             printf -- '- `%s:lens`\n' "$NAMESPACE"
             printf '  Also tell it: Load the `%s` skill and have at it.\n' "$lens"

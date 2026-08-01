@@ -1,0 +1,23 @@
+name: CodeFerret
+
+on:
+    pull_request:
+        types: [opened, synchronize, ready_for_review, reopened]
+
+jobs:
+    review:
+        runs-on: ubuntu-latest
+        # Twelve lenses on a small diff take around 15 minutes; a large one takes longer.
+        timeout-minutes: 60
+        permissions:
+            # resolveReviewThread is gated on repository write access, which
+            # pull-requests: write does not give. With contents: read the review still
+            # posts and lists the threads it would have closed.
+            contents: write
+            pull-requests: write
+
+        steps:
+            - name: CodeFerret
+              uses: pocketarc/codeferret@v1
+              with:
+                  claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
