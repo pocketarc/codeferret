@@ -36,8 +36,9 @@ inputs:
             Space-separated static analysis tools to run before the review, naming files
             in the action's review/tools/. Their reports go to the `static-analysis`
             lens, which reads each finding against the code and decides which hold, so
-            name that lens in `lenses` as well. A tool that is not installed on the
-            runner records that and is skipped. Empty runs no tools.
+            name that lens in `lenses` as well. A tool runs from the runner's own binary
+            if there is one and a pinned container otherwise; with neither, it records
+            that and is skipped. Empty runs no tools.
         required: false
         default: ''
     exclude-paths:
