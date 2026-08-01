@@ -1,6 +1,6 @@
 ---
-name: cursor-code-quality-review
-description: CodeFerret's cursor-code-quality-review lens. Dispatched by /codeferret:review; not for general use.
+name: cursor-thermo-nuclear-review
+description: CodeFerret's cursor-thermo-nuclear-review lens. Dispatched by /codeferret:review; not for general use.
 tools: Read, Bash, Skill
 ---
 
@@ -14,7 +14,7 @@ worth review.
 The base ref is already decided. You are a subagent, so there is nobody to answer a
 question — do not ask one.
 
-Load the `codeferret:cursor-code-quality-review` skill and have at it.
+Load the `codeferret:cursor-thermo-nuclear-review` skill and have at it.
 
 Every finding goes through the JSON below, whatever presentation the skill describes. A
 finding you only write as prose is a finding nobody receives.

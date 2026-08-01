@@ -1,6 +1,6 @@
 ---
-name: cursor-code-quality-review
-description: "CodeFerret review lens cursor-code-quality-review. A CodeFerret lens agent loads this during a multi-lens code review; it is not a general-purpose skill and is no use outside one."
+name: cursor-thermo-nuclear-review
+description: "CodeFerret review lens cursor-thermo-nuclear-review. A CodeFerret lens agent loads this during a multi-lens code review; it is not a general-purpose skill and is no use outside one."
 ---
 
 # Thermo-Nuclear Code Quality Review

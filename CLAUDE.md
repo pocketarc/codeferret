@@ -151,8 +151,8 @@ the way its author intended:
   which skill to load by name, so nothing downstream reads this.
 - `disable-model-invocation: true` is removed. It leaves a skill reachable only by a
   person typing its slash command, and a lens agent loads its skill through the Skill
-  tool, which is model invocation. `cursor-code-quality-review` shipped with it, and left
-  in it would have cost one lens with nothing to show for it but a healthy-looking run.
+  tool, which is model invocation. `cursor-thermo-nuclear-review` shipped with it, and
+  left in it would have cost one lens with nothing to show for it but a healthy run.
 - `user-invocable: false` is removed, which keeps `/codeferret:<lens>` available for
   running one lens by hand. An earlier version of this note said a skill carrying that
   flag never registers. That is wrong on 2.1.220: it registers, the model still sees it,
