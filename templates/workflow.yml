@@ -4,25 +4,40 @@ on:
     pull_request:
         types: [opened, synchronize, ready_for_review, reopened]
 
-# A push to an open pull request cancels the review already running for it. Without
-# this, three pushes in a row buy three full reviews and you read the last one.
+# Without this, three pushes in a row cost three full reviews and you read the last one.
 concurrency:
     group: codeferret-${{ github.event.pull_request.number }}
     cancel-in-progress: true
 
 jobs:
     review:
-        # A fork's pull request cannot read the secret, so without this gate every
-        # outside contributor gets a failed job that only the maintainer can explain.
-        if: contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
+        # Three conditions, for three different reasons.
+        #
+        # GitHub withholds the secret from a pull request whose branch lives on a fork,
+        # whoever opened it, so a fork's run would fail deep inside the review with an
+        # empty token rather than at the gate. Author association is no substitute: a
+        # collaborator working from their own fork gets no secret either.
+        #
+        # A draft is work its author has marked unfinished, and without the draft test
+        # every push to one costs a full review. The review runs when the author marks
+        # it ready, on the `ready_for_review` event above.
+        #
+        # The association list is the one that limits who may spend the budget. A bot
+        # pushing a branch here is not on it, and would get no secret anyway.
+        if: >-
+            github.event.pull_request.draft == false &&
+            github.event.pull_request.head.repo.full_name == github.repository &&
+            contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
         runs-on: ubuntu-latest
-        # Twelve lenses on a small diff take around 15 minutes; a large one takes longer.
+        # A full set of lenses on a small diff takes around 20 minutes.
         timeout-minutes: 60
         permissions:
-            # resolveReviewThread requires repository write access, which
-            # pull-requests: write does not grant. With contents: read the review still
-            # posts and lists the threads it would have closed.
-            contents: write
+            # The review runs an agent with Bash, so a token that can write contents is a
+            # token that can push. Swap this for `contents: write` to have CodeFerret
+            # resolve finished threads: GitHub rejects `resolveReviewThread` from a token
+            # that cannot write contents, and `pull-requests: write` cannot. On read,
+            # CodeFerret still posts the review and lists the threads it would have closed.
+            contents: read
             pull-requests: write
 
         steps:
@@ -30,3 +45,14 @@ jobs:
               uses: pocketarc/codeferret@v1
               with:
                   claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+
+            # CodeFerret posts only new findings. A finding the orchestrator marked as
+            # already answered is in findings.json and nowhere else, so without this
+            # artifact a mistaken mark costs a real finding and nobody ever knows.
+            - name: Keep the run for inspection
+              if: always()
+              uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+              with:
+                  name: codeferret-run
+                  path: ${{ runner.temp }}/codeferret/build/
+                  retention-days: 14

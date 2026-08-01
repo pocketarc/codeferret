@@ -29,9 +29,9 @@ function problem(where: string, message: string): void {
     problems.push(`${where}: ${message}`);
 }
 
-// Something the schema permits and post-review.ts survives. It still gets said, but the
-// action runs this under `bash -e`, and failing here throws away a review that has
-// already been paid for and posts nothing.
+// A warning is something that is valid under the schema, and that post-review.ts
+// survives. The check still prints it, but the action runs this under `bash -e`, so
+// failing here would throw away a review that has already been paid for and post nothing.
 function warn(where: string, message: string): void {
     warnings.push(`${where}: ${message}`);
 }
@@ -75,8 +75,9 @@ try {
     process.exit(1);
 }
 
-// `null` and `[]` are both valid JSON, so the parse above accepts them and every field
-// access after this throws a stack trace instead of saying what is wrong.
+// `null` and `[]` both survive the parse above. Without this guard, `null` ends the run
+// in a stack trace and `[]` ends it complaining that `findings` is missing, which sends
+// the reader hunting for a field when the whole file is the wrong shape.
 if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     console.error(`${path}: is ${Array.isArray(parsed) ? "an array" : String(parsed)}, not an object`);
     process.exit(1);
@@ -175,13 +176,13 @@ if (merged.lens_health !== undefined) {
     }
 }
 
-for (const w of warnings) console.warn(`! ${w}`);
+for (const w of warnings) console.warn(`WARN ${w}`);
 
 if (problems.length > 0) {
-    for (const p of problems) console.error(`✘ ${p}`);
+    for (const p of problems) console.error(`FAIL ${p}`);
     console.error(`\n${problems.length} problem(s) in ${path}.`);
     process.exit(1);
 }
 
 const noted = warnings.length > 0 ? `, ${warnings.length} worth a look` : "";
-console.log(`✔ ${path} — ${merged.findings.length} finding(s), shape valid${noted}`);
+console.log(`OK ${path}: ${merged.findings.length} finding(s), shape valid${noted}`);

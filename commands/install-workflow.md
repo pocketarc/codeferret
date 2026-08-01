@@ -17,12 +17,16 @@ take from it.
 ## 2. Show the workflow, then write it
 
 Read `<plugin>/templates/workflow.yml` and show it before writing anything. It grants
-`pull-requests: write` and `contents: write`, and the user should see that first.
+`pull-requests: write` and `contents: read`, and the user should see that first.
 
-CodeFerret needs `contents: write` to resolve finished threads, and that is worth a
-sentence: the review agent runs with Bash, so a token that can write contents is a token
-that can push. Dropping to `contents: read` leaves everything else working, and the
-review then lists the threads it would have closed. Offer that.
+`contents: read` is what the template ships, and everything works under it except closing
+a finished thread — the review lists the ones it would have closed instead. Offer the
+upgrade to `contents: write` rather than assuming it, and say what it costs: the review
+agent runs with Bash, so a token that can write contents is a token that can push.
+
+The template pins `pocketarc/codeferret@v1`, which is the last tagged release. This
+plugin follows the default branch instead, so what runs in CI can be a release behind
+what runs in this session. Say so.
 
 Once the user has agreed, write the template to `.github/workflows/codeferret.yml`.
 

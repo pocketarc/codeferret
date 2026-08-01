@@ -3,6 +3,11 @@
 #
 # The plugin is built outside the workspace so the caller's tree stays untouched.
 #
+# This clears the output directory, so anything else that writes into build/ has to run
+# afterwards. fetch-existing.ts is the one that matters: run it first and its file is
+# deleted, the orchestrator reads the empty placeholder written here, and every comment
+# already on the pull request gets posted a second time.
+#
 # EXCLUDE_PATHS (newline-separated globs) becomes a git pathspec on the diff each lens
 # is given, so an excluded file is absent from what they review.
 #
@@ -47,10 +52,35 @@ if ! grep -q "\"name\"[[:space:]]*:[[:space:]]*\"$NAMESPACE\"" "$MANIFEST"; then
     exit 1
 fi
 
+# /codeferret:review has a model paste the git dir into this argument by hand, so the
+# recursive delete below can be pointed at a repository by a substitution that came back
+# empty or truncated. Refuse any path this script did not write itself: the git dir, the
+# working tree and a home directory all exist and none of them carries the marker.
+MARKER="$BUILD/.codeferret-run"
+DECLINE=""
+
+case $PLUGIN in
+/) DECLINE="is the root directory" ;;
+/*) ;;
+*) DECLINE="is not an absolute path" ;;
+esac
+
+if [ -z "$DECLINE" ] && [ -e "$PLUGIN" ] && [ ! -f "$MARKER" ]; then
+    DECLINE="already exists and was not written by this script"
+fi
+
+if [ -n "$DECLINE" ]; then
+    echo "refusing to delete '$PLUGIN': it $DECLINE" >&2
+    exit 1
+fi
+
 rm -rf "$PLUGIN"
 
 # Agents and skills must share one plugin to share a namespace.
 mkdir -p "$BUILD" "$PLUGIN/.claude-plugin" "$PLUGIN/agents" "$PLUGIN/skills"
+
+# Written first, so a run that dies halfway leaves a directory the next run may clear.
+: >"$MARKER"
 
 # The shipped manifest points `skills` at the repository's own layout, which is not this
 # one. Only the name matters here.
@@ -60,7 +90,19 @@ printf '{"name": "%s", "version": "0.0.0", "description": "CodeFerret run plugin
 LENSES=()
 while IFS= read -r lens; do
     lens=$(printf '%s' "$lens" | tr -d '[:space:]')
-    [ -n "$lens" ] && LENSES+=("$lens")
+    [ -z "$lens" ] && continue
+
+    # The name becomes a path component under two search roots, a `cp -R` destination,
+    # and a line of the orchestrator's own prompt. /codeferret:review takes lens names
+    # from whatever the user typed, so none of those can assume it is a plain name.
+    case $lens in
+    .* | *[!A-Za-z0-9._-]*)
+        echo "lens name '$lens' is not a plain name" >&2
+        exit 1
+        ;;
+    esac
+
+    LENSES+=("$lens")
 done < <(if [ -n "$LENSES_FILE" ]; then cat "$LENSES_FILE"; else cat; fi)
 
 if [ "${#LENSES[@]}" -eq 0 ]; then
@@ -72,7 +114,6 @@ fi
 
 # `-- .` first so the excludes attach to a positive pathspec; without it git treats a
 # list of pure exclusions as matching nothing.
-PATHSPEC=""
 PATHSPEC_ARGS=()
 while IFS= read -r glob; do
     glob=$(printf '%s' "$glob" | tr -d '[:space:]')
@@ -90,13 +131,9 @@ while IFS= read -r glob; do
 
     if [ "${#PATHSPEC_ARGS[@]}" -eq 0 ]; then
         PATHSPEC_ARGS+=("--" ".")
-        PATHSPEC="-- ."
     fi
     PATHSPEC_ARGS+=(":(exclude)$glob")
-    PATHSPEC="$PATHSPEC ':(exclude)$glob'"
 done <<<"${EXCLUDE_PATHS:-}"
-
-printf '%s' "$PATHSPEC" >"$BUILD/pathspec.txt"
 
 for lens in "${LENSES[@]}"; do
     if [ -f "$ACTION/lenses/skills/$lens/SKILL.md" ]; then
@@ -106,8 +143,8 @@ for lens in "${LENSES[@]}"; do
             exit 1
         fi
 
-        # Only what was asked for goes into the plugin. The list below is only a prompt;
-        # a lens whose agent and skill are both absent cannot be dispatched at all.
+        # The list below is only a prompt; a lens whose agent and skill are both absent
+        # cannot be dispatched at all.
         cp "$ACTION/agents/$lens.md" "$PLUGIN/agents/$lens.md"
         cp -R "$ACTION/lenses/skills/$lens" "$PLUGIN/skills/$lens"
 
@@ -117,8 +154,8 @@ for lens in "${LENSES[@]}"; do
         # takes the skill name at dispatch instead.
         cp "$ACTION/agents/lens.md" "$PLUGIN/agents/lens.md"
 
-        # Name the lens on the line too. Two of these would otherwise be the same entry
-        # twice, and lens_health could not say which one came back empty.
+        # Without the lens name, two unbundled lenses produce identical entries, and
+        # lens_health could not say which one came back empty.
         {
             printf -- '- `%s:lens`, running the `%s` lens. Call it `%s` in `lens_health`.\n' \
                 "$NAMESPACE" "$lens" "$lens"
@@ -168,8 +205,8 @@ fi
 
 # The pathspec runs to several hundred characters. Handing it to the orchestrator as
 # text means it retypes the whole thing once per lens, and a copy that loses an entry
-# puts lockfiles and build output back into the diff without anything noticing. A script
-# is copied by name instead.
+# puts lockfiles and build output back into the diff without anything noticing. The
+# orchestrator passes the script's path instead, so nothing retypes the pathspec.
 #
 # The arguments go beside the script rather than into it, NUL-separated. Writing them
 # into the script body made every one of them shell, and every lens is told to run it.
@@ -218,7 +255,11 @@ you would have closed and why.
 NO_RESOLVE
 fi
 
-[ -f "$BUILD/existing.json" ] || printf '{"existing": []}\n' >"$BUILD/existing.json"
+# The orchestrator reads this file whether or not there was a pull request to fetch
+# comments from, and fetch-existing.ts overwrites it when there was. The keys have to be
+# the ones STEP 3 names: a branch with no pull request is the ordinary case in a session,
+# and an object with neither key reaches the step that decides what to suppress.
+printf '{"threads": [], "conversation": []}\n' >"$BUILD/existing.json"
 
 echo "built ${#LENSES[@]} lens(es): ${LENSES[*]}"
 echo "  plugin: $PLUGIN"

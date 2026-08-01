@@ -3,8 +3,8 @@
 #
 # The action is handed its base ref, pull request number and head sha by the workflow
 # event. A session has none of that and has to work them out from the checkout, so this
-# reports up front which ones it could not, rather than failing sixteen minutes and
-# several dollars into a review.
+# reports up front which ones it could not, rather than failing tens of minutes and tens
+# of dollars into a review.
 #
 # Output is one key=value per line. A key whose value is `missing` or `no` is not an
 # error: most of them only rule out posting.
@@ -18,10 +18,18 @@ say() {
     printf '%s=%s\n' "$1" "$2"
 }
 
-if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -f "$CLAUDE_PLUGIN_ROOT/review/build-prompts.sh" ]; then
-    say plugin ok
+# This script lives in the plugin, so a root that did not resolve means bash never found
+# it and none of this ran. What can go wrong is the caller holding a different path from
+# the one it is reading, which every later command would then be built from — so say where
+# the script actually is and let the caller compare.
+ACTUAL_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+
+if [ -z "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+    say plugin "unset:$ACTUAL_ROOT"
+elif [ ! -f "$CLAUDE_PLUGIN_ROOT/review/build-prompts.sh" ]; then
+    say plugin "mismatch:$ACTUAL_ROOT"
 else
-    say plugin missing
+    say plugin ok
 fi
 
 if command -v bun >/dev/null 2>&1; then
@@ -71,9 +79,9 @@ else
 fi
 
 # A shallow clone has no merge base to diff against, and deepening it is a network
-# fetch, which is the caller's decision to make rather than this script's. Ask git
-# rather than looking for the marker file: in a linked worktree it lives in the common
-# dir, not the one --absolute-git-dir reports.
+# fetch, which is the caller's decision to make rather than this script's. Ask git; the
+# marker file lives in the common dir in a linked worktree, not the one
+# --absolute-git-dir reports.
 if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
     say shallow yes
 else
@@ -85,27 +93,42 @@ fi
 say dirty "$(git status --porcelain --untracked-files=no | wc -l | tr -d '[:space:]')"
 say untracked "$(git ls-files --others --exclude-standard | wc -l | tr -d '[:space:]')"
 
-if [ -n "$BRANCH" ] &&
-    git rev-parse --verify --quiet "origin/$BRANCH" >/dev/null &&
-    [ "$HEAD_SHA" = "$(git rev-parse "origin/$BRANCH")" ]; then
-    say pushed yes
-else
-    say pushed no
-fi
-
 PR=""
 PR_BASE=""
+PR_HEAD=""
 
 if command -v gh >/dev/null 2>&1; then
     # `gh pr view` answers with the closed or merged pull request a branch used to have,
     # which would offer to post a review onto something nobody is reading any more.
-    PR_LINE=$(gh pr view --json number,baseRefName,state \
-        --jq 'select(.state == "OPEN") | [.number, .baseRefName] | @tsv' 2>/dev/null || true)
+    PR_LINE=$(gh pr view --json number,baseRefName,headRefOid,state \
+        --jq 'select(.state == "OPEN") | [.number, .baseRefName, .headRefOid] | @tsv' 2>/dev/null || true)
     PR=$(printf '%s' "$PR_LINE" | cut -f1)
     PR_BASE=$(printf '%s' "$PR_LINE" | cut -f2)
+    PR_HEAD=$(printf '%s' "$PR_LINE" | cut -f3)
 fi
 
 say pr "${PR:-none}"
+
+# The question is whether GitHub holds this commit, because that is what a review's
+# comments anchor to, so ask the pull request when there is one. `origin/<branch>` only
+# moves on a fetch or on a push from this clone: it says no to work pushed from another
+# machine or the web UI, and yes to a commit a force-push elsewhere has already taken
+# away, which posts a review that 422s on every comment at once.
+REMOTE_HEAD=""
+
+if [ -n "$PR_HEAD" ]; then
+    REMOTE_HEAD="$PR_HEAD"
+elif UPSTREAM=$(git rev-parse --verify --quiet '@{upstream}' 2>/dev/null); then
+    REMOTE_HEAD="$UPSTREAM"
+elif [ -n "$BRANCH" ]; then
+    REMOTE_HEAD=$(git rev-parse --verify --quiet "origin/$BRANCH" 2>/dev/null || true)
+fi
+
+if [ -n "$REMOTE_HEAD" ] && [ "$HEAD_SHA" = "$REMOTE_HEAD" ]; then
+    say pushed yes
+else
+    say pushed no
+fi
 
 DEFAULT=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
 DEFAULT=${DEFAULT#origin/}
@@ -136,7 +159,12 @@ say base "$BASE"
 
 if git rev-parse --verify --quiet "$BASE" >/dev/null; then
     say base_resolves yes
-    say merge_base "$(git merge-base "$BASE" HEAD 2>/dev/null || true)"
+
+    # Unrelated histories have no merge base: a fresh repository with a remote added
+    # afterwards, or a grafted, shallow or filtered clone. Reporting that as an empty
+    # value gets it passed straight through as a base ref, and `git diff` given no range
+    # compares the working tree against the index instead of against the branch point.
+    say merge_base "$(git merge-base "$BASE" HEAD 2>/dev/null || echo none)"
 else
     say base_resolves no
 fi

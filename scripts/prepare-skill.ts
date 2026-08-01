@@ -58,6 +58,15 @@ const beforeModel = lines.length;
 lines = lines.filter((l) => !/^disable-model-invocation:\s*true\s*$/.test(l));
 const strippedModelInvocation = lines.length < beforeModel;
 
+// `argument-hint` is the text Claude Code shows beside the slash command as you type it,
+// and upstream wrote it for somebody invoking the skill by hand: accessibility-review's
+// hint is a Figma URL. A lens agent loads the skill by name and passes no argument, so
+// nothing ever supplies what the hint asks for — the same mismatch the description
+// rewrite below closes.
+const beforeHint = lines.length;
+lines = lines.filter((l) => !/^argument-hint:/.test(l));
+const strippedHint = lines.length < beforeHint;
+
 // Quoted, and free of `: `, because an unquoted colon-space ends the value and leaves
 // the rest as a key. Claude Code's parser is lenient enough to hide that; Bun.YAML is
 // not, and neither is anything else that reads a skill.
@@ -79,7 +88,17 @@ if (descriptionIndex === -1) {
     lines.splice(descriptionIndex, end - descriptionIndex, scoped);
 }
 
-await Bun.write(path, `---\n${lines.join("\n")}\n---\n${body}`);
+// A skill's body can point at a sibling file that was never vendored with it: only the
+// skill's own directory is copied, so `../../CONNECTORS.md` resolves to nothing here. A
+// lens that follows the link spends a turn on a missing file and learns nothing.
+const before = body;
+const cleaned = body
+    .split("\n")
+    .filter((line) => !/\]\((\.\.\/)+[^)]+\)/.test(line))
+    .join("\n");
+const strippedLinks = cleaned !== before;
+
+await Bun.write(path, `---\n${lines.join("\n")}\n---\n${cleaned}`);
 
 if (previous === null) {
     console.log(`  added missing skill name '${name}'`);
@@ -88,11 +107,19 @@ if (previous === null) {
 }
 
 if (strippedInvocable) {
-    console.log("  removed 'user-invocable: false' so the skill registers by name");
+    console.log(`  removed 'user-invocable: false' so '/codeferret:${name}' stays in the slash menu`);
 }
 
 if (strippedModelInvocation) {
     console.log("  removed 'disable-model-invocation: true' so a lens agent can load it");
+}
+
+if (strippedHint) {
+    console.log("  removed 'argument-hint', which a dispatched lens has no argument for");
+}
+
+if (strippedLinks) {
+    console.log("  removed a link reaching above the skill directory, which was not vendored");
 }
 
 console.log(`  scoped the description to '${name}' as a CodeFerret lens`);

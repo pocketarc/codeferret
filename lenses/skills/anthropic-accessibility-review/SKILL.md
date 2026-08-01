@@ -1,12 +1,10 @@
 ---
 name: anthropic-accessibility-review
 description: "CodeFerret review lens anthropic-accessibility-review. A CodeFerret lens agent loads this during a multi-lens code review; it is not a general-purpose skill and is no use outside one."
-argument-hint: "<Figma URL, URL, or description>"
 ---
 
 # /accessibility-review
 
-> If you see unfamiliar placeholders or need to check which tools are connected, see [CONNECTORS.md](../../CONNECTORS.md).
 
 Audit a design or page for WCAG 2.1 AA accessibility compliance.
 

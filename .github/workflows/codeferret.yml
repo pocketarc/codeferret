@@ -4,9 +4,20 @@ on:
     pull_request:
         types: [opened, synchronize, ready_for_review, reopened]
 
+# Without this, three pushes in a row cost three full reviews and you read the last one.
+# The fixture branches here are pushed repeatedly, so it adds up faster than elsewhere.
+concurrency:
+    group: codeferret-${{ github.event.pull_request.number }}
+    cancel-in-progress: true
+
 jobs:
     review:
-        if: contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
+        # The reason for each of these is in templates/workflow.yml, the same gate
+        # written out for people installing CodeFerret.
+        if: >-
+            github.event.pull_request.draft == false &&
+            github.event.pull_request.head.repo.full_name == github.repository &&
+            contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
         runs-on: ubuntu-latest
         timeout-minutes: 60
         permissions:

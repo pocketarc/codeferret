@@ -16,10 +16,15 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
+// Every path below is repository-relative, and whoever has just edited this script is
+// standing in scripts/. Without this the run dies on a raw ENOENT instead of checking
+// anything.
+process.chdir(join(import.meta.dir, ".."));
+
 let failures = 0;
 
 function fail(file: string, message: string): void {
-    console.error(`✘ ${file}: ${message}`);
+    console.error(`FAIL ${file}: ${message}`);
     failures += 1;
 }
 
@@ -71,9 +76,7 @@ if (action) {
         }
     }
 
-    console.log(
-        `✔ action.yml — ${Object.keys(action.inputs ?? {}).length} inputs, ${steps.length} steps`,
-    );
+    console.log(`OK action.yml: ${Object.keys(action.inputs ?? {}).length} inputs, ${steps.length} steps`);
 }
 
 const manifestFile = ".claude-plugin/plugin.json";
@@ -100,7 +103,7 @@ if (manifest) {
         fail(manifestFile, `\`skills\` points at '${skillsPath}', which is not a directory`);
     }
 
-    console.log(`✔ ${manifestFile} — plugin '${manifest.name}' ${manifest.version}`);
+    console.log(`OK ${manifestFile}: plugin '${manifest.name}' ${manifest.version}`);
 }
 
 // build-prompts.sh hardcodes the namespace for every `codeferret:<lens>` dispatch it
@@ -109,8 +112,9 @@ if (manifest) {
 const buildScript = await Bun.file("review/build-prompts.sh").text();
 const hardcoded = buildScript.match(/^NAMESPACE=(\S+)$/m)?.[1];
 
-// Only worth comparing when the manifest parsed. Otherwise this reports a namespace
-// mismatch and sends the reader to the wrong file.
+// Without the `manifest &&`, a plugin.json that failed to parse turns up here as a
+// namespace mismatch, and the failure gets filed against build-prompts.sh instead of the
+// broken manifest.
 if (manifest && hardcoded !== namespace) {
     fail("review/build-prompts.sh", `NAMESPACE is '${hardcoded}', but ${manifestFile} declares '${namespace}'`);
 }
@@ -154,7 +158,7 @@ if (marketplace) {
         }
     }
 
-    console.log(`✔ ${marketplaceFile} — marketplace '${marketplace.name}', ${entries.length} plugin(s)`);
+    console.log(`OK ${marketplaceFile}: marketplace '${marketplace.name}', ${entries.length} plugin(s)`);
 }
 
 // One plugin, one namespace: a duplicated name, or one that disagrees with its
@@ -225,7 +229,7 @@ for (const entry of readdirSync("lenses/skills", { withFileTypes: true })) {
     }
 }
 
-console.log(`✔ lenses/skills — ${seenSkillNames.size} bundled lens(es), names unique`);
+console.log(`OK lenses/skills: ${seenSkillNames.size} bundled lens(es), names unique`);
 
 function entries(value: unknown): string[] {
     return String(value ?? "")
@@ -271,7 +275,7 @@ for (const [input, file] of [
     if (documented.join("\n") !== shipped.join("\n")) {
         fail(file, `does not match the \`${input}\` default in action.yml`);
     } else {
-        console.log(`✔ ${file} — ${shipped.length} entries, matching action.yml`);
+        console.log(`OK ${file}: ${shipped.length} entries, matching action.yml`);
     }
 }
 
@@ -285,10 +289,9 @@ if (agents.exitCode !== 0) {
     failures += 1;
 }
 
-// A command with no description never surfaces in the slash menu, so the feature ships
-// and nobody can find it.
-// Regexes are what let an unquoted `pull-requests: write` through once already, and a
-// command whose frontmatter will not parse never reaches the slash menu at all.
+// A command whose frontmatter will not parse, or that has no description, never shows up
+// in the slash menu: the feature ships and nobody can find it. Parse the YAML rather than
+// matching it, for the reason the lens loop gives above.
 async function checkFrontmatter(file: string, required: string[]): Promise<void> {
     const block = (await Bun.file(file).text()).match(/^---\n([\s\S]*?)\n---\n/)?.[1];
 
@@ -307,7 +310,7 @@ async function checkFrontmatter(file: string, required: string[]): Promise<void>
 
     const missing = required.filter((key) => !parsed?.[key]);
     if (missing.length > 0) fail(file, `frontmatter has no ${missing.map((k) => `\`${k}\``).join(", ")}`);
-    else console.log(`✔ ${file}`);
+    else console.log(`OK ${file}`);
 }
 
 for (const entry of existsSync("commands") ? readdirSync("commands") : []) {
@@ -333,7 +336,7 @@ for (const file of workflowFiles) {
 
     const jobs = Object.keys(workflow.jobs ?? {});
     if (jobs.length === 0) fail(file, "no jobs");
-    else console.log(`✔ ${file} — jobs: ${jobs.join(", ")}`);
+    else console.log(`OK ${file}: jobs ${jobs.join(", ")}`);
 }
 
 // The workflow this repository runs on itself has `uses: ./`. Shipping that shape to

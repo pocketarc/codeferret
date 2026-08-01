@@ -3,7 +3,7 @@
 CodeFerret reviews a diff through several independent code review skills ("lenses") at
 once, then merges their findings into one review with inline comments.
 
-It ships through two front doors. As a GitHub composite action (`action.yml`) it reviews
+There are two ways to run it. As a GitHub composite action (`action.yml`) it reviews
 a pull request and posts the review. As a Claude Code plugin it adds `/codeferret:review`,
 which reviews the branch in front of you, in the session you are already in. The
 repository root is the plugin root: `.claude-plugin/` holds both manifests, `commands/`
@@ -87,8 +87,13 @@ runs from a checkout of the branch you want reviewed:
 
 ```sh
 LENSES=$'caveman-review\nsentry-security-review' \
+  EXCLUDE_PATHS="$(cat review/defaults/exclude-paths.txt)" \
   bash review/run.sh test/fixture "$PWD" "$(mktemp -d)/codeferret" "$PWD"
 ```
+
+`run.sh` has no default for `EXCLUDE_PATHS`, so leaving it out gives the lenses no
+exclusions at all rather than CI's, and they spend the run's budget reading lockfiles and
+build output.
 
 `PERMISSION_MODE` defaults to `bypassPermissions`, which is what CI passes. Pass `auto`
 to run it the way `/codeferret:review` does: a lens gets the reads it needs, anything
@@ -102,9 +107,13 @@ Print the review without posting it:
 
 ```sh
 DRY_RUN=1 GITHUB_TOKEN=x GITHUB_REPOSITORY=pocketarc/codeferret \
+  EXCLUDE_PATHS="$(cat review/defaults/exclude-paths.txt)" \
   bun review/post-review.ts "$RT/codeferret/build/findings.json" \
   test/fixture test/fixture-defects 1
 ```
+
+Give it the same `EXCLUDE_PATHS` the lenses were given, or a finding can anchor to a file
+they never saw.
 
 Budget roughly 15 minutes and several dollars per run on Opus with three lenses. Lenses
 run in parallel, so adding more of them costs money rather than time: the full twelve on
@@ -143,12 +152,9 @@ the way its author intended:
 
 - `name` becomes the local directory name. All bundled lenses share one plugin
   namespace, and more than one upstream ships a skill called `security-review`.
-- `description` is replaced with a scoped one. Upstream wrote it to win an invocation:
-  `writing-review` asks to be used "proactively whenever writing, reviewing, or rewriting
-  text". That is fine for a skill somebody installed on purpose and wrong for twelve that
-  arrive inside a code review tool. Once the plugin is installed, those descriptions put
-  a lens in front of the model while you are drafting a blog post. A lens agent is told
-  which skill to load by name, so nothing downstream reads this.
+- `description` is replaced with a scoped one, so that twelve lenses do not put
+  themselves in front of the model during unrelated work. Nothing downstream reads it: a
+  lens agent is told which skill to load by name. `review/README.md` has the argument.
 - `disable-model-invocation: true` is removed. It leaves a skill reachable only by a
   person typing its slash command, and a lens agent loads its skill through the Skill
   tool, which is model invocation. `cursor-thermo-nuclear-review` shipped with it, and
@@ -182,8 +188,8 @@ Plugin users see it in `/plugin`, and it is the only version they are shown.
 
 Plugin users are not on tags at all. `/plugin marketplace add pocketarc/codeferret`
 follows this repository's default branch, and `/plugin update` gives them whatever is on
-it. So `main` is a release channel with no gate in front of it, and a half-finished
-commit reaches them the moment it lands, where an action consumer sees nothing until
+it. So nothing reviews or approves what lands on `main` before plugin users get it: they
+get whatever is there the moment it lands, while an action consumer sees nothing until
 `v1` moves. Keep `main` releasable.
 
 ## Things that will bite you
@@ -207,8 +213,9 @@ commit reaches them the moment it lands, where an action consumer sees nothing u
   print three warnings; a reader who learns to skip that line stops seeing the lens that
   really did die. `lens-brief.md` asks for the reason and the orchestrator checks it
   against the diff. Do not widen this to zero findings with no reason given.
-- **The lens brief must state the base ref.** Without it, some lenses stop and ask which
-  commit to diff against, and nothing can answer in a headless run.
+- **The lens's prompt must state the base ref.** It travels in `review/lens-dispatch.md`;
+  `review/lens-brief.md` only says the ref is already decided. Without it, some lenses
+  stop and ask which commit to diff against, and nothing can answer in a headless run.
 - **Subagents do not inherit `--json-schema`.** Their schema comes from the prompt, so
   do not trust the shape of lens output. Only the orchestrator's output is validated.
 - **`REVIEW.md` goes to `mattpocock-code-review` and to nothing else.** A repository's
@@ -216,7 +223,7 @@ commit reaches them the moment it lands, where an action consumer sees nothing u
   Do not broaden it: giving every lens a whole rulebook pulls them toward the same
   generalist read, and the unique findings come from lenses staying in their own domain.
   The name is `REVIEW.md` and not `CLAUDE.md` because Claude Code auto-loads `CLAUDE.md`
-  into every session, which would reach all ten lenses.
+  into every session, which would reach every lens.
 - **Do not put severity or lens agreement into a comment.** Both are in `findings.json`
   and severity orders the findings, but neither is displayed, and that is deliberate. A
   lens grades severity without the context that decides it, so the label mainly licenses
@@ -233,15 +240,15 @@ commit reaches them the moment it lands, where an action consumer sees nothing u
   artifact, and the lens reports how many it was given. Keep the distinction if you
   touch either rule: bound the input, never the findings.
 - **Lenses must not modify the working tree.** Some review skills offer to fix what they
-  find, and ten lenses read the same checkout at once, so one edit corrupts every other
+  find, and every lens reads the same checkout at once, so one edit corrupts every other
   lens's review. `Edit`, `Write`, and `NotebookEdit` are kept away from them twice over:
   the action denies them at the CLI, and the agents in `agents/` name the tools they get
-  and leave those three out. `Agent` is left out for the same reason: the action's denial
-  reaches a nested subagent and an agent's tool list does not, so a lens that spawned a
+  and leave those three out. `Agent` is left out for the same reason: the CLI denial
+  applies to a nested subagent and an agent's tool list does not, so a lens that spawned a
   general-purpose one in a session would hand it `Write` and undo the whole arrangement.
   `review/lens-brief.md` then tells each lens to report rather than repair. Keep all of
   it. None of it is a guarantee: a lens has `Bash`, so `sed -i` is a command away, and
-  only the instruction stands between it and the tree.
+  nothing stops it but the instruction not to.
 - **No lens is handed a way to reach the network.** `WebFetch` and `WebSearch` are left
   out of the tool list on purpose. A lens reads a diff written by whoever opened the pull
   request, and `Bash` hands it `CLAUDE_CODE_OAUTH_TOKEN` from the environment it inherits
@@ -249,11 +256,16 @@ commit reaches them the moment it lands, where an action consumer sees nothing u
   secret into losing one. Do not add either back to let a lens look something up. This
   raises the cost of exfiltration rather than preventing it — `Bash` still has `curl` —
   so do not read it as a boundary that holds.
-- **A tool name Claude Code does not know is dropped in silence.** The agents name their
-  tools. `Grep`, `Glob`, and `TodoWrite` were all in that list, none of them reached a
-  dispatched lens, and nothing said so: the lenses were searching through `Bash` alone.
-  Check the list against a real dispatch when you change it, with
-  `claude -p '...' --plugin-dir .` and a prompt asking an agent to name its tools.
+- **A tool an agent asks for is not necessarily a tool it gets, and nothing says so.**
+  `Grep`, `Glob`, and `TodoWrite` were all in the lens tool list and none of them reached
+  a dispatched lens. An earlier note here blamed unrecognised names; that was wrong, and
+  the experiment below is what corrected it. `TodoWrite` is indeed not a name on 2.1.220,
+  but `Grep` and `Glob` are — they are refused when the same agent asks for `Bash`, which
+  every lens needs for `git diff`. The two are mutually exclusive by design, and the
+  harness says so only to the agent: "Grep is not available in this session — search file
+  contents with grep via the Bash tool instead." Check the list against a real dispatch
+  when you change it, with `claude -p '...' --plugin-dir .` and a prompt asking an agent
+  to name the tools it has.
 - **Suppression can hide a real finding.** Every push re-runs the whole review, and the
   orchestrator marks each finding `new`, `already-reported`, or `declined` so that only
   new ones get posted. It reads every comment on the pull request, whoever wrote it, and

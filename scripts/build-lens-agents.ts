@@ -2,10 +2,10 @@
 /**
  * Render the lens agent definitions the plugin ships.
  *
- * A plugin's agents load when the session starts, so they cannot be written per run the
- * way the action writes them into RUNNER_TEMP. The base ref and the pathspec are what
- * varies per run, and both live in the dispatch prompt (review/lens-dispatch.md)
- * instead. That leaves the skill name and the output schema, which are fixed per lens.
+ * A plugin's agents load when the session starts, so an agent cannot contain anything
+ * that varies per run. The base ref and the pathspec both do, so both go in the dispatch
+ * prompt (review/lens-dispatch.md) instead. That leaves the skill name and the output
+ * schema, which are fixed per lens.
  *
  * Everything in agents/ is generated from review/lens-brief.md by this script. Run it
  * after editing that file; validate-manifests.ts re-runs it with --check and fails when
@@ -15,17 +15,26 @@
  */
 
 import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+
+// Every path below is repository-relative, and whoever has just edited this script is
+// standing in scripts/. Without this the run dies on a raw ENOENT or writes an agents/
+// tree wherever the caller happened to be.
+process.chdir(join(import.meta.dir, ".."));
 
 // No Write, Edit or NotebookEdit, matching what the action denies at the CLI. Naming the
 // set rather than subtracting from it also leaves out every MCP tool, which a diff
 // review has no use for and which the action drops with --strict-mcp-config.
 //
-// A tool name Claude Code does not recognise is dropped with no warning. `Grep`, `Glob`
-// and `TodoWrite` were all in this list and all silently absent, which is why searching
-// goes through Bash here. Check the list against a real dispatch before adding to it.
+// On 2.1.220, naming `Bash` in this list means no `Grep` and no `Glob`: call either and
+// the reply is "Grep is not available in this session — search file contents with grep
+// via the Bash tool instead". A lens has to run `git diff`, so it gets `Bash` in any
+// case, and searching goes through Bash as well. Claude Code drops a name it does not
+// recognise at dispatch without a word, which is what becomes of `Task`, the subagent
+// tool's old name. Check the list against a real dispatch before adding to it.
 //
 // `Agent` is deliberately absent. A lens that spawns a general-purpose subagent hands it
-// the full tool set, `Write` and `Edit` included, and ten lenses share one checkout — so
+// the full tool set, `Write` and `Edit` included, and every lens shares one checkout — so
 // the one thing this list exists to prevent would go through the gap. The action closes
 // it at the CLI; a session has only this list. Some skills fan out into subagents and
 // will do their passes one after another instead.
@@ -53,7 +62,10 @@ const brief = await Bun.file("review/lens-brief.md").text();
 const schema = (await Bun.file("review/lens-schema.json").text()).trim();
 
 function render(skillLine: string): string {
-    return brief.replace("__SKILL_LINE__", skillLine).replace("__SCHEMA__", schema);
+    // Replacer functions, because `replace` reads `$&`, `` $` `` and `$1` in a
+    // replacement *string* as substitutions, and JSON Schema's whole vocabulary is
+    // `$schema`, `$ref`, `$defs`.
+    return brief.replace("__SKILL_LINE__", () => skillLine).replace("__SCHEMA__", () => schema);
 }
 
 function agent(name: string, description: string, body: string): string {
@@ -106,10 +118,10 @@ for (const [path, content] of wanted) {
     const current = existsSync(path) ? await Bun.file(path).text() : null;
 
     if (current === null) {
-        console.error(`✘ ${path} is missing`);
+        console.error(`FAIL ${path} is missing`);
         problems += 1;
     } else if (current !== content) {
-        console.error(`✘ ${path} does not match review/lens-brief.md`);
+        console.error(`FAIL ${path} does not match review/lens-brief.md`);
         problems += 1;
     }
 }
@@ -118,7 +130,10 @@ for (const entry of existsSync(AGENTS_DIR) ? readdirSync(AGENTS_DIR) : []) {
     if (!entry.endsWith(".md")) continue;
     if (wanted.has(`${AGENTS_DIR}/${entry}`)) continue;
 
-    console.error(`✘ ${AGENTS_DIR}/${entry} has no lens behind it — move it to ~/.Trash/`);
+    const lens = entry.replace(/\.md$/, "");
+    console.error(
+        `FAIL ${AGENTS_DIR}/${entry} has no lens behind it. Delete it, or add lenses/skills/${lens}/SKILL.md.`,
+    );
     problems += 1;
 }
 
@@ -131,4 +146,4 @@ if (problems > 0) {
     process.exit(1);
 }
 
-console.log(`✔ ${AGENTS_DIR} — ${wanted.size} agent(s)${check ? " match review/lens-brief.md" : " written"}`);
+console.log(`OK ${AGENTS_DIR}: ${wanted.size} agent(s)${check ? " match review/lens-brief.md" : " written"}`);

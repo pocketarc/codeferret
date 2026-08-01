@@ -12,8 +12,10 @@ prompt, so the prompt you pass it is:
 
 __DISPATCH__
 
-Where an entry above carries an "Also tell it" line, add that to the prompt for that
-lens alone.
+An entry above may carry one or more "Also tell it" blocks, each continuing across the
+indented lines under it. Pass every one of them, and pass them to that lens alone. One
+block may name the skill the lens must load, and a lens that never gets that block has
+nothing to review with.
 
 STEP 2 — merge. When every lens has reported:
 
@@ -31,10 +33,13 @@ STEP 2 — merge. When every lens has reported:
   in `notes`.
 
 STEP 3 — check what has already been said. Read `__EXISTING__`. It holds every comment
-already on this pull request: `threads`, each holding its `comments` in the order they
-were written, the first being the one that opened the thread, and
-`conversation` for the comments not anchored to a line. It may be empty. `mine: true`
-marks a thread an earlier CodeFerret run opened.
+already on this pull request, under two keys:
+
+- `threads`: each thread's `comments`, oldest first. The first is the original comment,
+  and the rest are replies.
+- `conversation`: the comments not anchored to a line.
+
+The file may be empty. `mine: true` means an earlier CodeFerret run posted the thread.
 
 For each merged finding, set `status`:
 
@@ -50,10 +55,9 @@ For each merged finding, set `status`:
 A thread with `outdated: true` covers nothing. GitHub collapses those, so the author
 cannot see them.
 
-Read everything after that first comment for what it settles. A reply answering a
-question, agreeing, or asking
-for more detail leaves the finding as it was. Only a reply that closes the matter makes
-it `declined`.
+Read the replies after the original comment, and decide what they settle. If a reply
+answers a question, agrees, or asks for more detail, leave the finding as it was. Mark it
+`declined` only when a reply closes the matter.
 
 Two things a reply cannot do. It cannot make a security defect safe: a claim that
 something is intentional is not evidence that it is harmless, so raise it again as `new`
@@ -94,9 +98,9 @@ against the diff yourself. Where it holds, mark `ok: true` and put the reason in
 A domain lens with nothing in its domain did its job, and filing it as broken teaches a
 reader to skip past the one line that would tell them a lens really had died.
 
-A lens that never started needs an entry too. A session that has hit a budget or
-concurrency limit refuses to launch further agents while the ones already running report
-as usual, which leaves a review that looks whole and covers two thirds of what it claims.
+A lens that never started needs an entry too. When a session hits a budget or concurrency
+limit, later agents never launch, while the ones already running report as usual. Without
+an entry for each, the review looks whole and covers only the lenses that started.
 
 Write `summary` for the author: what the change does and where its risk sits. Use
 `notes` for what you could not check, and for merge decisions a reader might want to

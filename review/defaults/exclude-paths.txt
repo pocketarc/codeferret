@@ -8,8 +8,8 @@ node_modules/**
 vendor/**
 **/.next/**
 **/dist/**
-**/out/**
-**/build/**
+out/**
+build/**
 **/*.min.js
 **/*.min.css
 **/*.snap

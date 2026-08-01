@@ -64,6 +64,7 @@ the code it runs, and that code should not change between runs.
 | `../commands/` | `/codeferret:review` and `/codeferret:install-workflow`. |
 | `../agents/` | One agent per bundled lens, and a generic one for a lens that is not bundled. Generated. |
 | `../lenses/skills/` | The bundled skills, one directory per lens. |
+| `../templates/` | The workflow `/codeferret:install-workflow` writes into a repository. |
 | `lens-brief.md` | The half of a lens's prompt that never varies, and the body of every agent. `__SKILL_LINE__` and `__SCHEMA__` are substituted. |
 | `lens-dispatch.md` | The half that does: which diff to read. `__BASE__`, `__HEAD__`, and `__DIFF_SCRIPT__` are substituted. |
 | `lens-schema.json` | The shape each lens returns. Prompted but not enforced, because subagents do not inherit `--json-schema`. |
@@ -73,7 +74,8 @@ the code it runs, and that code should not change between runs.
 | `tools/` | Static analysis run before the review. Each writes `build/tool-<name>.json`. |
 | `build-prompts.sh` | Assembles the run's plugin and the orchestrator prompt. |
 | `local-preflight.sh` | Works out from the checkout what the workflow event would otherwise supply. |
-| `defaults/` | The `lenses` and `exclude-paths` defaults as plain lists, for a session that cannot read a YAML default. |
+| `defaults/` | The `lenses`, `exclude-paths` and `tools` defaults as plain lists, for a session that cannot read a YAML default. |
+| `fetch-existing.ts` | Reads the discussion already on the pull request, for the orchestrator to match findings against. |
 | `extract-findings.ts` | Reads the merged findings out of the run log. |
 | `check-findings.ts` | Checks those findings against the shape `post-review.ts` reads. |
 | `post-review.ts` | Anchors the findings against the diff, then posts the review. |
@@ -89,8 +91,10 @@ this, and its lens returned zero findings after a complete, correct review. The 
 existed and was discarded. Without that instruction, the failure is silent and looks
 like a clean pass.
 
-**The brief states the base ref.** For some skills, the subagent asks the user which
-commit to diff against. Nothing can answer in a headless run, so the subagent stalls.
+**The lens's prompt states the base ref.** For some skills, the subagent asks the user
+which commit to diff against. Nothing can answer in a headless run, so the subagent
+stalls. `lens-dispatch.md` carries the ref itself; `lens-brief.md` says it is already
+decided and that there is nobody to ask.
 
 **Lenses are prompted with their schema. Only the orchestrator's output is enforced.**
 Subagents do not inherit `--json-schema`. That is fine, because a model reads their
@@ -139,7 +143,7 @@ generalist read, and the differentiated findings come from lenses staying inside
 own domain: on a ten-lens run the RSC boundary violation, the missing index, and the
 keyboard-access failure were each found by exactly one lens. The file is named
 `REVIEW.md` rather than reusing `CLAUDE.md` because Claude Code loads `CLAUDE.md` into
-every session automatically, which would put the conventions in front of all ten lenses
+every session automatically, which would put the conventions in front of every lens
 and defeat the scoping.
 
 **A comment shows the claim and nothing else.** No severity, no lens attribution, no
@@ -169,7 +173,7 @@ quietly empties.
 
 A resolved thread also settles its finding: `resolved: true` marks it `declined` with no
 reading of replies. That makes resolving a thread the way to dismiss a finding for good,
-and it is the gated way — resolving needs write access, where commenting does not.
+and it is the gated way — resolving needs write access, while commenting does not.
 
 **`post-review.ts` anchors the findings.** Whether a line sits inside a diff hunk is
 exact, and a wrong answer is expensive: the review API is atomic, so a single bad anchor
@@ -187,7 +191,8 @@ invisible at twenty.
 They added roughly 28k tokens per session, and a diff review uses nothing they provide.
 
 **A lens agent ships pre-built. Only its diff is per-run.** What changes between runs is
-the base ref and the pathspec, and both travel in the message the orchestrator sends. What
+the base ref and the pathspec, and both reach a lens through the message the orchestrator
+sends — the ref as text, the pathspec as the path to a generated `diff.sh`. What
 does not change — which skill to load, the output schema, report-do-not-repair — is the
 agent's own system prompt, so `agents/` is rendered once by `scripts/build-lens-agents.ts`
 and checked in. That split is what lets a session run the same lenses the action does:
@@ -254,9 +259,11 @@ skill to load by name.
 **A lens agent names the tools it gets rather than subtracting from the default set.**
 Naming them leaves out every MCP tool, which a diff review has no use for and which
 `--strict-mcp-config` already removes for the action. The catch is that a name Claude Code
-does not recognise is dropped in silence, so the list has to be checked against a real
-dispatch whenever it changes: `Grep`, `Glob`, and `TodoWrite` were all in the list, none
-of them reached the agent, and nothing said so.
+does not recognise is dropped in silence, and so is one that conflicts with another name
+in the same list. `Grep`, `Glob`, and `TodoWrite` were all in the list and none reached
+the agent: `TodoWrite` is not a name, and `Grep` and `Glob` are refused to any agent that
+also asks for `Bash`, which every lens needs for `git diff`. So the list has to be checked
+against a real dispatch whenever it changes.
 
 ## Using the action in another repository
 

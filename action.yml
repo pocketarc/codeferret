@@ -47,9 +47,11 @@ inputs:
     exclude-paths:
         description: |
             Newline-separated globs to keep out of the review, one per line. These become
-            a git pathspec on the diff every lens is given, so excluded files are not
-            reviewed rather than merely discouraged. Set to an empty string to review
-            everything.
+            a git pathspec on the diff every lens reads, so an excluded file is not in the
+            diff at all. A glob matches from the repository root, so `build/**` matches a
+            top-level build directory and `**/build/**` matches one at any depth. The
+            second form also matches an App Router `app/build/` route. Set to an empty
+            string to review everything.
         required: false
         default: |
             **/*.lock
@@ -62,8 +64,8 @@ inputs:
             vendor/**
             **/.next/**
             **/dist/**
-            **/out/**
-            **/build/**
+            out/**
+            build/**
             **/*.min.js
             **/*.min.css
             **/*.snap
@@ -279,7 +281,11 @@ runs:
               exit "$status"
 
         - name: Post the review
-          if: inputs.post != 'false'
+          # The step above fails on anything run.sh could not finish, and the findings
+          # shape check is the last thing it runs. A review that is already written and
+          # already paid for is worth posting even then, so the condition here is the
+          # findings file rather than the exit code. The run still ends red.
+          if: ${{ !cancelled() && inputs.post != 'false' && steps.review.outputs.findings-file != '' }}
           shell: bash
           env:
               GITHUB_TOKEN: ${{ inputs.github-token }}
