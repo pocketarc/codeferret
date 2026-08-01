@@ -14,8 +14,10 @@ The action and the command both render their prompts with `review/build-prompts.
 dispatch the same agents, so a change to how a review works lands in both. Keep it that
 way.
 
-For why each part is built the way it is, see [`review/README.md`](review/README.md).
-This file is about working in the repository.
+This file is the part to get right before touching anything: which branch, what never to
+change, what to run, and the traps. [`review/README.md`](review/README.md) has the rest —
+how a run works and why each part is built the way it is, how to add a lens, how to run a
+review by hand, and how to release.
 
 ## Branches
 
@@ -70,145 +72,13 @@ branch once over a fake `sk_live_...` Stripe key.
 
 ```sh
 bun scripts/validate-manifests.ts
+bun run typecheck
 ```
 
 GitHub validates workflow syntax when you push, but it does not validate an action
 manifest until a run loads it. So nothing catches a broken `action.yml` until the first
 step of a real review fails. That is how an unquoted `pull-requests: write` inside an
 input description shipped once. Quote any string that contains `: `.
-
-## Running a review locally
-
-Normally you want `/codeferret:review`. The plugin exists for that, and it handles the
-base ref, the pathspec, and an uncommitted working tree for you.
-
-Underneath, both it and the action call `review/run.sh`, so you can run exactly what CI
-runs from a checkout of the branch you want reviewed:
-
-```sh
-LENSES=$'caveman-review\nsentry-security-review' \
-  EXCLUDE_PATHS="$(cat review/defaults/exclude-paths.txt)" \
-  bash review/run.sh test/fixture "$PWD" "$(mktemp -d)/codeferret" "$PWD"
-```
-
-`run.sh` has no default for `EXCLUDE_PATHS`, so leaving it out gives the lenses no
-exclusions at all rather than CI's, and they spend the run's budget reading lockfiles and
-build output.
-
-`PERMISSION_MODE` defaults to `bypassPermissions`, which is what CI passes. Pass `auto`
-to run it the way `/codeferret:review` does: a lens gets the reads it needs, anything
-else is refused, and refusals are counted in `build/permission-denials` rather than
-disappearing. The header of `run.sh` lists the rest.
-
-The plugin `run.sh` builds is also called `codeferret`, and so is the installed one. That
-is fine: a plugin passed with `--plugin-dir` takes the namespace and the installed copy is
-shadowed. That is the behaviour you want, because the built one holds exactly the lenses
-this run asked for. An earlier note here said two plugins cannot share a name in one
-session and told you to disable the installed one first. That was never tested and it is
-wrong.
-
-Print the review without posting it:
-
-```sh
-DRY_RUN=1 GITHUB_TOKEN=x GITHUB_REPOSITORY=pocketarc/codeferret \
-  bun review/post-review.ts "$RT/codeferret/build/findings.json" \
-  test/fixture test/fixture-defects 1
-```
-
-The findings file has to be the one in the run's own `build/`, because `post-review.ts`
-reads `diff-args` beside it to get the pathspec the lenses reviewed under.
-
-Budget roughly 15 minutes and several dollars per run on Opus with three lenses. Lenses
-run in parallel, so adding more of them costs money rather than time: the full fourteen,
-with both static analysis tools, came to $36.00 in 20m46s and returned 97 findings, with
-no permission denials. The twelve-lens set before them came to $31.80 in 19 minutes over
-a 47-file diff.
-
-`extract-findings.ts` prints that cost, and the action puts it in the job summary and in
-its `cost-usd` and `output-tokens` outputs. Read `modelUsage` in `run.json` if you want
-the breakdown; the `usage` object beside it covers the orchestrator's last turn alone and
-undercounts a twelve-lens run sixtyfold.
-
-## Adding a lens
-
-To bundle a skill with the action, vendor it at a pinned commit:
-
-```sh
-bash scripts/vendor-lens.sh <repo> <commit-sha> <in-repo-subdir> <local-name>
-```
-
-Then add `<local-name>` to the `lenses` default in `action.yml`, which is the one place a
-default is written, and run:
-
-```sh
-bun scripts/build-lens-agents.ts
-bun scripts/build-defaults.ts
-bun scripts/validate-manifests.ts
-```
-
-`agents/` and `review/defaults/` are both generated. The validator re-runs each generator
-with `--check`, so a hand edit to either fails rather than drifting.
-
-To use a skill in one repository only, put it under the consuming repository's own
-`.claude/skills/<name>/` and name it in the action's `lenses` input. If a named lens has
-no `SKILL.md` in either place, `build-prompts.sh` fails.
-
-Never fetch a skill at run time: a review job holds a `pull-requests: write` token, so
-everything it executes should be reviewable and should not change between runs.
-`lenses/skills/PROVENANCE.tsv` records the upstream repository, commit, and path for
-each bundled lens.
-
-`vendor-lens.sh` rewrites five frontmatter fields, because a vendored skill is not used
-the way its author intended:
-
-- `name` becomes the local directory name. All bundled lenses share one plugin
-  namespace, and more than one upstream ships a skill called `security-review`.
-- `description` is replaced with a scoped one, so that fourteen lenses do not put
-  themselves in front of the model during unrelated work. Nothing downstream reads it: a
-  lens agent is told which skill to load by name. `review/README.md` has the argument.
-- `disable-model-invocation: true` is removed. It leaves a skill reachable only by a
-  person typing its slash command, and a lens agent loads its skill through the Skill
-  tool, which is model invocation. `cursor-thermo-nuclear-review` shipped with it, and
-  left in it would have cost one lens with nothing to show for it but a healthy run.
-- `user-invocable: false` is removed, which keeps `/codeferret:<lens>` available for
-  running one lens by hand. An earlier version of this note said a skill carrying that
-  flag never registers. That is wrong on 2.1.220: it registers, the model still sees it,
-  and all the flag does is hide the menu entry. So do not add it back to tidy the slash
-  menu. The scoped description keeps a lens out of unrelated work.
-- `argument-hint` is removed. Claude Code shows it beside a slash command as you type it, and upstream wrote it for a person invoking the skill by hand:
-  `accessibility-review`'s hint is a Figma URL. A lens agent passes no argument.
-
-The body is rewritten too: `@$1` and `$ARGUMENTS` become the diff under review, a link
-reaching above the skill directory loses its link, a line that was only such a pointer
-goes entirely, and an "If Connectors Available" section goes with it. What a lens still
-cannot follow after that belongs in `review/lens-extras/<lens>.md`.
-
-## Releasing
-
-Consumers pin `pocketarc/codeferret@v1`. GitHub resolves that as a plain git ref, not a
-semver range, so `v1` is a mutable tag this repository moves on every release. Skip the
-move and every consumer stays on the previous revision with no sign anything happened.
-
-```sh
-git push origin main
-git tag -a v1.2.0 -m "CodeFerret 1.2.0"
-git tag -f v1 -m "CodeFerret v1"
-git push origin v1.2.0
-git push --force origin v1
-```
-
-A change that breaks a consumer's workflow (a new required input, a permission they now
-have to grant, work moved out of the action and into their job) needs `v2` and a `v2` tag,
-because `@v1` carries it to everyone the moment the tag moves.
-
-Bump `version` in `.claude-plugin/plugin.json` to the same number in the same commit.
-Plugin users see it in `/plugin`, and it is the only version they are shown.
-
-Plugin users are not on tags at all. `/plugin marketplace add pocketarc/codeferret`
-follows this repository's default branch, and `/plugin update` gives them whatever is on
-it. So nothing reviews or approves what lands on `main` before plugin users get it: they
-get whatever is there the moment it lands, while an action consumer sees nothing until
-`v1` moves. Keep `main` releasable.
 
 ## Things that will bite you
 
