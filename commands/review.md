@@ -58,8 +58,9 @@ untracked file, so a newly written one is invisible to every lens until `git add
 Use the lenses named in `$ARGUMENTS`. Otherwise read
 `<plugin>/review/defaults/lenses.txt`, which is the set the action runs.
 
-Before dispatching, say how many lenses are about to run, and that a full twelve-lens run
-takes tens of minutes and costs several dollars on Opus. Let the user stop you there.
+Before dispatching, say how many lenses are about to run, and what that costs: the full
+twelve took 19 minutes and $31.80 on Opus over a 47-file diff, and the bill scales with
+the number of lenses rather than the wait. Let the user stop you there.
 
 ## 4. Build the prompts
 

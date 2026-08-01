@@ -49,9 +49,10 @@ terminal.
 `/codeferret:install-workflow` writes the action's workflow into the repository you are
 in, for when you would rather have this run on every pull request.
 
-Lenses run in parallel, so a twelve-lens run costs several dollars on Opus without taking
-much longer than a three-lens one. It says how many it is about to run before it runs
-them.
+Lenses run in parallel, so twelve of them take about as long as three and cost a good
+deal more. One twelve-lens run over a 47-file diff came to $31.80 and 19 minutes on Opus.
+The command says how many it is about to run before it runs them, and the action reports
+what each run cost in the job summary.
 
 ## Where things are
 

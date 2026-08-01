@@ -117,7 +117,13 @@ DRY_RUN=1 GITHUB_TOKEN=x GITHUB_REPOSITORY=pocketarc/codeferret \
 ```
 
 Budget roughly 15 minutes and several dollars per run on Opus with three lenses. Lenses
-run in parallel, so adding more of them costs money rather than time.
+run in parallel, so adding more of them costs money rather than time: the full twelve on
+a 47-file diff came to $31.80 in 19 minutes, and returned 90 findings.
+
+`extract-findings.ts` prints that cost, and the action puts it in the job summary and in
+its `cost-usd` and `output-tokens` outputs. Read `modelUsage` in `run.json` if you want
+the breakdown; the `usage` object beside it covers the orchestrator's last turn alone and
+undercounts a twelve-lens run sixtyfold.
 
 ## Adding a lens
 

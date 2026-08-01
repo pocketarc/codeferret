@@ -23,6 +23,16 @@ LENSES_FILE=${5:-}
 BUILD="$PLUGIN/build"
 PROMPTS_ONLY=${PROMPTS_ONLY:-}
 
+# The base ref arrives from a workflow input or from whatever the caller typed, and it
+# reaches a prompt that tells a lens to run `git log <base>..HEAD`. Git refs cannot hold
+# any of what is missing from this set, so nothing legitimate is turned away.
+case $BASE in
+"" | *[!A-Za-z0-9._/-]*)
+    echo "base ref '$BASE' is not a plain git ref" >&2
+    exit 1
+    ;;
+esac
+
 NAMESPACE=codeferret
 MANIFEST="$ACTION/.claude-plugin/plugin.json"
 
@@ -65,10 +75,26 @@ fi
 # `-- .` first so the excludes attach to a positive pathspec; without it git treats a
 # list of pure exclusions as matching nothing.
 PATHSPEC=""
+PATHSPEC_ARGS=()
 while IFS= read -r glob; do
     glob=$(printf '%s' "$glob" | tr -d '[:space:]')
     [ -z "$glob" ] && continue
-    [ -z "$PATHSPEC" ] && PATHSPEC="-- ."
+
+    # A glob reaches here from a workflow input and ends up in a prompt a lens is told
+    # to run. Globs need none of these, and a single quote alone was enough to close the
+    # quoting below and run whatever followed.
+    case $glob in
+    *[\'\"\;\$\`\\\&\|\<\>]*)
+        echo "exclude path '$glob' contains a shell metacharacter" >&2
+        exit 1
+        ;;
+    esac
+
+    if [ "${#PATHSPEC_ARGS[@]}" -eq 0 ]; then
+        PATHSPEC_ARGS+=("--" ".")
+        PATHSPEC="-- ."
+    fi
+    PATHSPEC_ARGS+=(":(exclude)$glob")
     PATHSPEC="$PATHSPEC ':(exclude)$glob'"
 done <<<"${EXCLUDE_PATHS:-}"
 
@@ -136,11 +162,19 @@ fi
 # text means it retypes the whole thing once per lens, and a copy that loses an entry
 # puts lockfiles and build output back into the diff without anything noticing. A script
 # is copied by name instead.
-{
-    printf '#!/usr/bin/env bash\n'
-    printf '# The diff this run reviews. Rebuilt every run.\n'
-    printf 'git diff %s %s\n' "$RANGE" "$PATHSPEC"
-} >"$BUILD/diff.sh"
+#
+# The arguments go beside the script rather than into it, NUL-separated. Writing them
+# into the script body made every one of them shell, and every lens is told to run it.
+printf '%s\0' "$RANGE" ${PATHSPEC_ARGS[@]+"${PATHSPEC_ARGS[@]}"} >"$BUILD/diff-args"
+
+cat >"$BUILD/diff.sh" <<'DIFF_SCRIPT'
+#!/usr/bin/env bash
+# The diff this run reviews. Rebuilt every run.
+set -euo pipefail
+args=()
+while IFS= read -r -d '' arg; do args+=("$arg"); done <"$(dirname "$0")/diff-args"
+git diff "${args[@]}"
+DIFF_SCRIPT
 
 # `&` and `|` mean something to sed's replacement, and a path or a glob may hold either.
 sed_escape() {
