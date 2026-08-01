@@ -8,6 +8,13 @@
  * `user-invocable: false` is removed. A skill carrying it never registers as a skill,
  * and a lens subagent loads its skill by name.
  *
+ * `description` is replaced. Upstream wrote it to win the skill an invocation —
+ * writing-review asks to be used "proactively whenever writing, reviewing, or
+ * rewriting text" — which is right for a skill somebody installed on purpose and wrong
+ * for twelve that arrived together inside a code review tool. Left alone, installing
+ * CodeFerret means a lens fires while you are drafting a blog post. A lens agent is
+ * told which skill to load by name, so nothing downstream reads this.
+ *
  * Usage: bun prepare-skill.ts <SKILL.md> <name>
  */
 
@@ -42,6 +49,24 @@ const beforeCount = lines.length;
 lines = lines.filter((l) => !/^user-invocable:\s*false\s*$/.test(l));
 const strippedInvocable = lines.length < beforeCount;
 
+const scoped =
+    `description: CodeFerret review lens '${name}'. A CodeFerret lens agent loads this` +
+    ` during a multi-lens code review. Not a general-purpose skill: leave it alone unless` +
+    ` a CodeFerret review is running.`;
+
+const descriptionIndex = lines.findIndex((l) => /^description:/.test(l));
+
+if (descriptionIndex === -1) {
+    lines.push(scoped);
+} else {
+    // A description can be a folded block scalar or a wrapped quoted string, both of
+    // which continue over indented lines until the next key at column zero.
+    let end = descriptionIndex + 1;
+    while (end < lines.length && /^(\s|$)/.test(lines[end])) end += 1;
+
+    lines.splice(descriptionIndex, end - descriptionIndex, scoped);
+}
+
 await Bun.write(path, `---\n${lines.join("\n")}\n---\n${body}`);
 
 if (previous === null) {
@@ -53,3 +78,5 @@ if (previous === null) {
 if (strippedInvocable) {
     console.log("  removed 'user-invocable: false' so the skill registers by name");
 }
+
+console.log(`  scoped the description to '${name}' as a CodeFerret lens`);

@@ -1,6 +1,6 @@
 ---
 name: sentry-security-review
-description: Security code review for vulnerabilities. Use when asked to "security review", "find vulnerabilities", "check for security issues", "audit security", "OWASP review", or review code for injection, XSS, authentication, authorization, cryptography issues. Provides systematic review with confidence-based reporting.
+description: CodeFerret review lens 'sentry-security-review'. A CodeFerret lens agent loads this during a multi-lens code review. Not a general-purpose skill: leave it alone unless a CodeFerret review is running.
 allowed-tools: Read, Grep, Glob, Bash, Task
 license: LICENSE
 ---

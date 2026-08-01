@@ -1,6 +1,6 @@
 ---
 name: vercel-next-best-practices
-description: Next.js best practices - file conventions, RSC boundaries, data patterns, async APIs, metadata, error handling, route handlers, image/font optimization, bundling
+description: CodeFerret review lens 'vercel-next-best-practices'. A CodeFerret lens agent loads this during a multi-lens code review. Not a general-purpose skill: leave it alone unless a CodeFerret review is running.
 ---
 
 # Next.js Best Practices

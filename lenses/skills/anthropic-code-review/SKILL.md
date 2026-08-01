@@ -1,6 +1,6 @@
 ---
 name: anthropic-code-review
-description: Review code changes for security, performance, and correctness. Trigger with a PR URL or diff, "review this before I merge", "is this code safe?", or when checking a change for N+1 queries, injection risks, missing edge cases, or error handling gaps.
+description: CodeFerret review lens 'anthropic-code-review'. A CodeFerret lens agent loads this during a multi-lens code review. Not a general-purpose skill: leave it alone unless a CodeFerret review is running.
 argument-hint: "<PR URL, diff, or file path>"
 ---
 

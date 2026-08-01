@@ -1,6 +1,6 @@
 ---
 name: anthropic-accessibility-review
-description: Run a WCAG 2.1 AA accessibility audit on a design or page. Trigger with "audit accessibility", "check a11y", "is this accessible?", or when reviewing a design for color contrast, keyboard navigation, touch target size, or screen reader behavior before handoff.
+description: CodeFerret review lens 'anthropic-accessibility-review'. A CodeFerret lens agent loads this during a multi-lens code review. Not a general-purpose skill: leave it alone unless a CodeFerret review is running.
 argument-hint: "<Figma URL, URL, or description>"
 ---
 
