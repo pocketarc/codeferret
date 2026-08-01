@@ -264,8 +264,15 @@ get whatever is there the moment it lands, while an action consumer sees nothing
   request, and `Bash` hands it `CLAUDE_CODE_OAUTH_TOKEN` from the environment it inherits
   and the git credential from the checkout; egress is the step that turns reading a
   secret into losing one. Do not add either back to let a lens look something up. This
-  raises the cost of exfiltration rather than preventing it — `Bash` still has `curl` —
-  so do not read it as a boundary that holds.
+  raises the cost of exfiltration rather than preventing it (`Bash` still has `curl`), so
+  do not read it as a boundary that holds.
+
+  A review lens can therefore reach `CLAUDE_CODE_OAUTH_TOKEN`, and the `codeferret-run`
+  artifact is not secret-masked, so one lens running `env` would put the token somewhere
+  anybody who can read the repository's artifacts can read it. Bruno has weighed that and
+  accepted it: CodeFerret runs on private repositories, where the people who can read an
+  artifact are the people who could run the action anyway. Raise it again only if that
+  changes — pointing it at a public repository is what changes it.
 - **A tool an agent asks for is not necessarily a tool it gets, and nothing says so.**
   `Grep`, `Glob`, and `TodoWrite` were all in the lens tool list and none of them reached
   a dispatched lens; `review/README.md` has the reasons. Reading the list will not tell
