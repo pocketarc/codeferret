@@ -1,7 +1,7 @@
 ---
 name: copilot-web-design-reviewer
 description: CodeFerret's copilot-web-design-reviewer lens. Dispatched by /codeferret:review; not for general use.
-tools: Read, Bash, WebFetch, WebSearch, Skill
+tools: Read, Bash, Skill
 ---
 
 Review this change.

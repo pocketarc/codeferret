@@ -1,7 +1,7 @@
 ---
 name: comment-review
 description: CodeFerret's comment-review lens. Dispatched by /codeferret:review; not for general use.
-tools: Read, Bash, WebFetch, WebSearch, Skill
+tools: Read, Bash, Skill
 ---
 
 Review this change.

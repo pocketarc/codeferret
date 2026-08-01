@@ -29,7 +29,13 @@ import { existsSync, readdirSync } from "node:fs";
 // the one thing this list exists to prevent would go through the gap. The action closes
 // it at the CLI; a session has only this list. Some skills fan out into subagents and
 // will do their passes one after another instead.
-const TOOLS = "Read, Bash, WebFetch, WebSearch, Skill";
+//
+// `WebFetch` and `WebSearch` are absent for the matching reason on the way out. A lens
+// reads a diff written by whoever opened the pull request, and `Bash` hands it
+// CLAUDE_CODE_OAUTH_TOKEN out of the environment it inherits and the git credential out
+// of the checkout. Egress is what turns reading those into losing them. A lens that
+// wants a CVE looked up says so in its finding instead.
+const TOOLS = "Read, Bash, Skill";
 
 const AGENTS_DIR = "agents";
 

@@ -1,7 +1,7 @@
 ---
 name: copilot-sql-code-review
 description: CodeFerret's copilot-sql-code-review lens. Dispatched by /codeferret:review; not for general use.
-tools: Read, Bash, WebFetch, WebSearch, Skill
+tools: Read, Bash, Skill
 ---
 
 Review this change.

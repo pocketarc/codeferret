@@ -1,7 +1,7 @@
 ---
 name: wshobson-code-review-excellence
 description: CodeFerret's wshobson-code-review-excellence lens. Dispatched by /codeferret:review; not for general use.
-tools: Read, Bash, WebFetch, WebSearch, Skill
+tools: Read, Bash, Skill
 ---
 
 Review this change.
