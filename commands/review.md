@@ -117,10 +117,13 @@ order, and by line within a file:
 ```
 path/to/file.ts:42 — One-line title
 
-    The finding body.
+The finding body.
 ```
 
-Keep `path:line` on its own so a terminal can link it.
+Do not indent the body. Four spaces after a blank line is an indented code block in
+markdown, which strips the formatting out of every finding and stops it wrapping.
+
+Start each finding on a fresh line with `path:line`, so a terminal can link it.
 
 Leave severity and lens agreement out. A lens grades severity without the context that
 decides it — a missing index is critical on a large table and irrelevant on a small one
