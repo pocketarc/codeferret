@@ -199,6 +199,9 @@ get whatever is there the moment it lands, while an action consumer sees nothing
 
 ## Things that will bite you
 
+Each of these is a rule and the one fact that makes it stick. `review/README.md` carries
+the arguments behind them.
+
 - **A lens's `in_diff` field is unreliable.** On every run so far, a lens reported an
   out-of-diff finding as in-diff. `post-review.ts` checks each line against the diff
   hunks instead of the lens's claim. Do not remove that check: the review API is atomic,
@@ -206,91 +209,50 @@ get whatever is there the moment it lands, while an action consumer sees nothing
 - **Do not ask the orchestrator for counts.** It narrated "27 by three lenses" when the
   answer was 31. `post-review.ts` computes totals, quorum, and severity spread.
 - **A lens that returns zero findings is probably broken.** One spent $1.28, exited 0,
-  and emitted nothing after a complete and correct review, because its skill prescribed
-  a prose format and the schema has no field for prose. That is why every finding must
-  go through the structured output (see `review/lens-brief.md`), and why the posted
-  review includes `lens_health`.
-
-  One exception, because the rule marked correctly-empty domain lenses as broken: a lens
-  that returns nothing
-  *and* names a checkable reason — no SQL in the diff, no UI, no dependency manifest,
-  and how it looked — is `ok: true` with the reason kept in `detail`. Half the default
-  set is domain lenses, and a run where three of them are correctly empty should not
-  print three warnings; a reader who learns to skip that line stops seeing the lens that
-  really did die. `lens-brief.md` asks for the reason and the orchestrator checks it
-  against the diff. Do not widen this to zero findings with no reason given.
-- **The lens's prompt must state the base ref.** It travels in `review/lens-dispatch.md`;
-  `review/lens-brief.md` only says the ref is already decided. Without it, some lenses
-  stop and ask which commit to diff against, and nothing can answer in a headless run.
+  and emitted nothing after a complete and correct review. Every finding must go through
+  the structured output, and the posted review carries `lens_health` so a dead lens shows
+  up as a number. The one exception is a lens that returns nothing *and* names a checkable
+  reason, which the orchestrator reads against the diff; do not widen it to zero findings
+  with no reason given.
+- **The lens's prompt must state the base ref.** It travels in `review/lens-dispatch.md`.
+  Without it, some lenses stop and ask which commit to diff against, and nothing can
+  answer in a headless run.
 - **Subagents do not inherit `--json-schema`.** Their schema comes from the prompt, so
   do not trust the shape of lens output. Only the orchestrator's output is validated.
 - **`REVIEW.md` goes to `mattpocock-code-review` and to nothing else.** It travels in
-  `review/lens-extras/mattpocock-code-review.md`, which the generator appends to that one
-  agent's system prompt — not through the orchestrator, which would leave the routing to
-  a judgement made afresh every run with nothing downstream able to tell when it went
-  wrong. Anything else meant for one lens alone belongs in `lens-extras/` for the same
-  reason. A repository's review conventions reach the one lens whose Standards axis
-  enumerates documented rules.
-  Do not broaden it: giving every lens a whole rulebook pulls them toward the same
-  generalist read, and the unique findings come from lenses staying in their own domain.
-  The name is `REVIEW.md` and not `CLAUDE.md` because Claude Code auto-loads `CLAUDE.md`
-  into every session, which would reach every lens.
+  `review/lens-extras/mattpocock-code-review.md`, appended to that one agent's system
+  prompt. Anything else meant for a single lens belongs there too, rather than in a line
+  the orchestrator has to route correctly every run. Do not broaden it to every lens.
 - **Do not put severity or lens agreement into a comment.** Both are in `findings.json`
-  and severity orders the findings, but neither is displayed, and that is deliberate. A
-  lens grades severity without the context that decides it, so the label mainly licenses
-  the reader to skip. Agreement tracks how obvious a defect is rather than how much it
-  matters: on a ten-lens run, six lenses agreed on a cache-key nit while the missing
-  index and the keyboard-access failure were each found by one. For the same reason, do
-  not add severity filtering.
-- **Bounding a tool's output is not the severity filtering the rule above forbids.**
-  `review/tools/semgrep.ts` caps what it hands over at 100 findings. That rule exists
-  because a *lens* grades severity without the context that decides it, so its label is
-  too unreliable to hide anything with. A cap on tool input bounds what one lens is asked
-  to read, not what a reader is told: everything raised stays in `build/tool-*.json` in
-  the artifact, and the lens reports how many it was given. Keep the distinction if you
-  touch either rule: bound the input, never the findings.
-- **Lenses must not modify the working tree.** Some review skills offer to fix what they
-  find, and every lens reads the same checkout at once, so one edit corrupts every other
-  lens's review. `Edit`, `Write`, and `NotebookEdit` are kept away from them twice over:
-  the action denies them at the CLI, and the agents in `agents/` name the tools they get
-  and leave those three out. `Agent` is left out for the same reason: the CLI denial
-  applies to a nested subagent and an agent's tool list does not, so a lens that spawned a
-  general-purpose one in a session would hand it `Write` and undo the whole arrangement.
-  `review/lens-brief.md` then tells each lens to report rather than repair. Keep all of
-  it. None of it is a guarantee: a lens has `Bash`, so `sed -i` is a command away, and
-  nothing stops it but the instruction not to.
-- **No lens is handed a way to reach the network.** `WebFetch` and `WebSearch` are left
-  out of the tool list on purpose. A lens reads a diff written by whoever opened the pull
-  request, and `Bash` hands it `CLAUDE_CODE_OAUTH_TOKEN` from the environment it inherits
-  and the git credential from the checkout; egress is the step that turns reading a
-  secret into losing one. Do not add either back to let a lens look something up. This
-  raises the cost of exfiltration rather than preventing it (`Bash` still has `curl`), so
-  do not read it as a boundary that holds.
-
-  A review lens can therefore reach `CLAUDE_CODE_OAUTH_TOKEN`, and the `codeferret-run`
-  artifact is not secret-masked, so one lens running `env` would put the token somewhere
-  anybody who can read the repository's artifacts can read it. Bruno has weighed that and
-  accepted it: CodeFerret runs on private repositories, where the people who can read an
-  artifact are the people who could run the action anyway. Raise it again only if that
-  changes — pointing it at a public repository is what changes it.
+  and severity orders the findings, but neither is displayed. For the same reason, do not
+  add severity filtering.
+- **Bounding a tool's output is not that filtering.** `review/tools/semgrep.ts` caps what
+  it hands the lens at 100 findings. That bounds what one lens is asked to read, not what
+  a reader is told: everything raised stays in `build/tool-*.json`. Bound the input, never
+  the findings.
+- **Lenses must not modify the working tree.** Every lens reads the same checkout at once,
+  so one edit corrupts every other lens's review. `Edit`, `Write`, `NotebookEdit` and
+  `Agent` are all kept off the tool list in `agents/`, and the action denies them at the
+  CLI as well. None of it is a guarantee — a lens has `Bash` — so keep the instruction in
+  `review/lens-brief.md` too.
+- **No lens is handed a way to reach the network.** `WebFetch` and `WebSearch` are off the
+  tool list on purpose: a lens reads an untrusted diff with `CLAUDE_CODE_OAUTH_TOKEN` in
+  its environment. This raises the cost of exfiltration rather than preventing it, since
+  `Bash` still has `curl`. Before pointing this at a public repository, narrow the
+  artifact's `path` or drop the upload: `run.json` is not secret-masked.
 - **A tool an agent asks for is not necessarily a tool it gets, and nothing says so.**
-  `Grep`, `Glob`, and `TodoWrite` were all in the lens tool list and none of them reached
-  a dispatched lens; `review/README.md` has the reasons. Reading the list will not tell
-  you, so check it against a real dispatch when you change it, with
-  `claude -p '...' --plugin-dir .` and a prompt asking an agent to name the tools it has.
-  An earlier note here blamed unrecognised names, and that experiment is what corrected
-  it.
-- **Suppression can hide a real finding.** Every push re-runs the whole review, and the
-  orchestrator marks each finding `new`, `already-reported`, or `declined` so that only
-  new ones get posted. It reads every comment on the pull request, whoever wrote it, and
-  a reply saying "we don't want that" is what makes a finding `declined`. It is told to
-  choose `new` whenever it is unsure. If you tighten that, you trade duplicate comments
-  for findings nobody sees. To audit a run, read `findings.json` in the `codeferret-run`
-  artifact. It holds every finding with its status, including the hidden ones.
-- **Resolving a thread is a judgement, not a rule.** The orchestrator picks which threads
-  to close and gives a reason for each, which the review lists. `isOutdated` is evidence
-  it weighs, not a gate: a fix landing elsewhere leaves a thread current, and an unrelated
-  edit above one makes a live thread outdated. Do not turn this back into a condition.
+  `Grep`, `Glob`, and `TodoWrite` were all in the lens tool list and none reached a
+  dispatched lens. Reading the list will not tell you, so check it against a real dispatch
+  when you change it: `claude -p '...' --plugin-dir .`, asking an agent to name its tools.
+- **Suppression can hide a real finding.** The orchestrator marks each finding `new`,
+  `already-reported`, or `declined`, and only `new` gets posted. It is told to choose
+  `new` whenever it is unsure. If you tighten that, you trade duplicate comments for
+  findings nobody sees. `findings.json` in the `codeferret-run` artifact holds every
+  finding with its status, including the hidden ones.
+- **Resolving a thread is a judgement, not a rule.** `isOutdated` is evidence the
+  orchestrator weighs, not a gate: a fix landing elsewhere leaves a thread current, and an
+  unrelated edit above one makes a live thread outdated. Do not turn it back into a
+  condition.
 - **A reply cannot make a security defect safe.** `orchestrator.md` says so explicitly,
   because "this is intentional" on a vulnerability would otherwise silence it for good.
   Keep that carve-out if you touch the decline rules.

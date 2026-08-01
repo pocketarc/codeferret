@@ -155,6 +155,13 @@ one lens. The file is named `REVIEW.md` rather than reusing `CLAUDE.md` because 
 Code loads `CLAUDE.md` into every session automatically, which would put the conventions
 in front of every lens and defeat the scoping.
 
+It reaches that lens through `review/lens-extras/mattpocock-code-review.md`, which
+`scripts/build-lens-agents.ts` appends to that one agent's system prompt. It used to
+travel as a line in the orchestrator's prompt saying who to hand it to, which made the
+scoping a judgement remade on every run, with nothing downstream able to tell when it went
+to the wrong lens or to all of them. Anything else meant for a single lens belongs in
+`lens-extras/` for the same reason.
+
 ### A comment shows the claim and nothing else
 
 No severity, no lens attribution, no count of how many lenses agreed. All three stay in
@@ -199,6 +206,14 @@ GitHub rejects the batch, `post-review.ts` posts the review body alone.
 
 A lens that spends money and returns nothing exits successfully and looks identical to a
 clean run. That is survivable at three lenses and invisible at twenty.
+
+Zero findings is treated as a failure, with one exception: a lens that returns nothing
+and names a checkable reason for it, which the orchestrator reads against the diff before
+accepting. The exception exists because the rule was marking correctly-empty lenses as
+broken. Half the default set is domain lenses, and a tooling diff leaves the SQL, Next.js,
+accessibility and web design ones with nothing in their domain; three warnings on a healthy
+run teach a reader to skip the line, and the line is the only place a lens that really did
+die shows up. A lens that returns nothing and says nothing is still a failure.
 
 ### MCP servers are disabled
 
