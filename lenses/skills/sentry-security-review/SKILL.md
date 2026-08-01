@@ -1,6 +1,6 @@
 ---
 name: sentry-security-review
-description: CodeFerret review lens 'sentry-security-review'. A CodeFerret lens agent loads this during a multi-lens code review. Not a general-purpose skill: leave it alone unless a CodeFerret review is running.
+description: "CodeFerret review lens sentry-security-review. A CodeFerret lens agent loads this during a multi-lens code review; it is not a general-purpose skill and is no use outside one."
 allowed-tools: Read, Grep, Glob, Bash, Task
 license: LICENSE
 ---

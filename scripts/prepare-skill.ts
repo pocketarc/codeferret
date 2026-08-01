@@ -50,10 +50,13 @@ const beforeCount = lines.length;
 lines = lines.filter((l) => !/^user-invocable:\s*false\s*$/.test(l));
 const strippedInvocable = lines.length < beforeCount;
 
+// Quoted, and free of `: `, because an unquoted colon-space ends the value and leaves
+// the rest as a key. Claude Code's parser is lenient enough to hide that; Bun.YAML is
+// not, and neither is anything else that reads a skill.
 const scoped =
-    `description: CodeFerret review lens '${name}'. A CodeFerret lens agent loads this` +
-    ` during a multi-lens code review. Not a general-purpose skill: leave it alone unless` +
-    ` a CodeFerret review is running.`;
+    `description: "CodeFerret review lens ${name}. A CodeFerret lens agent loads this` +
+    ` during a multi-lens code review; it is not a general-purpose skill and is no use` +
+    ` outside one."`;
 
 const descriptionIndex = lines.findIndex((l) => /^description:/.test(l));
 

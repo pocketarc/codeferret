@@ -180,14 +180,33 @@ for (const entry of readdirSync("lenses/skills", { withFileTypes: true })) {
         fail(skillFile, "has `user-invocable: false`, which only hides `/codeferret:" + entry.name + "`");
     }
 
+    // Parse it rather than match it. Claude Code's frontmatter parser is lenient enough
+    // that an unquoted `: ` in a description loads fine and only breaks wherever
+    // something stricter reads it, which is how a cosmetic rewrite of these twelve
+    // descriptions turned every one of them into invalid YAML without a word.
+    const block = text.match(/^---\n([\s\S]*?)\n---\n/)?.[1];
+    let skill: Record<string, unknown> = {};
+
+    if (block === undefined) {
+        fail(skillFile, "has no frontmatter");
+        continue;
+    }
+
+    try {
+        skill = (Bun.YAML.parse(block) ?? {}) as Record<string, unknown>;
+    } catch (error) {
+        fail(skillFile, `frontmatter is not valid YAML: ${error instanceof Error ? error.message : error}`);
+        continue;
+    }
+
     // Upstream descriptions are written to get the skill invoked; twelve of them inside
     // a code review tool would fire lenses during unrelated work. prepare-skill.ts
     // rewrites them.
-    if (!text.includes(`description: CodeFerret review lens '${entry.name}'`)) {
+    if (!String(skill.description ?? "").startsWith(`CodeFerret review lens ${entry.name}.`)) {
         fail(skillFile, `description is not scoped — run: bun scripts/prepare-skill.ts ${skillFile} ${entry.name}`);
     }
 
-    const declared = text.match(/^name:\s*(.+)$/m)?.[1]?.trim();
+    const declared = typeof skill.name === "string" ? skill.name.trim() : "";
 
     if (!declared) {
         fail(skillFile, "no `name` in frontmatter");

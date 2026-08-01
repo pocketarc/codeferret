@@ -1,6 +1,6 @@
 ---
 name: copilot-security-review
-description: CodeFerret review lens 'copilot-security-review'. A CodeFerret lens agent loads this during a multi-lens code review. Not a general-purpose skill: leave it alone unless a CodeFerret review is running.
+description: "CodeFerret review lens copilot-security-review. A CodeFerret lens agent loads this during a multi-lens code review; it is not a general-purpose skill and is no use outside one."
 ---
 
 # Security Review
