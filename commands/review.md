@@ -6,8 +6,10 @@ argument-hint: "[base-ref] [lens…]"
 Review this repository's diff through several lenses at once and print what they find.
 Work through the steps in order.
 
-`$ARGUMENTS` holds what the user typed. Its first word is the ref to diff against;
-anything after that names the lenses to run. Both are optional.
+`$ARGUMENTS` holds what the user typed: a ref to diff against, then the lenses to run.
+Both parts are optional, so decide by looking. A word is a lens when a directory of that
+name sits under `<plugin>/lenses/skills/` or `.claude/skills/`, and the base ref
+otherwise. `/codeferret:review caveman-review` names a lens, not a ref.
 
 Throughout, `<plugin>` is `${CLAUDE_PLUGIN_ROOT}`, and `<git-dir>`, `<base>`, `<head>`
 and the rest come from step 1. Substitute them yourself rather than relying on a shell
