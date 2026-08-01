@@ -22,6 +22,7 @@ inputs:
             mattpocock-code-review
             anthropic-code-review
             wshobson-code-review-excellence
+            cursor-code-quality-review
             sentry-security-review
             copilot-security-review
             vercel-next-best-practices

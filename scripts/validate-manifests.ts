@@ -199,6 +199,12 @@ for (const entry of readdirSync("lenses/skills", { withFileTypes: true })) {
         continue;
     }
 
+    // A lens agent loads its skill through the Skill tool, which counts as model
+    // invocation. Left in, this flag costs one lens with nothing to say about it.
+    if (skill["disable-model-invocation"] === true) {
+        fail(skillFile, `has \`disable-model-invocation: true\`, so no lens agent could load it`);
+    }
+
     // Upstream descriptions are written to get the skill invoked; twelve of them inside
     // a code review tool would fire lenses during unrelated work. prepare-skill.ts
     // rewrites them.

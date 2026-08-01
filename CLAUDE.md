@@ -138,7 +138,7 @@ everything it executes should be reviewable and should not change between runs.
 `lenses/skills/PROVENANCE.tsv` records the upstream repository, commit, and path for
 each bundled lens.
 
-`vendor-lens.sh` rewrites three frontmatter fields, because a vendored skill is not used
+`vendor-lens.sh` rewrites four frontmatter fields, because a vendored skill is not used
 the way its author intended:
 
 - `name` becomes the local directory name. All bundled lenses share one plugin
@@ -149,6 +149,10 @@ the way its author intended:
   arrive inside a code review tool. Once the plugin is installed, those descriptions put
   a lens in front of the model while you are drafting a blog post. A lens agent is told
   which skill to load by name, so nothing downstream reads this.
+- `disable-model-invocation: true` is removed. It leaves a skill reachable only by a
+  person typing its slash command, and a lens agent loads its skill through the Skill
+  tool, which is model invocation. `cursor-code-quality-review` shipped with it, and left
+  in it would have cost one lens with nothing to show for it but a healthy-looking run.
 - `user-invocable: false` is removed, which keeps `/codeferret:<lens>` available for
   running one lens by hand. An earlier version of this note said a skill carrying that
   flag never registers. That is wrong on 2.1.220: it registers, the model still sees it,

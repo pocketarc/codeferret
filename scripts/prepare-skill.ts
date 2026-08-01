@@ -50,6 +50,14 @@ const beforeCount = lines.length;
 lines = lines.filter((l) => !/^user-invocable:\s*false\s*$/.test(l));
 const strippedInvocable = lines.length < beforeCount;
 
+// `disable-model-invocation: true` leaves a skill reachable only by a person typing its
+// slash command. A lens agent loads its skill through the Skill tool, which is model
+// invocation, so the flag would leave the lens with nothing to load and a review with
+// one silent hole in it.
+const beforeModel = lines.length;
+lines = lines.filter((l) => !/^disable-model-invocation:\s*true\s*$/.test(l));
+const strippedModelInvocation = lines.length < beforeModel;
+
 // Quoted, and free of `: `, because an unquoted colon-space ends the value and leaves
 // the rest as a key. Claude Code's parser is lenient enough to hide that; Bun.YAML is
 // not, and neither is anything else that reads a skill.
@@ -81,6 +89,10 @@ if (previous === null) {
 
 if (strippedInvocable) {
     console.log("  removed 'user-invocable: false' so the skill registers by name");
+}
+
+if (strippedModelInvocation) {
+    console.log("  removed 'disable-model-invocation: true' so a lens agent can load it");
 }
 
 console.log(`  scoped the description to '${name}' as a CodeFerret lens`);
