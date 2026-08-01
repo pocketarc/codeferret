@@ -25,9 +25,10 @@ RESOLVE_THREADS=${RESOLVE_THREADS:-1}
 
 # The base ref arrives from a workflow input or from whatever the caller typed, and it
 # reaches a prompt that tells a lens to run `git log <base>..HEAD`. Git refs cannot hold
-# any of what is missing from this set, so nothing legitimate is turned away.
+# any of what is missing from this set, so nothing legitimate is turned away. A leading
+# `-` is barred separately: it is legal in a ref name and git would read it as an option.
 case $BASE in
-"" | *[!A-Za-z0-9._/-]*)
+"" | -* | *[!A-Za-z0-9._/-]*)
     echo "base ref '$BASE' is not a plain git ref" >&2
     exit 1
     ;;

@@ -16,6 +16,11 @@ Throughout, `<plugin>` is `${CLAUDE_PLUGIN_ROOT}`, and `<git-dir>`, `<toplevel>`
 relying on a shell variable: each command runs in its own shell, so nothing you export
 survives.
 
+Put double quotes around every one of them when you do. `<base>` in particular is
+whatever the user typed, and it lands on a command line before anything gets to check it
+— `build-prompts.sh` rejects a ref that is not a plain one, but only once the shell has
+already run what you wrote.
+
 ## 1. Find out what this checkout supports
 
 ```sh

@@ -42,18 +42,7 @@ if (last.is_error) {
     console.error(`the run reported an error: ${last.subtype ?? "unknown"}`);
 }
 
-const structured = last.structured_output;
-
-if (!structured || !Array.isArray(structured.findings)) {
-    console.error("the run produced no structured findings");
-    console.error(`result subtype: ${last.subtype ?? "unknown"}`);
-    process.exit(1);
-}
-
-await Bun.write(outPath, `${JSON.stringify(structured, null, 2)}\n`);
-
 const dir = dirname(outPath);
-await Bun.write(join(dir, "findings-count"), String(structured.findings.length));
 
 // The result's `usage` counts the orchestrator's last turn and nothing else. Only
 // `modelUsage` covers the subagents, which is where a lens run spends everything: on a
@@ -73,10 +62,24 @@ const denials: Array<{ tool_name?: string; tool_input?: { command?: string } }> 
     ? last.permission_denials
     : [];
 
+// Written before the findings are looked at, because a run that produced none is the one
+// whose cost and refusals somebody most wants to see.
 await Bun.write(join(dir, "cost-usd"), costUsd.toFixed(2));
 await Bun.write(join(dir, "output-tokens"), String(outputTokens));
 await Bun.write(join(dir, "duration-ms"), String(durationMs));
 await Bun.write(join(dir, "permission-denials"), String(denials.length));
+
+const structured = last.structured_output;
+
+if (!structured || !Array.isArray(structured.findings)) {
+    console.error("the run produced no structured findings");
+    console.error(`result subtype: ${last.subtype ?? "unknown"}`);
+    console.error(`it cost $${costUsd.toFixed(2)} and was refused ${denials.length} tool call(s)`);
+    process.exit(1);
+}
+
+await Bun.write(outPath, `${JSON.stringify(structured, null, 2)}\n`);
+await Bun.write(join(dir, "findings-count"), String(structured.findings.length));
 
 const health = structured.lens_health ?? [];
 const broken = health.filter((h: { ok?: boolean }) => h.ok === false);
@@ -103,7 +106,10 @@ if (broken.length > 0) {
 if (denials.length > 0) {
     console.log(`\n${denials.length} tool call(s) were refused by the permission mode:`);
     for (const d of denials) {
-        console.log(`  ${d.tool_name ?? "?"}: ${d.tool_input?.command ?? JSON.stringify(d.tool_input).slice(0, 120)}`);
+        // JSON.stringify(undefined) is undefined, not a string, so a denial with no
+        // tool_input would take the whole run down at the point of reporting it.
+        const what = d.tool_input?.command ?? JSON.stringify(d.tool_input ?? {});
+        console.log(`  ${d.tool_name ?? "?"}: ${String(what).slice(0, 120)}`);
     }
     console.log("A lens that could not run what it needed reviewed less than it appears to.");
 }

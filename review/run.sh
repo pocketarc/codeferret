@@ -42,9 +42,15 @@ PERMISSION_MODE=${PERMISSION_MODE:-bypassPermissions}
 printf '%s\n' "$LENSES" |
     bash "$ACTION/review/build-prompts.sh" "$BASE" "$ACTION" "$OUT" "$WORKSPACE"
 
+# fetch-existing.ts needs the GitHub token. The orchestrator must not have it: every lens
+# it dispatches carries Bash, and `printenv GITHUB_TOKEN` is the whole attack. Hold the
+# value here and hand it to the one command that needs it.
+GH_TOKEN=${GITHUB_TOKEN:-}
+unset GITHUB_TOKEN
+
 # An empty file costs duplicate comments; a failure here would cost the whole review.
 if [ -n "${PR:-}" ]; then
-    $PREFIX bun "$ACTION/review/fetch-existing.ts" \
+    GITHUB_TOKEN="$GH_TOKEN" $PREFIX bun "$ACTION/review/fetch-existing.ts" \
         "$PR" "$BUILD/existing.json" ${OWN_LOGIN:+"$OWN_LOGIN"} || true
 fi
 

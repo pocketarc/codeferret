@@ -222,11 +222,13 @@ commit reaches them the moment it lands, where an action consumer sees nothing u
   `review/lens-brief.md` then tells each lens to report rather than repair. Keep all of
   it. None of it is a guarantee: a lens has `Bash`, so `sed -i` is a command away, and
   only the instruction stands between it and the tree.
-- **A lens has no way to reach the network.** `WebFetch` and `WebSearch` are left out of
-  the tool list on purpose. A lens reads a diff written by whoever opened the pull
+- **No lens is handed a way to reach the network.** `WebFetch` and `WebSearch` are left
+  out of the tool list on purpose. A lens reads a diff written by whoever opened the pull
   request, and `Bash` hands it `CLAUDE_CODE_OAUTH_TOKEN` from the environment it inherits
   and the git credential from the checkout; egress is the step that turns reading a
-  secret into losing one. Do not add either back to let a lens look something up.
+  secret into losing one. Do not add either back to let a lens look something up. This
+  raises the cost of exfiltration rather than preventing it — `Bash` still has `curl` —
+  so do not read it as a boundary that holds.
 - **A tool name Claude Code does not know is dropped in silence.** The agents name their
   tools. `Grep`, `Glob`, and `TodoWrite` were all in that list, none of them reached a
   dispatched lens, and nothing said so: the lenses were searching through `Bash` alone.
