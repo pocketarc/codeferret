@@ -70,6 +70,7 @@ the code it runs, and that code should not change between runs.
 | `orchestrator.md` | The orchestrator's prompt template. |
 | `merged-schema.json` | The shape the orchestrator returns. Enforced, because a script parses it. |
 | `run.sh` | One review, start to finish. Both front doors call this. |
+| `tools/` | Static analysis run before the review. Each writes `build/tool-<name>.json`. |
 | `build-prompts.sh` | Assembles the run's plugin and the orchestrator prompt. |
 | `local-preflight.sh` | Works out from the checkout what the workflow event would otherwise supply. |
 | `defaults/` | The `lenses` and `exclude-paths` defaults as plain lists, for a session that cannot read a YAML default. |
@@ -199,6 +200,25 @@ agent to dispatch and no skill to load, which is a second lock on the `lenses` i
 besides the list in the prompt. Building it outside the workspace also leaves the calling
 repository's tree untouched. A session skips all of this: it has the plugin installed
 already.
+
+**A static analysis tool reports to a lens, not to the orchestrator.** A tool finding is
+a rule identifier, a file, a line, and a message written for whoever wrote the rule. It
+is evidence that a pattern matched, not that anything is wrong here, and posting it
+untriaged is what makes an automated review unreadable. So `review/tools/*` run before
+the dispatch and write their reports into `build/`, and the `static-analysis` lens reads
+each finding against the code, drops what does not hold, and writes the comment the rule
+could not — naming the input, the path it takes, and the fix.
+
+Nothing else changes shape. The orchestrator still merges N lens reports and still
+deduplicates on what the defect is, so a rule and two lenses that spot the same thing
+produce one comment with three names in `found_by` rather than three comments. A tool
+that did not run is a lens that says so, which `lens_health` already knows how to report.
+
+That lens is told to keep anything it cannot rule out, for the same reason the
+orchestrator marks an uncertain finding `new`: a wrong keep costs a reader seconds, and a
+wrong drop is a finding that will be raised and discarded on every run without anybody
+seeing it. It reports how many it dropped, and the raw tool report stays in the run
+artifact, so its judgement can be checked rather than trusted.
 
 **The orchestrator runs in its own process, never in the session that asked for it.** A
 review reads two things written by whoever opened the pull request: the diff, and every

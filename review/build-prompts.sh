@@ -130,6 +130,14 @@ for lens in "${LENSES[@]}"; do
         exit 1
     fi
 
+    # This lens reads tool reports rather than the diff, and where they are is per-run.
+    if [ "$lens" = "static-analysis" ]; then
+        {
+            printf '  Also tell it: The static analysis reports for this run are the files\n'
+            printf '  matching `%s/tool-*.json`. Read every one of them.\n' "$BUILD"
+        } >>"$BUILD/lens-list.txt"
+    fi
+
     # One lens only: a rulebook given to every lens pulls them all toward the same
     # generalist read. review/README.md has the evidence.
     if [ "$lens" = "mattpocock-code-review" ] && [ -f "$WORKSPACE/REVIEW.md" ]; then

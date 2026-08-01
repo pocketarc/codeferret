@@ -22,6 +22,9 @@
 #   PR                pull request number. Set it to have earlier comments read, which
 #                     is what stops a finding being raised twice.
 #   OWN_LOGIN         the account the review posts under, so it knows its own threads.
+#   TOOLS             space-separated static analysis tools to run before the review,
+#                     naming files in review/tools/. Their reports are read by the
+#                     `static-analysis` lens, which decides which findings hold.
 #   RESOLVE_THREADS   0 to close no threads. Right anywhere but CI.
 #   GITHUB_TOKEN, GITHUB_REPOSITORY   needed when PR is set.
 #   INCLUDE_WORKING_TREE  1 to review uncommitted work as well.
@@ -53,6 +56,17 @@ if [ -n "${PR:-}" ]; then
     GITHUB_TOKEN="$GH_TOKEN" $PREFIX bun "$ACTION/review/fetch-existing.ts" \
         "$PR" "$BUILD/existing.json" ${OWN_LOGIN:+"$OWN_LOGIN"} || true
 fi
+
+# Tools run before the dispatch, because their reports are input to a lens rather than
+# output of the review. A tool that is not installed writes that down and returns 0.
+for tool in ${TOOLS:-}; do
+    if [ ! -f "$ACTION/review/tools/$tool.ts" ]; then
+        echo "no tool named '$tool' in $ACTION/review/tools/" >&2
+        exit 1
+    fi
+
+    $PREFIX bun "$ACTION/review/tools/$tool.ts" "$BUILD"
+done
 
 $PREFIX claude -p "$(cat "$BUILD/orchestrator.txt")" \
     --model "$MODEL" \

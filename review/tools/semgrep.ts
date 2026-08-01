@@ -1,0 +1,122 @@
+#!/usr/bin/env bun
+/**
+ * Run semgrep over the files this review's diff touches, and write down what it said.
+ *
+ * Nothing here judges whether a finding is real. A rule identifier and a line number are
+ * not a review comment, and a rule that cannot read the surrounding code raises things
+ * that are true of the pattern and false of this repository. Deciding which is which is
+ * the `static-analysis` lens's job, and it is the reason tool output goes to a lens
+ * rather than to the orchestrator: untriaged linter output posted to a pull request is
+ * what makes an automated review unreadable.
+ *
+ * A missing semgrep is not a failure. It is written down and skipped, because a review
+ * that stops for want of a linter is worth less than one that runs without it.
+ *
+ * Usage: bun review/tools/semgrep.ts <build-dir>
+ */
+
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+
+// The lens reads every finding it is handed and checks it against the code, so a
+// pathological run would make one lens the most expensive thing in the review. Bounding
+// the input is easier to justify than bounding what a reviewer gets told about.
+const MAX_FINDINGS = 100;
+
+const [buildDir] = process.argv.slice(2);
+
+if (!buildDir) {
+    console.error("usage: bun review/tools/semgrep.ts <build-dir>");
+    process.exit(2);
+}
+
+const out = join(buildDir, "tool-semgrep.json");
+
+async function write(report: Record<string, unknown>): Promise<void> {
+    await Bun.write(out, `${JSON.stringify(report, null, 2)}\n`);
+}
+
+function have(binary: string): boolean {
+    return Bun.spawnSync(["command", "-v", binary]).exitCode === 0 || Bun.which(binary) !== null;
+}
+
+if (!have("semgrep")) {
+    await write({ tool: "semgrep", ran: false, reason: "semgrep is not on PATH", findings: [] });
+    console.log("semgrep: not installed, skipped");
+    process.exit(0);
+}
+
+// The same arguments the lenses' own diff uses, so the tool and the review never
+// disagree about which files are under review.
+const argsFile = join(buildDir, "diff-args");
+
+if (!existsSync(argsFile)) {
+    await write({ tool: "semgrep", ran: false, reason: `no ${argsFile}`, findings: [] });
+    console.error(`semgrep: ${argsFile} is missing, skipped`);
+    process.exit(0);
+}
+
+const diffArgs = (await Bun.file(argsFile).text()).split("\0").filter(Boolean);
+
+// -d drops deleted files: semgrep cannot read what is no longer there.
+const named = Bun.spawnSync(["git", "diff", "--name-only", "--diff-filter=d", ...diffArgs]);
+const files = new TextDecoder()
+    .decode(named.stdout)
+    .split("\n")
+    .map((f) => f.trim())
+    .filter((f) => f.length > 0 && existsSync(f));
+
+if (files.length === 0) {
+    await write({ tool: "semgrep", ran: true, scanned: 0, findings: [] });
+    console.log("semgrep: the diff touches no readable file");
+    process.exit(0);
+}
+
+const proc = Bun.spawnSync([
+    "semgrep",
+    "--config",
+    process.env.SEMGREP_CONFIG ?? "p/default",
+    "--json",
+    "--quiet",
+    "--metrics",
+    "off",
+    ...files,
+]);
+
+const stdout = new TextDecoder().decode(proc.stdout);
+let parsed: { results?: Array<Record<string, any>>; errors?: Array<Record<string, any>> };
+
+try {
+    parsed = JSON.parse(stdout);
+} catch {
+    const stderr = new TextDecoder().decode(proc.stderr).slice(0, 500);
+    await write({ tool: "semgrep", ran: false, reason: `semgrep returned no JSON: ${stderr}`, findings: [] });
+    console.error(`semgrep: could not parse output, skipped`);
+    process.exit(0);
+}
+
+const results = parsed.results ?? [];
+
+const findings = results.slice(0, MAX_FINDINGS).map((r) => ({
+    rule: r.check_id,
+    file: r.path,
+    line: r.start?.line,
+    end_line: r.end?.line,
+    severity: r.extra?.severity,
+    message: r.extra?.message,
+}));
+
+await write({
+    tool: "semgrep",
+    ran: true,
+    scanned: files.length,
+    raised: results.length,
+    truncated: Math.max(0, results.length - findings.length),
+    errors: (parsed.errors ?? []).length,
+    findings,
+});
+
+console.log(
+    `semgrep: ${results.length} raised over ${files.length} file(s)` +
+        `${results.length > findings.length ? `, ${results.length - findings.length} beyond the cap` : ""}`,
+);

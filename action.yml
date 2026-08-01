@@ -31,6 +31,15 @@ inputs:
             anthropic-accessibility-review
             comment-review
             writing-review
+    tools:
+        description: |
+            Space-separated static analysis tools to run before the review, naming files
+            in the action's review/tools/. Their reports go to the `static-analysis`
+            lens, which reads each finding against the code and decides which hold, so
+            name that lens in `lenses` as well. A tool that is not installed on the
+            runner records that and is skipped. Empty runs no tools.
+        required: false
+        default: ''
     exclude-paths:
         description: |
             Newline-separated globs to keep out of the review, one per line. These become
@@ -207,6 +216,7 @@ runs:
               PREFIX: ${{ inputs.command-prefix }}
               MODEL: ${{ inputs.model }}
               LENSES: ${{ inputs.lenses }}
+              TOOLS: ${{ inputs.tools }}
               EXCLUDE_PATHS: ${{ inputs.exclude-paths }}
               BASE: ${{ steps.target.outputs.base }}
               PR: ${{ steps.target.outputs.pr }}

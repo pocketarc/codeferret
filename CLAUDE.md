@@ -216,6 +216,14 @@ commit reaches them the moment it lands, where an action consumer sees nothing u
   matters: on a ten-lens run, six lenses agreed on a cache-key nit while the missing
   index and the keyboard-access failure were each found by one. For the same reason, do
   not add severity filtering.
+- **Bounding a tool's output is not the severity filtering the rule above forbids.**
+  `review/tools/semgrep.ts` caps what it hands over at 100 findings. That looks like the
+  filtering ruled out two entries up, and it is not: that rule exists because a *lens*
+  grades severity without the context that decides it, so its label is too unreliable to
+  hide anything with. A cap on tool input is a bound on what one lens is asked to read,
+  not on what a reader is told — everything raised stays in `build/tool-*.json` in the
+  artifact, and the lens reports how many it was given. Keep the distinction if you
+  touch either rule: bound the input, never the findings.
 - **Lenses must not modify the working tree.** Some review skills offer to fix what they
   find, and ten lenses read the same checkout at once, so one edit corrupts every other
   lens's review. `Edit`, `Write`, and `NotebookEdit` are kept away from them twice over:
