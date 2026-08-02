@@ -392,6 +392,34 @@ runs:
                   "$RUNNER_TEMP/codeferret/build/findings.json" \
                   "$HEAD" "$PR"
 
+        # Joined here rather than in the step below, because upload-artifact refuses a
+        # pattern holding `.` or `..` as a segment and the natural way to ask for the whole
+        # directory is `.`. That cost a run: the review posted, `build/.` was refused, the
+        # job went red, and the artifact the step exists to keep was never kept.
+        - name: Resolve what to keep
+          id: artifact
+          if: ${{ always() && inputs.artifact-path != '' }}
+          shell: bash
+          env:
+              ARTIFACT_PATH: ${{ inputs.artifact-path }}
+          run: |
+              build="$RUNNER_TEMP/codeferret/build"
+
+              case "$ARTIFACT_PATH" in
+                  *..*)
+                      echo "artifact-path must stay inside the build directory: $ARTIFACT_PATH" >&2
+                      exit 1
+                      ;;
+                  . | ./)
+                      path="$build"
+                      ;;
+                  *)
+                      path="$build/$ARTIFACT_PATH"
+                      ;;
+              esac
+
+              printf 'path=%s\n' "$path" >>"$GITHUB_OUTPUT"
+
         # Last, and after the posting step rather than before it. `post-review.ts` writes
         # the `posted` record into the findings file once GitHub has accepted the review,
         # and a later run steps over any artifact that carries no such record: what a run
@@ -404,10 +432,11 @@ runs:
         #
         # `always()`, so a failed run still leaves what it had, and someone can read it by
         # hand. A failed run cannot suppress anything, because it never wrote the record.
+        # The path is empty when the step above was skipped or refused what it was given.
         - name: Keep the run for inspection
-          if: ${{ always() && inputs.artifact-path != '' }}
+          if: ${{ always() && steps.artifact.outputs.path != '' }}
           uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
           with:
               name: codeferret-run
-              path: ${{ runner.temp }}/codeferret/build/${{ inputs.artifact-path }}
+              path: ${{ steps.artifact.outputs.path }}
               retention-days: 14
