@@ -73,8 +73,9 @@ inputs:
             repository root and one level inside `apps/` and `packages/`, because both are
             legal App Router route segments and the any-depth form hides `app/build/` from
             every lens. `dist` stays at any depth: it is a packaging convention rather than
-            a word anybody routes on. Add your own workspace directory here if it is
-            neither `apps/` nor `packages/`.
+            a word anybody routes on. `.vercel/` is root-anchored for the same reason as
+            `out`, and `next-env.d.ts` is a fixed filename that is never a route segment.
+            Add your own workspace directory here if it is neither `apps/` nor `packages/`.
         required: false
         default: |
             **/*.lock
@@ -83,6 +84,8 @@ inputs:
             node_modules/**
             vendor/**
             **/.next/**
+            .vercel/**
+            **/next-env.d.ts
             **/dist/**
             out/**
             build/**
@@ -98,15 +101,22 @@ inputs:
         required: false
         default: ''
     model:
-        description: Model for the orchestrator and every lens.
+        description: |
+            Model for the orchestrator and every lens. No lens agent names a model of its
+            own, so each takes the session's: a fourteen-lens run's `modelUsage` records
+            430k output tokens against the one model named here.
         required: false
         default: opus
     effort:
         description: |
-            Reasoning effort for the orchestrator and every lens: low, medium, high,
-            xhigh or max. Empty leaves the model's own default. Turning it down changes
-            review quality as much as it changes the bill. Measure a run before you settle
-            on a level. The findings file records what each lens returned.
+            Reasoning effort for the orchestrator's session: low, medium, high, xhigh or
+            max. Empty leaves the model's own default.
+
+            Whether it reaches a dispatched lens is unmeasured, and nothing in what a run
+            writes down would answer that. Most of the bill is the lenses rather than the
+            orchestrator, so turning it down may save less than you expect. Measure a run
+            before you settle on a level: the findings file records what each lens
+            returned, and the job summary what the run cost.
         required: false
         default: ''
     command-prefix:
@@ -208,6 +218,44 @@ outputs:
 runs:
     using: composite
     steps:
+        # First, so an `artifact-path` that cannot be uploaded fails the job in the first
+        # ten seconds instead of after a review that took twenty minutes and cost real
+        # money. Resolved here rather than in the upload step below, because
+        # upload-artifact refuses a pattern holding `.` or `..` as a segment, and the
+        # natural way to ask for the whole directory is `.`.
+        - name: Resolve what to keep
+          id: artifact
+          if: inputs.artifact-path != ''
+          shell: bash
+          env:
+              ARTIFACT_PATH: ${{ inputs.artifact-path }}
+          run: |
+              build="$RUNNER_TEMP/codeferret/build"
+
+              newline='
+              '
+
+              case "$ARTIFACT_PATH" in
+                  *..*)
+                      echo "artifact-path must stay inside the build directory: $ARTIFACT_PATH" >&2
+                      exit 1
+                      ;;
+                  *"$newline"*)
+                      # GITHUB_OUTPUT reads a value's second line onward as more outputs
+                      # to set, and this is one path rather than a list.
+                      echo "artifact-path must be a single path" >&2
+                      exit 1
+                      ;;
+                  . | ./)
+                      path="$build"
+                      ;;
+                  *)
+                      path="$build/$ARTIFACT_PATH"
+                      ;;
+              esac
+
+              printf 'path=%s\n' "$path" >>"$GITHUB_OUTPUT"
+
         # actions/checkout cleans by default, deleting whatever an earlier step in the
         # caller's job wrote.
         - name: Check for an existing checkout
@@ -222,10 +270,8 @@ runs:
               fi
 
         # `head-sha` before the event, because outside a `pull_request` event the event
-        # value is empty and actions/checkout falls back to the default branch. A
-        # workflow_dispatch run passing base-ref, pr-number and head-sha then had every
-        # lens review the wrong tree, and the review was posted against a commit holding
-        # none of what it described, after the whole thing had been paid for.
+        # value is empty and actions/checkout falls back to the default branch, which is
+        # not the tree the caller asked to have reviewed.
         - name: Check out the head commit
           if: inputs.checkout != 'skip' && steps.probe.outputs.present == 'false'
           uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -249,7 +295,7 @@ runs:
 
               echo "installing:$need"
 
-              # shellcheck disable=SC2086 # unquoted, so the list splits into arguments
+              # shellcheck disable=SC2086 # $need is built above, one package name at a time
               npm install -g $need
 
         - name: Resolve the review target
@@ -275,8 +321,11 @@ runs:
               if [ -f "$(git rev-parse --git-dir)/shallow" ]; then
                   git fetch --unshallow --no-tags origin || true
               fi
+              # `--` because git reads an argument that begins with a dash as an option
+              # wherever it sits, and a ref may legally begin with one. `--upload-pack=`
+              # in that position runs a command on the runner.
               if [ -n "$DEFAULT_BASE" ]; then
-                  git fetch --no-tags origin "$DEFAULT_BASE" || true
+                  git fetch --no-tags origin -- "$DEFAULT_BASE" || true
               fi
 
               if ! git rev-parse --verify --quiet "$base" >/dev/null; then
@@ -368,14 +417,9 @@ runs:
                   exit 1
               fi
 
-              # What the lenses read, which is `git rev-parse HEAD` in the workspace when
-              # the run started, and need not be what the event named: under
-              # `checkout: skip`, or where the probe found a checkout an earlier step
-              # produced, the workspace is at whatever that step chose.
-              #
-              # Said rather than acted on. The review is one body with no anchored
-              # comments, so the commit it is recorded against is a record and not a
-              # position, and the honest-looking fix costs more than the defect: a caller
+              # The mismatch is reported and not corrected. The review is one body with no
+              # anchored comments, so the commit it is recorded against is a record rather
+              # than a position, and the obvious fix costs more than the defect: a caller
               # who checks out for themselves usually gets `refs/pull/N/merge`, a commit
               # the reviews API refuses because it is not on the pull request, and the
               # review would be lost rather than misfiled.
@@ -392,47 +436,15 @@ runs:
                   "$RUNNER_TEMP/codeferret/build/findings.json" \
                   "$HEAD" "$PR"
 
-        # Joined here rather than in the step below, because upload-artifact refuses a
-        # pattern holding `.` or `..` as a segment and the natural way to ask for the whole
-        # directory is `.`. That cost a run: the review posted, `build/.` was refused, the
-        # job went red, and the artifact the step exists to keep was never kept.
-        - name: Resolve what to keep
-          id: artifact
-          if: ${{ always() && inputs.artifact-path != '' }}
-          shell: bash
-          env:
-              ARTIFACT_PATH: ${{ inputs.artifact-path }}
-          run: |
-              build="$RUNNER_TEMP/codeferret/build"
-
-              case "$ARTIFACT_PATH" in
-                  *..*)
-                      echo "artifact-path must stay inside the build directory: $ARTIFACT_PATH" >&2
-                      exit 1
-                      ;;
-                  . | ./)
-                      path="$build"
-                      ;;
-                  *)
-                      path="$build/$ARTIFACT_PATH"
-                      ;;
-              esac
-
-              printf 'path=%s\n' "$path" >>"$GITHUB_OUTPUT"
-
         # Last, and after the posting step rather than before it. `post-review.ts` writes
         # the `posted` record into the findings file once GitHub has accepted the review,
-        # and a later run steps over any artifact that carries no such record: what a run
-        # never said cannot be counted as said.
+        # and a later run steps over any artifact with no such record, because nothing
+        # proves that review reached the pull request.
         #
         # Uploaded from here rather than from the caller's workflow because the name is
         # protocol between this step and the run that reads it. A consumer who holds the
         # step in their own file can rename it, drop it, or point it elsewhere, and the
-        # only symptom is a review that says the same things on every push.
-        #
-        # `always()`, so a failed run still leaves what it had, and someone can read it by
-        # hand. A failed run cannot suppress anything, because it never wrote the record.
-        # The path is empty when the step above was skipped or refused what it was given.
+        # only symptom is every finding being posted again on every push.
         - name: Keep the run for inspection
           if: ${{ always() && steps.artifact.outputs.path != '' }}
           uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

@@ -26,11 +26,9 @@ with Bash, so a token that can write contents is a token that can push. Taking t
 means setting `resolve-threads: 'true'` in the same edit.
 
 The template grants a second permission the user should know about rather than decide on:
-`actions: read`. Say what it buys. A review is one comment, and nothing GitHub's comment
-APIs return carries a review body, so a run works out what was said before by reading the
-previous run's `findings.json` out of the `codeferret-run` artifact. That read is the only
-thing `actions: read` is used for. Drop it and every finding counts as new, so the review
-repeats itself on every push. It grants read access to the repository's workflow runs and
+`actions: read`. Say what it buys. A run reads the previous run's `findings.json` out of
+the `codeferret-run` artifact to know what has already been said; without it every finding
+is posted again on every push. It grants read access to the repository's workflow runs and
 their artifacts, and nothing more.
 
 Say what the action keeps. Its last step uploads `findings.json` as an artifact and keeps

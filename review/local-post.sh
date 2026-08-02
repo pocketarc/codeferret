@@ -15,6 +15,15 @@ set -euo pipefail
 PLUGIN=${1:?usage: local-post.sh PLUGIN_ROOT PR_NUMBER}
 PR=${2:?missing pull request number}
 
+# shellcheck source=review/lib.sh
+. "$PLUGIN/review/lib.sh"
+
+# A model following commands/review.md pastes this from the preflight's `pr=` line.
+if ! plain_number "$PR"; then
+    echo "pull request number '$PR' is not a number" >&2
+    exit 1
+fi
+
 GIT_DIR=$(git rev-parse --absolute-git-dir)
 BUILD="$GIT_DIR/codeferret/run/build"
 FINDINGS="$BUILD/findings.json"
@@ -49,9 +58,13 @@ if [ "$REVIEWED_HEAD" != "$LOCAL_HEAD" ]; then
     exit 1
 fi
 
-GITHUB_TOKEN=$(gh auth token)
-GITHUB_REPOSITORY=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
-export GITHUB_TOKEN GITHUB_REPOSITORY
+gh_credentials
+
+if [ -z "$GITHUB_TOKEN" ] || [ -z "$GITHUB_REPOSITORY" ]; then
+    echo "gh could not supply a token and a repository name, and posting needs both." >&2
+    echo "run: gh auth login" >&2
+    exit 1
+fi
 
 # Whether GitHub holds the reviewed commit, which is the one recorded on the review. Ask the
 # pull request: `origin/<branch>` moves only on a fetch or a push from this clone, so it

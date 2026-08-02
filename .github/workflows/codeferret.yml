@@ -34,8 +34,8 @@ jobs:
               uses: ./
               with:
                   claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-                  # The whole build directory rather than the findings alone, which is the
-                  # default and what a consumer should keep. The fixture runs are what a
-                  # maintainer reads when a review goes wrong, and the rest of that
-                  # directory is where the answer usually is.
+                  # The fixture runs are what a maintainer reads when a review goes wrong,
+                  # and the rest of the build directory is where the answer usually is.
                   artifact-path: '.'
+                  # `contents: read` above, so nothing here could close a thread anyway.
+                  resolve-threads: 'false'

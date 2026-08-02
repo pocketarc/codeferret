@@ -40,8 +40,8 @@ any other, and worth a finding of its own.
 If you finish with nothing to report, say why in `notes`, and say how you checked. There
 is a real difference between a diff holding nothing your skill is about and a review that
 went wrong, and from the outside they look identical: both are zero findings. Only you can
-tell them apart, so "no SQL, no schema and no database access anywhere in the diff, by
-grep" is worth writing. Without it you are read as broken, which is the safe assumption.
+tell them apart, so name what you looked for, where you looked, and what you looked with.
+Say none of that and you are read as broken, which is the safe assumption.
 
 Report, do not repair. Other lenses are reading the same working tree at the same time,
 so changing a file corrupts their review as well as this one. Say what the fix is. Do
@@ -61,6 +61,12 @@ size, reflow, text spacing, content on hover, keyboard traps, timing limits, mov
 flashing content, and any change of context on focus or input. Do not report one as
 passing, and do not guess a contrast ratio from a source colour whose background you cannot
 see.
+
+Two parts of the skill contradict the paragraph above, and this overrides both. Its Output
+template has a "Color Contrast Check" table with a column each for a foreground colour, a
+background colour, a computed ratio and a pass or fail per element: leave that table out
+entirely, because every cell in it would be invented. Its Tip 1 puts contrast first: start
+with keyboard instead, and with the rest of the statically checkable set below.
 
 Two of those have a source-level failure worth reporting, and reporting it is not the same
 as judging the rendered result:

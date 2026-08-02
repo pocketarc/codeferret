@@ -20,12 +20,19 @@
  * file would throw away a review that took twenty minutes and tens of dollars to produce.
  *
  * Usage: bun check-findings.ts <findings.json>
+ *        bun check-findings.ts --self-check
+ *
+ * `--self-check` reads no findings. It answers whether the rules below still name fields
+ * merged-schema.json has, which is a question about this repository rather than about a
+ * review, so it runs from scripts/validate-manifests.ts, which lefthook and lint.yml
+ * both run.
  *
  * Exit: 0 nothing wrong, 3 something was dropped and the rest is worth posting,
- *       1 nothing usable is left, 2 this script's own rules do not match the schema.
+ *       1 nothing usable is left, 2 nothing was given to check.
  */
 
 import { join } from "node:path";
+import { reason, record } from "./lib.ts";
 
 interface JsonSchema {
     type?: string;
@@ -41,10 +48,13 @@ interface Problem {
     message: string;
 }
 
-const [path] = process.argv.slice(2);
+const args = process.argv.slice(2);
+const selfCheck = args.includes("--self-check");
+const [path] = args.filter((arg) => arg !== "--self-check");
 
-if (!path) {
+if (!path && !selfCheck) {
     console.error("usage: bun check-findings.ts <findings.json>");
+    console.error("       bun check-findings.ts --self-check");
     process.exit(2);
 }
 
@@ -68,9 +78,10 @@ const EXTRA: Record<string, (value: unknown) => string | null> = {
  * `found_by` and `in_diff` are never read. A finding with no usable `line` is listed under
  * its file alone. A missing or misspelled `status` already reads as `new`, which is what
  * the schema asks the orchestrator to choose when in doubt, and it is normalised on the
- * write-back below. An unknown `severity` sorts last and is not listed in full, and a
- * missing `category` is a cosmetic `_undefined_`. A key nothing here knows about is
- * ignored by everything downstream, which reads the fields it needs by name.
+ * write-back below, as a `severity` that is a spelling of a real one is. A `severity`
+ * nothing recognises is listed in full rather than left out, and a missing `category` is a
+ * cosmetic `_undefined_`. A key neither table names is ignored by everything downstream,
+ * which reads the fields it needs by name.
  */
 const TOLERATED = new Set([
     "findings[].found_by",
@@ -86,11 +97,6 @@ const UNKNOWN_KEY = /^has an unknown key /;
 
 function positive(value: unknown): string | null {
     return typeof value === "number" && value < 1 ? `must be 1 or more, got ${value}` : null;
-}
-
-function record(value: unknown): Record<string, unknown> | null {
-    if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
-    return value as Record<string, unknown>;
 }
 
 /** The path with every array index replaced by `[]`, which is how the tables above are keyed. */
@@ -196,15 +202,36 @@ const schema = JSON.parse(await Bun.file(join(import.meta.dir, "merged-schema.js
 
 // A key in either table that the schema has no field for is a rule that stopped running,
 // and a file with a rule missing still reports `shape valid`. A rename in the schema, or a
-// typo here, is a problem with this script rather than with a review, so it is loud.
+// typo here, is a problem with this repository rather than with a review, and it is
+// answerable without running anything, so `--self-check` is what fails on it.
 const known = new Set<string>();
 schemaPaths(schema, "", known);
 
-const stray = [...Object.keys(EXTRA), ...TOLERATED].filter((key) => !known.has(key));
+const rules = [...Object.keys(EXTRA), ...TOLERATED];
+const stray = rules.filter((key) => !known.has(key));
 
-if (stray.length > 0) {
-    console.error(`check-findings.ts keys ${stray.join(", ")}, which merged-schema.json has no field for.`);
+if (selfCheck) {
+    if (stray.length > 0) {
+        console.error(`FAIL check-findings.ts keys ${stray.join(", ")}, which merged-schema.json has no field for.`);
+        process.exit(1);
+    }
+
+    console.log(`OK check-findings.ts: ${rules.length} rule(s) name a field merged-schema.json has`);
+    process.exit(0);
+}
+
+if (!path) {
+    console.error("usage: bun check-findings.ts <findings.json>");
     process.exit(2);
+}
+
+// Loud, and then on with the review. This runs after a review that took twenty minutes and
+// tens of dollars, and a rule that stopped running is not evidence against the findings in
+// front of it. Failing here would cost the review and leave the drift for the next run
+// anyway.
+if (stray.length > 0) {
+    console.warn(`WARN check-findings.ts keys ${stray.join(", ")}, which merged-schema.json has no field for.`);
+    console.warn("Run `bun review/check-findings.ts --self-check` and fix the table.");
 }
 
 let parsed: unknown;
@@ -212,7 +239,7 @@ let parsed: unknown;
 try {
     parsed = JSON.parse(await Bun.file(path).text());
 } catch (error) {
-    console.error(`${path}: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(`${path}: ${reason(error)}`);
     process.exit(1);
 }
 
@@ -243,7 +270,21 @@ if (merged.posted !== undefined) {
     repairs.push("posted: removed. Only a review GitHub has accepted may record one");
 }
 
+// The two prose fields the body renders whole. Each reaches a string method in
+// review-body.ts, so a number here is a TypeError twenty minutes and tens of dollars into
+// a run, at the one point where nothing is left to repair it. Dropped rather than coerced:
+// what a model wrote that is not a string is not the summary either.
+for (const key of ["summary", "notes"] as const) {
+    const value = merged[key];
+
+    if (value === undefined || typeof value === "string") continue;
+
+    delete merged[key];
+    repairs.push(`${key}: ${JSON.stringify(value)} is not prose, so it went`);
+}
+
 const statuses = new Set(schema.properties?.findings?.items?.properties?.status?.enum ?? []);
+const severities = new Set(schema.properties?.findings?.items?.properties?.severity?.enum ?? []);
 
 for (const [i, entry] of merged.findings.entries()) {
     const finding = record(entry);
@@ -266,6 +307,35 @@ for (const [i, entry] of merged.findings.entries()) {
             `findings[${i}].status: ${JSON.stringify(status)} is not a status, so it was set to 'new'`,
         );
     }
+
+    // Severity decides where a finding sorts and whether the posted body prints it in
+    // full, and `LISTED` is an exact-match lookup, so `Critical` or ` high ` would demote a
+    // critical finding out of the comment. A case or whitespace variant has one right
+    // answer; a word nothing recognises does not, and review-body.ts lists that one rather
+    // than leaving it out.
+    const severity = finding.severity;
+
+    if (typeof severity === "string" && severities.size > 0 && !severities.has(severity)) {
+        const normalised = severity.trim().toLowerCase();
+
+        if (severities.has(normalised)) {
+            finding.severity = normalised;
+            repairs.push(`findings[${i}].severity: '${severity}' is a spelling of '${normalised}'`);
+        }
+    }
+}
+
+// `detail` is optional, so one that is not prose comes off the entry rather than costing
+// that lens its line in the review. Repaired before the walk, so the file the walk reports
+// on is the file that gets written back.
+for (const entry of Array.isArray(merged.lens_health) ? merged.lens_health : []) {
+    const health = record(entry);
+
+    if (!health || health.detail === undefined || typeof health.detail === "string") continue;
+
+    const was = JSON.stringify(health.detail);
+    delete health.detail;
+    repairs.push(`lens_health[${String(health.lens)}].detail: ${was} is not prose, so it went`);
 }
 
 const problems: Problem[] = [];
@@ -293,16 +363,35 @@ for (const p of fatal) {
     if (owner !== undefined) doomed.add(Number(owner));
 }
 
-// A fault outside `findings` never drops anything: post-review.ts logs a GraphQL error and
-// carries on for a bad `thread_id`, and renders lens_health as prose. A non-object entry is
-// the exception, because it throws where the script reads a field off it.
+// A fault outside `findings` costs a line of the review rather than a finding: post-review.ts
+// logs a GraphQL error and carries on for a thread id GitHub does not know, and a
+// findings_returned that is not a number renders as the word it is. What it does not
+// survive is a field it calls a string method on, which is why the entries below are
+// checked rather than warned about.
 const elsewhere = fatal.filter((p) => !/^findings\[/.test(p.path));
+
+/**
+ * The fields an entry has to carry for post-review.ts to render it at all.
+ *
+ * `lensLabel` replaces on `lens`, `clamp` slices `detail`, and the resolve reason is
+ * flattened with a replace, each of them straight onto the value the orchestrator wrote.
+ * One entry short is a line missing from a list; the alternative is the whole review lost
+ * to a TypeError after it has been paid for.
+ */
+const RENDERABLE: Record<"resolve" | "lens_health", (entry: Record<string, unknown>) => boolean> = {
+    resolve: (entry) => typeof entry.thread_id === "string" && typeof entry.reason === "string",
+    lens_health: (entry) => typeof entry.lens === "string",
+};
 
 const keepEntries = (key: "resolve" | "lens_health"): number => {
     const list = merged[key];
     if (!Array.isArray(list)) return 0;
 
-    const kept = list.filter((entry) => record(entry) !== null);
+    const kept = list.filter((entry) => {
+        const object = record(entry);
+        return object !== null && RENDERABLE[key](object);
+    });
+
     const dropped = list.length - kept.length;
     if (dropped > 0) merged[key] = kept;
 

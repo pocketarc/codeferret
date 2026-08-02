@@ -10,9 +10,8 @@
  * The plugin manifests have the same problem one step further out: Claude Code reads
  * them when somebody installs the plugin, so a broken one fails on their machine.
  *
- * Each check below is a named function returning its failures, and CHECKS is the list.
- * The file used to be one run of top-level statements threaded on a shared counter, and
- * there was no way to see what it covered without reading all of it.
+ * Each check below is a named function returning its failures, and CHECKS is the list, so
+ * what this covers can be read off one array.
  *
  * Usage: bun scripts/validate-manifests.ts [<check-name>...]
  */
@@ -418,6 +417,25 @@ async function checkGenerated(): Promise<Failures> {
     return list;
 }
 
+/**
+ * Whether check-findings.ts still names fields merged-schema.json has.
+ *
+ * A rule naming a field the schema no longer has stops running, and check-findings.ts then
+ * reports `shape valid` for a file that rule would have caught. The question is answerable
+ * without a review, and asking it at the end of one would throw a review away to report a
+ * typo here.
+ */
+async function checkFindingRules(): Promise<Failures> {
+    const list: Failures = [];
+    const run = Bun.spawnSync(["bun", "review/check-findings.ts", "--self-check"]);
+    const decode = new TextDecoder();
+
+    if (run.exitCode !== 0) list.push(decode.decode(run.stderr).trim());
+    else process.stdout.write(decode.decode(run.stdout));
+
+    return list;
+}
+
 async function checkPrompts(): Promise<Failures> {
     const list: Failures = [];
 
@@ -531,6 +549,7 @@ const CHECKS: Array<[string, () => Promise<Failures>]> = [
     ["provenance", checkProvenance],
     ["defaults", checkDefaults],
     ["generated", checkGenerated],
+    ["finding-rules", checkFindingRules],
     ["prompts", checkPrompts],
     ["workflows", checkWorkflows],
     ["versions", checkShippedVersions],

@@ -99,16 +99,12 @@ const reported = number(last.total_cost_usd);
 
 // A subscription-billed run has been seen to report `total_cost_usd` as zero while the
 // modelUsage figures said otherwise, and zero is the number a reader takes for a free $36
-// review on every surface this reaches. So a reported zero falls through to the sum.
+// review on every surface this reaches. So a reported zero falls through to the sum, and
+// only an empty `modelUsage` falls back to it: `record({})` is not null, so testing for
+// the object rather than for its entries produces the confident 0.00 this exists to avoid.
 //
-// Null when the log carried neither: a confident 0.00 out of a log whose shape has moved
-// is the failure this file is narrowed to avoid.
-let costUsd: number | null;
-
-if (reported) costUsd = reported;
-else if (models !== null) costUsd = summed;
-else if (reported === 0) costUsd = 0;
-else costUsd = null;
+// Null when the log carried neither, which is what a shape that has moved looks like.
+const costUsd: number | null = reported || (perModel.length > 0 ? summed : reported);
 const durationMs = number(last.duration_ms) ?? 0;
 const money = costUsd === null ? "unknown" : `$${costUsd.toFixed(2)}`;
 

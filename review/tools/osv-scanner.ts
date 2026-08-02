@@ -20,7 +20,7 @@
  */
 
 import { basename, join } from "node:path";
-import { readDiffArgs } from "../lib.ts";
+import { readDiffArgs, reason } from "../lib.ts";
 import { changedFiles, MAX_FINDINGS, repoRoot, reporter, runner } from "./report.ts";
 
 const IMAGE =
@@ -106,7 +106,7 @@ try {
     // of this file.
     ({ range } = await readDiffArgs(argsFile));
 } catch (error) {
-    await write({ ran: false, reason: error instanceof Error ? error.message : String(error) });
+    await write({ ran: false, reason: reason(error) });
     console.error(`osv-scanner: ${argsFile} could not be read, skipped`);
     process.exit(0);
 }

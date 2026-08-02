@@ -4,8 +4,8 @@
  *
  * The `static-analysis` lens is asked to account for what each report held and whether
  * the tool ran at all, and it cannot do that from a shape that changes with the path the
- * tool took. Two object literals held that contract by hand until this module took it
- * over: a misspelled key had produced a report the lens treated as a clean result.
+ * tool took. So the shape is declared here rather than written out at each exit, where a
+ * misspelled key produced a report the lens read as a clean result.
  *
  * There is no index signature on `ToolReport`, because one turns off the excess-property
  * check that is the whole point: `write({ ran: true, hwo: "binary" })` compiled, the

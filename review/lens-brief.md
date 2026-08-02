@@ -34,8 +34,8 @@ any other, and worth a finding of its own.
 If you finish with nothing to report, say why in `notes`, and say how you checked. There
 is a real difference between a diff holding nothing your skill is about and a review that
 went wrong, and from the outside they look identical: both are zero findings. Only you can
-tell them apart, so "no SQL, no schema and no database access anywhere in the diff, by
-grep" is worth writing. Without it you are read as broken, which is the safe assumption.
+tell them apart, so name what you looked for, where you looked, and what you looked with.
+Say none of that and you are read as broken, which is the safe assumption.
 
 Report, do not repair. Other lenses are reading the same working tree at the same time,
 so changing a file corrupts their review as well as this one. Say what the fix is. Do

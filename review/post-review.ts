@@ -19,8 +19,8 @@
  */
 
 import { dirname, join } from "node:path";
-import { graphql, graphqlFailure, rest } from "./github.ts";
-import { composeReview, LISTED, partition, plural } from "./review-body.ts";
+import { graphql, graphqlFailure, rest, splitRepository } from "./github.ts";
+import { brokenLenses, composeReview, isListed, partition, plural } from "./review-body.ts";
 import type { Merged } from "./review-body.ts";
 
 const [findingsPath, headSha, prNumber] = process.argv.slice(2);
@@ -33,9 +33,23 @@ if (!findingsPath || !headSha || !prNumber || !token || !repo) {
     process.exit(2);
 }
 
+// Both go into a REST path. The number arrives from a workflow input or from a model
+// pasting the preflight's `pr=` line, and a `/` or a `?` in it re-points the request at
+// another resource or hangs a query string off it.
+if (!/^[0-9]+$/.test(prNumber)) {
+    console.error(`pr-number is '${prNumber}'. It has to be a number.`);
+    process.exit(2);
+}
+
+if (!splitRepository(repo)) {
+    console.error(`GITHUB_REPOSITORY is '${repo}'. It has to be owner/name.`);
+    process.exit(2);
+}
+
 // Bound here rather than inside a function, because the check above narrows these only at
 // this level: a function body could be called before it ran.
-const buildDir = dirname(findingsPath);
+const findingsFile: string = findingsPath;
+const buildDir = dirname(findingsFile);
 
 /** Threads this run posted itself, which are the only ones it may resolve. */
 async function ownThreads(): Promise<Set<string>> {
@@ -66,31 +80,62 @@ try {
     // first, but local-post.sh and the by-hand path in review/README.md both come
     // straight here, and an unhandled rejection at the end of a run that cost real money
     // is a worse answer than a sentence naming the file.
-    merged = JSON.parse(await Bun.file(findingsPath).text()) as Merged;
+    merged = JSON.parse(await Bun.file(findingsFile).text()) as Merged;
 } catch (error) {
-    console.error(`${findingsPath}: ${error instanceof Error ? error.message : String(error)}`);
-    console.error(`check it with: bun check-findings.ts ${findingsPath}`);
+    console.error(`${findingsFile}: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(`check it with: bun check-findings.ts ${findingsFile}`);
     process.exit(1);
 }
 
 if (typeof merged !== "object" || merged === null || !Array.isArray(merged.findings)) {
-    console.error(`${findingsPath}: has no \`findings\` array`);
-    console.error(`check it with: bun check-findings.ts ${findingsPath}`);
+    console.error(`${findingsFile}: has no \`findings\` array`);
+    console.error(`check it with: bun check-findings.ts ${findingsFile}`);
     process.exit(1);
 }
 
-const { all: allFindings, fresh: findings, suppressed, declined } = partition(merged.findings);
+// Partitioned once and handed to composeReview, so the counts in this log line and the
+// counts in the body cannot come from two different derivations of the same findings.
+const parts = partition(merged.findings);
+const { all: allFindings, fresh: findings, suppressed, declined } = parts;
+
+/**
+ * Record that this run's findings reached the pull request, and which one.
+ *
+ * fetch-previous.ts suppresses nothing on the strength of an artifact without this, so a
+ * run that posts nothing because it had nothing new still writes one. Otherwise ten quiet
+ * pushes put the last posted artifact past the point that script stops looking, and the
+ * eleventh run raises the whole review again on a pull request that was already clean.
+ *
+ * The number is here because artifacts are found by head branch, and a branch name is
+ * reused as soon as a merged branch is recreated and can head two open pull requests at
+ * once. Without it, a review of one pull request silences findings on another.
+ *
+ * A failure to write it costs a repeated comment on the next run and nothing worse, so it
+ * is logged rather than allowed to fail a job whose review has already landed.
+ */
+async function markPosted(url: string | null): Promise<void> {
+    try {
+        await Bun.write(
+            findingsFile,
+            `${JSON.stringify({ ...merged, posted: { at: new Date().toISOString(), url, pr: prNumber } }, null, 2)}\n`,
+        );
+    } catch (error) {
+        console.error(
+            `${findingsFile} could not be marked as posted:` +
+                ` ${error instanceof Error ? error.message : String(error)}.` +
+                " The next run will raise these findings again.",
+        );
+    }
+}
 
 // Resolving is a write, so a dry run reports the decision without making it.
 const mine = await ownThreads();
 const asked = merged.resolve ?? [];
 
-// The orchestrator is told to leave a human's thread open, and that judgement is made in a
-// session that has just read every comment on the pull request, written by anyone who can
-// comment. `mine` is the non-model signal beside it: the login the review posts under, and
-// the shape an inline comment of ours ended in. Resolving somebody else's thread takes their
-// words off the page, and the next run reads the resolved thread back as a declined
-// finding, so one wrong call suppresses a finding for good.
+// `mine` is the non-model signal beside the orchestrator's judgement. fetch-existing.ts
+// computes it, and has what a thread must carry to be marked. Resolving somebody else's
+// thread takes their words off the page, and the next run reads a resolved thread back as
+// a declined finding, so one wrong call suppresses a finding for good.
 const foreign = asked.filter((entry) => !mine.has(entry.thread_id));
 const toResolve = asked.filter((entry) => mine.has(entry.thread_id));
 
@@ -137,10 +182,10 @@ if (toResolve.length > 0 && !process.env.DRY_RUN) {
 }
 
 const leftOpen = toResolve.length - resolved.length;
-const brokenLenses = (merged.lens_health ?? []).filter((h) => !h.ok);
-const listed = findings.filter((f) => LISTED.has(f.severity));
+const broken = brokenLenses(merged.lens_health ?? []);
+const listed = findings.filter(isListed);
 
-const reviewBody = composeReview(merged, { resolved, resolveDenied, leftOpen, env: process.env });
+const reviewBody = composeReview(merged, { resolved, resolveDenied, leftOpen, env: process.env }, parts);
 
 console.log(
     `total=${allFindings.length} new=${findings.length} suppressed=${suppressed.length}` +
@@ -150,7 +195,7 @@ console.log(
 // A run where every lens died also produces no findings, and posting nothing leaves the
 // pull request looking reviewed and clean. So a failed lens is enough on its own to post:
 // the body carries lens_health, which is the only place that failure becomes visible.
-if (findings.length === 0 && brokenLenses.length === 0 && !process.env.DRY_RUN) {
+if (findings.length === 0 && broken.length === 0 && !process.env.DRY_RUN) {
     const accounted = suppressed.length + declined.length;
     console.log(
         accounted > 0
@@ -158,6 +203,11 @@ if (findings.length === 0 && brokenLenses.length === 0 && !process.env.DRY_RUN) 
             : "no findings",
     );
     if (resolved.length > 0) console.log(`resolved ${plural(resolved.length, "thread")}`);
+
+    // Nothing new to post is this run's whole review, and the record has to carry forward
+    // or the chain of artifacts breaks. The four cases the `posted` rule exists for all
+    // fail before this branch or instead of it.
+    await markPosted(null);
     process.exit(0);
 }
 
@@ -190,28 +240,8 @@ try {
     console.error(`the review posted, but its response body was not JSON: ${detail.slice(0, 200)}`);
 }
 
-// The record that this review reached the pull request, written into the one file every
-// consumer keeps. The action uploads on its last step, after this one, so the record is in
-// the file by the time it is packed. fetch-previous.ts will not suppress a finding on the
-// strength of an artifact without it, for the reasons named at the top of that file.
-//
-// A failure to write it costs a repeated comment on the next run and nothing worse, so it
-// is logged rather than allowed to fail a job whose review has already landed.
-try {
-    await Bun.write(
-        findingsPath,
-        `${JSON.stringify(
-            { ...merged, posted: { at: new Date().toISOString(), url: created.html_url ?? null } },
-            null,
-            2,
-        )}\n`,
-    );
-} catch (error) {
-    console.error(
-        `the review posted, but ${findingsPath} could not be marked as posted:` +
-            ` ${error instanceof Error ? error.message : String(error)}.` +
-            " The next run will raise these findings again.",
-    );
-}
+// The action uploads on its last step, after this one, so the record is in the file by the
+// time it is packed.
+await markPosted(created.html_url ?? null);
 
 console.log(`posted: ${created.html_url ?? "(no url returned)"}`);

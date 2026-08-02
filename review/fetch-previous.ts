@@ -9,14 +9,13 @@
  * push for ever. The run's own findings file is the record instead, and the action's last
  * step keeps it as the `codeferret-run` artifact.
  *
- * Reading an artifact needs `actions: read`. The shipped workflow grants it, but a
- * consumer can decline it and a review must survive that, so every failure here is a line
- * on stderr and a file holding no findings. No permission, no artifact, a retention window
- * that has closed, and a first run all mean the same thing to the orchestrator: every
- * finding is new. That is what happened before this script existed, so nothing is worse
- * off for its absence.
+ * Reading an artifact needs `actions: read`, which the shipped workflow grants and a
+ * consumer can decline. So every failure here is a line on stderr and a file holding no
+ * findings, and the orchestrator reads that the same way it reads a first run: every
+ * finding is new.
  *
- * An artifact has to prove two things before what it holds silences anything.
+ * An artifact has to prove three things before what it holds silences anything, and
+ * `previous.ts` is where each is decided:
  *
  * Its review has to have been posted. post-review.ts writes `posted` into findings.json
  * once GitHub has accepted the review, and the action uploads after that, so the record
@@ -28,7 +27,12 @@
  * ever saw, and writes that status into its own findings file, so the suppression lasts as
  * long as the pull request. A run that ends red is a different thing and still counts:
  * check-findings.ts drops what it cannot use, the review lands, and the job goes red over
- * what was dropped.
+ * what was dropped. So is a run with nothing new to post: it records itself with a null
+ * url, because it suppressed everything on the strength of a review that did land.
+ *
+ * That review has to have been of this pull request. The `posted` record carries the pull
+ * request number, because the branch name is no evidence of which one: it is reused as soon
+ * as a merged branch is recreated, and one branch can head two open pull requests at once.
  *
  * It has to have come from a run of a branch pushed here. For a `pull_request` event GitHub
  * runs the workflow files as the pull request has them, so a fork's copy of the workflow
@@ -43,6 +47,9 @@
  */
 
 import { rest, restJson, splitRepository, tokenFromStdinOrEnv } from "./github.ts";
+import { reason } from "./lib.ts";
+import { candidates, firstPosted } from "./previous.ts";
+import type { Artifact, Previous } from "./previous.ts";
 import { MAX_ENTRY_BYTES, readFromZip } from "./unzip.ts";
 
 /** The name the shipped workflow gives the upload. A repository that renames it opts out. */
@@ -51,6 +58,9 @@ const ARTIFACT = "codeferret-run";
 /** Artifacts are listed newest first, so this is how far back a busy repository is searched. */
 const MAX_PAGES = 5;
 const PER_PAGE = 100;
+
+/** What action.yml keeps an artifact for. Nothing older is still downloadable. */
+const RETENTION_DAYS = 14;
 
 /**
  * How many artifacts are opened before this gives up.
@@ -80,59 +90,33 @@ if (!splitRepository(repo)) {
     process.exit(2);
 }
 
-/** A previous finding, cut down to what this run matches against. */
-interface Previous {
-    file: string;
-    line?: number;
-    title: string;
-    status?: string;
-    existing_comment_url?: string;
+// The pull request number goes into a REST path, and it arrives from a workflow input or
+// from a model pasting the preflight's `pr=` line. A `/` or a `..` in it re-points the
+// request at another resource, and a `?` hangs a query string off it.
+if (!/^[0-9]+$/.test(prNumber)) {
+    console.error(`pr-number is '${prNumber}'. It has to be a number.`);
+    process.exit(2);
 }
 
-interface WorkflowRun {
-    id?: number;
-    head_branch?: string;
-    repository_id?: number;
-    head_repository_id?: number;
-}
-
-interface Artifact {
-    id: number;
-    name: string;
-    expired: boolean;
-    created_at: string;
-    size_in_bytes: number;
-    workflow_run?: WorkflowRun;
-}
-
-function record(value: unknown): Record<string, unknown> | null {
-    if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
-    return value as Record<string, unknown>;
-}
-
-function reason(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
-}
+// Bound here rather than read inside a function, because the checks above narrow it only
+// at this level.
+const pull: string = prNumber;
 
 /**
- * Whether the run that uploaded this came from a branch pushed to this repository.
+ * The redirect target, refused unless it is one this will fetch.
  *
- * A field GitHub stopped sending would fail this for every artifact, which costs a
- * repeated comment rather than a hidden finding. That is the direction to fail in.
+ * Bun's fetch honours `file:`, so a `Location` naming one would have this read a local path
+ * and hand the bytes on as an artifact. The value comes from api.github.com today, and it
+ * is the one input this file takes on faith.
  */
-function fromThisRepository(run: WorkflowRun | undefined): boolean {
-    if (!run) return false;
+function storageUrl(location: string): string {
+    const parsed = new URL(location);
 
-    const { repository_id: base, head_repository_id: head } = run;
+    if (parsed.protocol !== "https:") {
+        throw new Error(`the artifact redirect points at ${parsed.protocol}, which this will not fetch`);
+    }
 
-    return Number.isInteger(base) && Number.isInteger(head) && base === head;
-}
-
-/** When post-review.ts recorded the review as accepted, or null when nothing did. */
-function postedAt(marker: unknown): string | null {
-    const at = record(marker)?.at;
-
-    return typeof at === "string" && at.trim() !== "" ? at : null;
+    return parsed.href;
 }
 
 /**
@@ -150,7 +134,7 @@ async function download(id: number): Promise<Uint8Array> {
     });
 
     const location = redirect.headers.get("location");
-    const response = location ? await fetch(location) : redirect;
+    const response = location ? await fetch(storageUrl(location)) : redirect;
 
     if (!response.ok) throw new Error(`HTTP ${response.status} downloading artifact ${id}`);
 
@@ -186,8 +170,8 @@ async function download(id: number): Promise<Uint8Array> {
     return zip;
 }
 
-/** What an artifact reported, or null when it records no posted review. */
-async function findingsOf(artifact: Artifact): Promise<Previous[] | null> {
+/** One artifact's findings.json, parsed. */
+async function openArtifact(artifact: Artifact): Promise<unknown> {
     if (artifact.size_in_bytes > MAX_ARTIFACT_BYTES) {
         throw new Error(`artifact ${artifact.id} is ${artifact.size_in_bytes} bytes, more than this reads`);
     }
@@ -203,50 +187,23 @@ async function findingsOf(artifact: Artifact): Promise<Previous[] | null> {
 
     if (!found) throw new Error(`artifact ${artifact.id} holds no findings.json`);
 
-    const merged = record(JSON.parse(new TextDecoder().decode(found)));
-
-    if (!merged || !Array.isArray(merged.findings)) {
-        throw new Error(`artifact ${artifact.id} holds a findings.json with no findings array`);
-    }
-
-    if (!postedAt(merged.posted)) return null;
-
-    // The file the orchestrator reads carries what it matches on and nothing else. A
-    // previous body is a paragraph per finding, rewritten every run, so it is worth nothing
-    // for matching and would put the whole of the last review into this one's context.
-    const previous: Previous[] = [];
-
-    for (const entry of merged.findings) {
-        const finding = record(entry);
-
-        if (!finding || typeof finding.file !== "string" || typeof finding.title !== "string") continue;
-
-        const line = finding.line;
-        const url = finding.existing_comment_url;
-
-        previous.push({
-            file: finding.file,
-            ...(typeof line === "number" && Number.isInteger(line) ? { line } : {}),
-            title: finding.title,
-            status: typeof finding.status === "string" ? finding.status : "new",
-            ...(typeof url === "string" && url ? { existing_comment_url: url } : {}),
-        });
-    }
-
-    return previous;
+    return JSON.parse(new TextDecoder().decode(found));
 }
 
-/** The newest artifact of this branch whose review was posted, and what it reported. */
-async function previousRun(): Promise<{ from: Artifact; findings: Previous[] } | null> {
-    // The branch, rather than a run's `pull_requests` field, which GitHub leaves empty
-    // often enough that matching on it would drop the previous run without saying so.
-    const pull = (await restJson(token, `/repos/${repo}/pulls/${prNumber}`)) as { head?: { ref?: string } };
-    const head = pull.head?.ref;
-
-    if (!head) throw new Error("the pull request names no head branch");
-
+/**
+ * The artifacts of this pull request's branch, newest first.
+ *
+ * The endpoint lists every CodeFerret artifact in the repository, so on a busy repository
+ * the branch's own can sit several pages down. Paging stops at the retention window, past
+ * which nothing is still downloadable, and a line on stderr names the page cap when that is
+ * what ended the search: running out without a word leaves a review that repeats itself
+ * and no sign of the reason.
+ */
+async function branchArtifacts(head: string): Promise<Artifact[]> {
     const current = Number(process.env.GITHUB_RUN_ID);
-    let opened = 0;
+    const oldest = Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000;
+
+    const found: Artifact[] = [];
 
     for (let page = 1; page <= MAX_PAGES; page += 1) {
         const listed = (await restJson(
@@ -256,42 +213,37 @@ async function previousRun(): Promise<{ from: Artifact; findings: Previous[] } |
 
         const batch = listed.artifacts ?? [];
 
-        const candidates = batch
-            .filter((a) => !a.expired && a.workflow_run?.head_branch === head)
-            // A re-run keeps the same run id, so this run's own earlier upload is listed
-            // under it, and reading our own output back would mark every finding as
-            // already reported.
-            .filter((a) => !Number.isFinite(current) || a.workflow_run?.id !== current)
-            .filter((a) => fromThisRepository(a.workflow_run))
-            .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+        found.push(...candidates(batch, head, current));
 
-        // A run whose review never landed said nothing, so the run before it is still the
-        // last word on this pull request.
-        for (const artifact of candidates) {
-            if (opened >= MAX_CANDIDATES) {
-                console.error(`previous findings: gave up after opening ${opened} artifacts, none of them posted`);
-                return null;
-            }
+        if (batch.length < PER_PAGE) return found;
 
-            opened += 1;
+        const last = batch[batch.length - 1];
+        if (last && Date.parse(last.created_at) < oldest) return found;
 
-            try {
-                const findings = await findingsOf(artifact);
-
-                if (findings) return { from: artifact, findings };
-
-                console.error(
-                    `previous findings: artifact ${artifact.id} records no posted review, so what it holds counts as unsaid`,
-                );
-            } catch (error) {
-                console.error(`previous findings: artifact ${artifact.id}: ${reason(error)}`);
-            }
+        if (page === MAX_PAGES) {
+            console.error(
+                `previous findings: stopped after ${MAX_PAGES * PER_PAGE} artifacts, which is this search's limit` +
+                    " rather than the end of the list",
+            );
         }
-
-        if (batch.length < PER_PAGE) break;
     }
 
-    return null;
+    return found;
+}
+
+/** The newest artifact of this branch whose review was posted, and what it reported. */
+async function previousRun(): Promise<{ from: Artifact; findings: Previous[] } | null> {
+    // The branch, rather than a run's `pull_requests` field, which GitHub leaves empty
+    // often enough that matching on it would drop the previous run without saying so. The
+    // pull request number is then checked inside the artifact, where post-review.ts wrote it.
+    const request = (await restJson(token, `/repos/${repo}/pulls/${pull}`)) as { head?: { ref?: string } };
+    const head = request.head?.ref;
+
+    if (!head) throw new Error("the pull request names no head branch");
+
+    return firstPosted(await branchArtifacts(head), pull, openArtifact, MAX_CANDIDATES, (line) =>
+        console.error(line),
+    );
 }
 
 let from: Artifact | null = null;

@@ -47,7 +47,8 @@ PREFIX=${PREFIX:-}
 # 574k output tokens to find 29 things where Opus spent 412k to find 90.
 MODEL=${MODEL:-opus}
 
-# Empty leaves the model's own default. What turning it down costs a review is unmeasured.
+# Passed to the orchestrator's session. Whether it reaches a lens dispatched from that
+# session is unmeasured, and the run log carries no effort field to read it back from.
 EFFORT=${EFFORT:-}
 PERMISSION_MODE=${PERMISSION_MODE:-bypassPermissions}
 
@@ -103,12 +104,10 @@ if [ -n "${PR:-}" ]; then
             "$PR" "$BUILD/existing.json" ${OWN_LOGIN:+"$OWN_LOGIN"} ||
         echo "could not read this pull request's comments. Every finding will count as new." >&2
 
-    # What the last run said is in its own findings file and nowhere a comment fetch can
-    # reach: the review is one body, and a review body is neither a thread nor a
-    # conversation comment. Reading the artifact back needs `actions: read`, which the
-    # shipped workflow does not grant, so this is allowed to come back empty.
-    # fetch-previous.ts reports its own failures, so the `||` is for a failure before it
-    # can.
+    # What the last run raised is in its own findings file, which needs `actions: read` to
+    # read back. The shipped workflow grants it and a consumer can decline it, so this is
+    # allowed to come back empty. fetch-previous.ts reports its own failures, so the `||`
+    # is for a failure before it can.
     printf '%s' "$token" |
         $PREFIX bun "$ACTION/review/fetch-previous.ts" "$PR" "$BUILD/previous.json" ||
         echo "could not read the previous run's findings. Every finding will count as new." >&2
@@ -177,19 +176,15 @@ set +f
 # looks for findings, and a run that failed is the one those numbers matter most for.
 status=0
 
-# WebFetch and WebSearch are denied for the same reason scripts/build-lens-agents.ts
-# leaves them off every lens: this session reads the pull request's comments, whoever
-# wrote them, and holds CLAUDE_CODE_OAUTH_TOKEN in its environment. Bash still has curl,
-# so this removes the one-call path without closing the hole. Agent has to stay: STEP 1
-# of the orchestrator prompt dispatches every lens with it, and denying it leaves the run
-# with nothing to merge.
+# WebFetch and WebSearch are denied for the reason scripts/build-lens-agents.ts gives for
+# leaving them off every lens. Agent has to stay: STEP 1 of the orchestrator prompt
+# dispatches every lens with it, and denying it leaves the run with nothing to merge.
 #
 # `--setting-sources user` keeps the reviewed tree out of the session's own configuration.
 # The session starts in that tree, and a SessionStart hook declared there runs even under
 # bypassPermissions. Plugins passed with --plugin-dir still load, so the lens agents are
-# unaffected; a workspace lens's skill is copied into that plugin, because the flag puts
-# the tree's own .claude/skills/ out of reach along with the rest. "The reviewed tree does
-# not configure the session" in review/README.md has what was measured and how.
+# unaffected. "The reviewed tree does not configure the session" in review/README.md has
+# what was measured and how.
 $PREFIX claude -p "$(cat "$BUILD/orchestrator.txt")" \
     --model "$MODEL" \
     ${EFFORT:+--effort "$EFFORT"} \

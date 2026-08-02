@@ -18,11 +18,32 @@
 # lens list, and validate-manifests.ts checks the action's defaults against it.
 export TOOLS_LENS=static-analysis
 
+# What the scripts a session runs hand to fetch-existing.ts, fetch-previous.ts and
+# post-review.ts. Both callers pass the same two values, taken from the same tool: a token
+# read one way and a repository name read another can name two different repositories.
+#
+# Empty on failure rather than fatal: without gh a review still runs and prints, and it is
+# the caller that decides whether what it is about to do needs the credential.
+gh_credentials() {
+    GITHUB_TOKEN=$(gh auth token 2>/dev/null || true)
+    GITHUB_REPOSITORY=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)
+    export GITHUB_TOKEN GITHUB_REPOSITORY
+}
+
 # A git ref: the plain-name set plus `/`. A leading `-` is barred separately, because it
 # is legal in a ref name and git would read it as an option.
 plain_ref() {
     case $1 in
     "" | -* | *[!A-Za-z0-9._/-]*) return 1 ;;
+    *) return 0 ;;
+    esac
+}
+
+# A pull request number. It becomes a `gh pr view` argument, where a leading `-` is read as
+# a flag, and the scripts it is handed on to put it in a REST path.
+plain_number() {
+    case $1 in
+    "" | *[!0-9]*) return 1 ;;
     *) return 0 ;;
     esac
 }
@@ -36,9 +57,13 @@ plain_name() {
     esac
 }
 
-# A filesystem path. Whoever cloned the repository chose it rather than whoever opened the
-# pull request, so this bars the characters that would run as shell rather than allowing a
-# set: a path holds spaces and non-ASCII where a ref name does not.
+# A filesystem path or a pathspec glob. This bars the characters that would run as shell
+# rather than allowing a set, because a path holds spaces and non-ASCII where a ref name
+# does not.
+#
+# An alternation of quoted patterns rather than one bracket expression: semgrep's bash
+# grammar cannot read a bracket expression in a case pattern and gives up on the whole
+# construct, while still reporting the file as scanned.
 plain_path() {
     case $1 in
     "" | *"'"* | *'"'* | *';'* | *'$'* | *'`'* | *"\\"* | *'&'* | *'|'* | *'<'* | *'>'*) return 1 ;;

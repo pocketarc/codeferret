@@ -7,6 +7,5 @@ The first prints the diff under review. Its arguments are the NUL-separated list
 `__DIFF_ARGS__`, which excludes generated files.
 
 To read one file on its own, run `git diff __RANGE__ -- <path>`. Do not add a path to the
-list in `__DIFF_ARGS__`: it already holds a pathspec matching everything, git takes the
-union of the two, and you would get the whole diff back believing you had asked for one
-file.
+list in `__DIFF_ARGS__`, and do not edit that file: what comes back would be the whole diff
+rather than the file you asked for.

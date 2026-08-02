@@ -13,6 +13,12 @@ flashing content, and any change of context on focus or input. Do not report one
 passing, and do not guess a contrast ratio from a source colour whose background you cannot
 see.
 
+Two parts of the skill contradict the paragraph above, and this overrides both. Its Output
+template has a "Color Contrast Check" table with a column each for a foreground colour, a
+background colour, a computed ratio and a pass or fail per element: leave that table out
+entirely, because every cell in it would be invented. Its Tip 1 puts contrast first: start
+with keyboard instead, and with the rest of the statically checkable set below.
+
 Two of those have a source-level failure worth reporting, and reporting it is not the same
 as judging the rendered result:
 

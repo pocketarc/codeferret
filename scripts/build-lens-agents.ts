@@ -28,6 +28,9 @@ import { writeOrCheck } from "./generated.ts";
 // tree wherever the caller happened to be.
 process.chdir(join(import.meta.dir, ".."));
 
+// This list is the boundary. A skill's own `allowed-tools` cannot widen it, so
+// sentry-security-review's request for `Bash, Task` changes nothing.
+//
 // No Write, Edit or NotebookEdit, matching what the action denies at the CLI. Naming the
 // set rather than subtracting from it also leaves out every MCP tool, which a diff
 // review has no use for and which the action drops with --strict-mcp-config.
@@ -106,10 +109,8 @@ if (one !== -1) {
     }
 
     // Namespaced like a bundled lens, because build-prompts.sh copies the workspace skill
-    // into the run's plugin beside this agent. It cannot be loaded where it lives: run.sh
-    // passes `--setting-sources user`, which on 2.1.220 puts a project's own
-    // .claude/skills/ out of the session's reach along with everything else the reviewed
-    // tree declares.
+    // into the run's plugin beside this agent rather than leaving it where it lives. The
+    // comment on that `cp -R` has the reason.
     await Bun.write(
         outPath,
         agent(

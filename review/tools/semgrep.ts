@@ -23,7 +23,7 @@
 
 import { existsSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import { readDiffArgs } from "../lib.ts";
+import { readDiffArgs, reason } from "../lib.ts";
 import { changedFiles, MAX_FINDINGS, repoRoot, reporter, runner } from "./report.ts";
 
 // One entry per file semgrep could only partly parse, so a diff in a language its parser
@@ -142,7 +142,7 @@ try {
     const { range, pathspec } = await readDiffArgs(argsFile);
     diffArgs = [range, ...pathspec];
 } catch (error) {
-    await write({ ran: false, reason: error instanceof Error ? error.message : String(error) });
+    await write({ ran: false, reason: reason(error) });
     console.error(`semgrep: ${argsFile} could not be read, skipped`);
     process.exit(0);
 }

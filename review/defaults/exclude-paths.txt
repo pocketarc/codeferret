@@ -4,6 +4,8 @@ package-lock.json
 node_modules/**
 vendor/**
 **/.next/**
+.vercel/**
+**/next-env.d.ts
 **/dist/**
 out/**
 build/**

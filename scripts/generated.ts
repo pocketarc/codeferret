@@ -1,9 +1,8 @@
 /**
  * Write a set of generated files, or check the ones on disk against what would be written.
  *
- * Both generators had their own copy of this: the `--check` flag, the write-or-compare
- * loop, the `FAIL <path> does not match` line and the regenerate hint. That shape is what
- * decides whether a hand edit to a generated file is caught, so there is one of it.
+ * Shared by both generators, because this is the shape that decides whether a hand edit to
+ * a generated file is caught, and one copy of it keeps that answer the same for both.
  */
 
 import { existsSync } from "node:fs";

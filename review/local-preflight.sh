@@ -24,10 +24,9 @@ say() {
 # the script actually is and let the caller compare.
 ACTUAL_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
-# Every value below reaches a command line, because /codeferret:review has a model
-# substitute them into the shell it runs. So a value that fails one of these guards is
-# printed as `unsafe` instead. They are the same guards build-prompts.sh and run.sh apply,
-# made one process earlier, before a shell has seen the value.
+# A value that fails one of lib.sh's guards is printed as `unsafe` rather than as itself,
+# so the caller stops instead of pasting it into a command. The same guards run again in
+# build-prompts.sh and run.sh; here they run before a shell has seen the value at all.
 #
 # shellcheck source=review/lib.sh
 . "$ACTUAL_ROOT/review/lib.sh"

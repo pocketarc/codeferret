@@ -4,8 +4,6 @@ on:
     push:
     pull_request:
 
-# Neither job writes anything to GitHub, and without this they get whatever the
-# repository or organisation default grants, which on an older repository is read-write.
 permissions:
     contents: read
 
@@ -22,10 +20,11 @@ jobs:
             - name: Validate manifests
               run: bun scripts/validate-manifests.ts
 
-            # --ignore-scripts because this job runs on a fork's pull request against that
-            # pull request's own package.json, and `trustedDependencies` is read out of
-            # the same file. Without it a fork can add a package and trust it in one
-            # commit, and its install script runs on the runner before tsc starts.
+            # This job runs a fork's pull request code: `bun test` executes the test files
+            # as that pull request has them. So it is kept free of secrets and of write
+            # permissions, and what is left to lose is runner time. `--ignore-scripts`
+            # costs nothing and is right either way: an install script could reach only
+            # where the test files already reach.
             - name: Install dev dependencies
               run: bun install --frozen-lockfile --ignore-scripts
 

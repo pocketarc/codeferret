@@ -21,11 +21,8 @@
  * for a person typing a slash command in their own checkout, and a dispatched lens is not
  * that.
  *
- * Two things are deliberately left alone. `allowed-tools` is inert here, because an
- * agent's `tools:` list is a hard boundary a skill cannot widen: sentry-security-review
- * asking for `Bash, Task` gets it nothing. And upstream's prose stays as written, Title
- * Case headings and all, because the commit in PROVENANCE.tsv is only worth pinning while
- * the vendored copy still matches it.
+ * Upstream's prose stays as written, Title Case headings and all, because the commit in
+ * PROVENANCE.tsv is only worth pinning while the vendored copy still matches it.
  *
  * Frontmatter is edited a line at a time rather than parsed and re-emitted, unlike
  * validate-manifests.ts, which parses it. A YAML round-trip reformats every key this

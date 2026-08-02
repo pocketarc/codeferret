@@ -37,13 +37,10 @@ jobs:
             # `resolve-threads` to 'true' in the same edit.
             contents: read
             pull-requests: write
-            # What stops a finding being raised again on every push. The review is one
-            # comment, and nothing GitHub's comment APIs return carries a review body, so a
-            # run reads what the last one found out of the artifact it kept. That read is
-            # the only thing this permission is used for. Drop the line and the run reads
-            # nothing, every finding counts as new, and the review says the same things
-            # over again. It grants no more than reading this repository's own runs and
-            # their artifacts.
+            # What lets a run read the findings the previous run kept, so a finding is
+            # posted once instead of on every push. It is used for that and nothing else,
+            # and it grants no more than reading this repository's own runs and their
+            # artifacts.
             actions: read
 
         steps:

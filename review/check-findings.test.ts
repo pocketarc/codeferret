@@ -1,14 +1,13 @@
+// Run the script rather than a function pulled out of it. The three exit codes are the
+// contract: run.sh writes the marker the action posts on for 0 and 3 and not for 1, and
+// both branch on nothing else. A pure function would leave that part untested, which is
+// the part a regression would be invisible in.
+
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-/**
- * Run the script rather than a function pulled out of it. The three exit codes are the
- * contract: run.sh writes the marker the action posts on for 0 and 3 and not for 1, and
- * both branch on nothing else. A pure function would leave that part untested, which is
- * the part a regression would be invisible in.
- */
 const SCRIPT = join(import.meta.dir, "check-findings.ts");
 
 let dir: string;
@@ -56,7 +55,7 @@ function findingsOf(written: unknown): Array<Record<string, unknown>> {
 }
 
 describe("check-findings", () => {
-    test("passes a file with nothing wrong with it", async () => {
+    test("passes a file with nothing wrong in it", async () => {
         const { code, out } = await check({ findings: [finding()] });
 
         expect(code).toBe(0);
@@ -132,10 +131,67 @@ describe("check-findings", () => {
         expect(out).toContain("nothing usable");
     });
 
-    test("keeps a lens_health entry that is not an object out of the file", async () => {
+    test("drops a lens_health entry that is not an object", async () => {
         const { code, written } = await check({ findings: [finding()], lens_health: ["broken"] });
 
         expect(code).toBe(3);
         expect((written as { lens_health?: unknown[] }).lens_health).toEqual([]);
+    });
+
+    test("keeps a severity that is only a spelling of a real one", async () => {
+        const { code, out, written } = await check({ findings: [finding({ severity: " Critical " })] });
+
+        expect(code).toBe(0);
+        expect(out).toContain("FIXED");
+        expect(findingsOf(written)[0]?.severity).toBe("critical");
+    });
+
+    test("drops a summary that is not prose, which post-review.ts would slice", async () => {
+        const { code, out, written } = await check({ summary: 5, notes: [], findings: [finding()] });
+
+        expect(code).toBe(0);
+        expect(out).toContain("FIXED summary");
+        expect(written).not.toHaveProperty("summary");
+        expect(written).not.toHaveProperty("notes");
+    });
+
+    test("drops a lens_health entry whose name post-review.ts would call replace on", async () => {
+        const { code, written } = await check({
+            findings: [finding()],
+            lens_health: [{ lens: 7, findings_returned: 1, ok: true }],
+        });
+
+        expect(code).toBe(3);
+        expect((written as { lens_health?: unknown[] }).lens_health).toEqual([]);
+    });
+
+    test("drops a resolve entry whose reason post-review.ts would flatten", async () => {
+        const { code, written } = await check({
+            findings: [finding()],
+            resolve: [{ thread_id: "a", reason: 9 }],
+        });
+
+        expect(code).toBe(3);
+        expect((written as { resolve?: unknown[] }).resolve).toEqual([]);
+    });
+
+    test("takes a lens_health detail that is not prose off the entry, keeping the lens", async () => {
+        const { code, out, written } = await check({
+            findings: [finding()],
+            lens_health: [{ lens: "codeferret:x", findings_returned: 1, ok: true, detail: 12 }],
+        });
+
+        expect(code).toBe(0);
+        expect(out).toContain("FIXED");
+        expect((written as { lens_health?: Array<Record<string, unknown>> }).lens_health).toHaveLength(1);
+        expect((written as { lens_health?: Array<Record<string, unknown>> }).lens_health?.[0]).not.toHaveProperty(
+            "detail",
+        );
+    });
+
+    test("its own rules still name fields the schema has", async () => {
+        const run = Bun.spawnSync(["bun", SCRIPT, "--self-check"]);
+
+        expect(run.exitCode).toBe(0);
     });
 });

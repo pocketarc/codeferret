@@ -14,7 +14,7 @@
  */
 
 import { graphqlFailure, graphql as request, restJson, splitRepository, tokenFromStdinOrEnv } from "./github.ts";
-import { MARKER, RELEASED_TRAILER } from "./lib.ts";
+import { MARKER, reason, RELEASED_TRAILER } from "./lib.ts";
 
 const [prNumber, outPath, ownArg] = process.argv.slice(2);
 const own = (ownArg || "github-actions").replace(/\[bot\]$/, "");
@@ -31,6 +31,13 @@ const split = splitRepository(repo);
 
 if (!split) {
     console.error(`GITHUB_REPOSITORY is '${repo}'. It has to be owner/name.`);
+    process.exit(2);
+}
+
+// The pull request number goes into a REST path and into a GraphQL variable, and it
+// arrives from a workflow input or from a model pasting the preflight's `pr=` line.
+if (!/^[0-9]+$/.test(prNumber)) {
+    console.error(`pr-number is '${prNumber}'. It has to be a number.`);
     process.exit(2);
 }
 
@@ -180,7 +187,7 @@ try {
 } catch (error) {
     // Throwing here would cost the review, so the run carries on with what it has. The
     // failure goes into the file instead, and orchestrator.md reads it.
-    threadError = error instanceof Error ? error.message : String(error);
+    threadError = reason(error);
     console.error(`could not list review threads: ${threadError}`);
 }
 
@@ -227,7 +234,7 @@ try {
         url: c.html_url,
     }));
 } catch (error) {
-    conversationError = error instanceof Error ? error.message : String(error);
+    conversationError = reason(error);
     console.error(`could not list the conversation: ${conversationError}`);
 }
 

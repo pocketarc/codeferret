@@ -35,15 +35,6 @@ PREFIX=${PREFIX:-}
 # shellcheck source=review/lib.sh
 . "$ACTION/review/lib.sh"
 
-# Every caller writes `s|__X__|...|g`, so `|` is the delimiter and an unescaped one in the
-# replacement ends the command early. `&` and `\` are special in a replacement whatever the
-# delimiter is.
-sed_escape() {
-    printf '%s' "$1" | sed -e 's/[|&\\]/\\&/g'
-}
-
-# The base ref arrives from a workflow input or from whatever the caller typed, and it
-# reaches a prompt that tells a lens to run `git log <base>..HEAD`.
 if ! plain_ref "$BASE"; then
     echo "base ref '$BASE' is not a plain git ref" >&2
     exit 1
@@ -108,7 +99,6 @@ while IFS= read -r lens; do
     lens=$(printf '%s' "$lens" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
     [ -z "$lens" ] && continue
 
-    # /codeferret:review takes lens names from whatever the user typed.
     if ! plain_name "$lens"; then
         echo "lens name '$lens' is not a plain name" >&2
         exit 1
@@ -134,21 +124,13 @@ while IFS= read -r glob; do
     glob=$(printf '%s' "$glob" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
     [ -z "$glob" ] && continue
 
-    # A glob arrives from a workflow input or from whatever /codeferret:review was given.
-    # None of the characters below belong in one. The list reaches git as argv now,
-    # through the NUL-separated file written further down, so there is no shell left for
-    # a quote to break out of. The check stays for whatever consumes the list next.
-    #
-    # An alternation of quoted patterns rather than one bracket expression, because
-    # semgrep's bash grammar cannot read a bracket expression in a case pattern and gives
-    # up on the whole construct. It then reports this file as scanned, and the largest
-    # shell change in a review gets less of a scan than the report claims.
-    case $glob in
-    *"'"* | *'"'* | *';'* | *'$'* | *'`'* | *"\\"* | *'&'* | *'|'* | *'<'* | *'>'*)
+    # The list reaches git as argv now, through the NUL-separated file written further
+    # down, so there is no shell left for a quote to break out of. The check stays for
+    # whatever consumes the list next.
+    if ! plain_path "$glob"; then
         echo "exclude path '$glob' contains a shell metacharacter" >&2
         exit 1
-        ;;
-    esac
+    fi
 
     if [ "${#PATHSPEC_ARGS[@]}" -eq 0 ]; then
         PATHSPEC_ARGS+=("--" ":(top)")
@@ -179,19 +161,24 @@ for lens in "${LENSES[@]}"; do
         # pass on, and a lens that never received that line reviewed under its name with
         # no skill loaded, which nothing downstream can tell from a real review.
         #
-        # The skill is copied in beside it rather than left where it is. run.sh passes
-        # `--setting-sources user`, which on 2.1.220 takes a project's .claude/skills/
-        # with it: measured against a real dispatch, a session started in a directory
-        # holding one could not find it, and the same session without the flag loaded it.
-        # So every workspace lens would take its agent's own instruction to stop and
-        # return nothing.
-        #
         # The agent body comes from lens-brief.md and is ours. The skill it loads is not:
         # it sits in the tree the pull request modified. So naming a workspace lens puts
         # that repository's .claude/skills/ inside the CI trust boundary, where any branch
         # can write the instructions for an agent that has Bash and runs in the job holding
-        # the tokens. Bundled lenses carry no such exposure.
+        # the tokens. Bundled lenses carry no such exposure. Said on stderr because nothing
+        # else in a run distinguishes an agent driven by branch-supplied text from one
+        # driven by ours.
+        echo "lens '$lens' is not bundled: its skill comes from $WORKSPACE/.claude/skills/$lens/," >&2
+        echo "which is part of the tree under review." >&2
+
         $PREFIX bun "$ACTION/scripts/build-lens-agents.ts" --one "$lens" "$PLUGIN/agents/$lens.md"
+
+        # The skill is copied in beside the agent rather than loaded where it lives: run.sh
+        # passes `--setting-sources user`, which on 2.1.220 takes a project's own
+        # .claude/skills/ out of the session's reach with everything else the reviewed tree
+        # declares. Left there, every workspace lens would follow its agent's own
+        # instruction to stop and return nothing. "A lens agent ships pre-built" in
+        # review/README.md has what was measured.
         cp -R "$WORKSPACE/.claude/skills/$lens" "$PLUGIN/skills/$lens"
     else
         echo "lens '$lens' has no SKILL.md in the action's bundled lenses or in" >&2
@@ -205,10 +192,8 @@ done
 # The action only ever reviews what is pushed. A session is usually on a branch still
 # being written, and INCLUDE_WORKING_TREE covers that.
 #
-# Pin HEAD to the commit it is now. A review runs for twenty minutes and whoever started
-# it is often still working: a lens found the tree moving under it mid-review and had to
-# re-anchor its whole review against a snapshot it took itself. In CI this resolves to the
-# same checked-out commit either way.
+# A review runs for twenty minutes and whoever started it is often still committing, so the
+# range names a commit rather than HEAD. In CI both resolve to the same checked-out commit.
 HEAD_SHA=$(git -C "$WORKSPACE" rev-parse HEAD 2>/dev/null || echo HEAD)
 
 # Compared with 1 rather than tested for emptiness. The value is composed by a model
@@ -241,15 +226,15 @@ while IFS= read -r -d '' arg; do args+=("$arg"); done <"$(dirname "$0")/diff-arg
 git diff "${args[@]}"
 DIFF_SCRIPT
 
-# Indent the dispatch prompt so it sits as a block inside the orchestrator's prompt.
-# Matching `^.` rather than `^` keeps blank lines free of trailing whitespace.
-sed -e "s|__BASE__|$(sed_escape "$BASE")|g" \
-    -e "s|__HEAD__|$(sed_escape "$HEAD_SHA")|g" \
-    -e "s|__RANGE__|$(sed_escape "$RANGE")|g" \
-    -e "s|__DIFF_SCRIPT__|$(sed_escape "$BUILD/diff.sh")|g" \
-    -e "s|__DIFF_ARGS__|$(sed_escape "$BUILD/diff-args")|g" \
-    "$ACTION/review/lens-dispatch.md" |
-    sed -e 's|^.|    &|' >"$BUILD/dispatch.txt"
+# The dispatch prompt is indented so that it sits as a block inside the orchestrator's.
+$PREFIX bun "$ACTION/scripts/render-prompt.ts" \
+    "$ACTION/review/lens-dispatch.md" "$BUILD/dispatch.txt" \
+    --indent 4 \
+    "__BASE__=$BASE" \
+    "__HEAD__=$HEAD_SHA" \
+    "__RANGE__=$RANGE" \
+    "__DIFF_SCRIPT__=$BUILD/diff.sh" \
+    "__DIFF_ARGS__=$BUILD/diff-args"
 
 # Only CodeFerret's own account can tell its threads from a person's. Anywhere else the
 # review posts as whoever ran it, and closing a thread would take their words off the
@@ -261,17 +246,15 @@ else
     RESOLVE_FILE="$ACTION/review/resolve-judge.md"
 fi
 
-sed -e "s|__BASE__|$(sed_escape "$BASE")|g" \
-    -e "s|__HEAD__|$(sed_escape "$HEAD_SHA")|g" \
-    -e "s|__EXISTING__|$(sed_escape "$BUILD/existing.json")|g" \
-    -e "s|__PREVIOUS__|$(sed_escape "$BUILD/previous.json")|g" \
-    -e "/__LENS_LIST__/r $BUILD/lens-list.txt" \
-    -e "/__LENS_LIST__/d" \
-    -e "/__DISPATCH__/r $BUILD/dispatch.txt" \
-    -e "/__DISPATCH__/d" \
-    -e "/__RESOLVE__/r $RESOLVE_FILE" \
-    -e "/__RESOLVE__/d" \
-    "$ACTION/review/orchestrator.md" >"$BUILD/orchestrator.txt"
+$PREFIX bun "$ACTION/scripts/render-prompt.ts" \
+    "$ACTION/review/orchestrator.md" "$BUILD/orchestrator.txt" \
+    "__BASE__=$BASE" \
+    "__HEAD__=$HEAD_SHA" \
+    "__EXISTING__=$BUILD/existing.json" \
+    "__PREVIOUS__=$BUILD/previous.json" \
+    "__LENS_LIST__@$BUILD/lens-list.txt" \
+    "__DISPATCH__@$BUILD/dispatch.txt" \
+    "__RESOLVE__@$RESOLVE_FILE"
 
 # The orchestrator reads both files whether or not there was a pull request to fetch
 # anything from, and fetch-existing.ts and fetch-previous.ts overwrite them when there was.

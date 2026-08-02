@@ -68,6 +68,19 @@ const ARGUMENT_PLACEHOLDER =
 const TARGET = "the diff under review";
 
 /**
+ * The fallback clause a placeholder carried for the run where nothing filled it.
+ *
+ * The SQL skill opens "review of ${selection} (or entire project if no selection)". Once
+ * the placeholder is substituted, what is left of the clause offers a whole-schema scan,
+ * which spends the run's budget on code the change did not touch.
+ *
+ * Stripped whether or not the placeholder is still on the line, so re-running this over a
+ * skill vendored before the pass existed repairs that copy too. A lens always has a
+ * selection, so the condition can never hold, whatever else the sentence is about.
+ */
+const NO_SELECTION_FALLBACK = /\s*\(\s*or\s+[^)]*\bif\s+no\s+selection\s*\)/gi;
+
+/**
  * Whether a line, once its dead link has become plain text, is nothing but a pointer at a
  * file that is not here.
  *
@@ -209,7 +222,7 @@ export function substitutePlaceholders(label: string, lines: string[]): Pass {
     const out = lines.map((line, i) => {
         if (fenced[i]) return line;
 
-        const rewritten = line.replace(ARGUMENT_PLACEHOLDER, TARGET);
+        const rewritten = line.replace(ARGUMENT_PLACEHOLDER, TARGET).replace(NO_SELECTION_FALLBACK, "");
 
         if (rewritten !== line) {
             notes.push(`  ${label}: rewrote ${line.trim()}`);

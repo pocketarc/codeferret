@@ -40,20 +40,23 @@ any other, and worth a finding of its own.
 If you finish with nothing to report, say why in `notes`, and say how you checked. There
 is a real difference between a diff holding nothing your skill is about and a review that
 went wrong, and from the outside they look identical: both are zero findings. Only you can
-tell them apart, so "no SQL, no schema and no database access anywhere in the diff, by
-grep" is worth writing. Without it you are read as broken, which is the safe assumption.
+tell them apart, so name what you looked for, where you looked, and what you looked with.
+Say none of that and you are read as broken, which is the safe assumption.
 
 Report, do not repair. Other lenses are reading the same working tree at the same time,
 so changing a file corrupts their review as well as this one. Say what the fix is. Do
 not apply it.
 
-Your target is the diff in your instruction, and only the diff. The skill you are about to
-load opens by offering a whole-project pass when nothing supplies a selection, and nothing
-supplies one here. Ignore that clause: a scan of the whole schema spends the run's budget
-on code this change did not touch.
+Your target is the diff in your instruction, and only the diff. A scan of the whole schema
+spends the run's budget on code this change did not touch.
+
+Where you have nothing to report, "no SQL, no schema and no database access anywhere in the
+diff, by grep" is the shape of answer to put in `notes`.
 
 Where a statement in the diff depends on a table, an index or a migration outside it, read
-that file to decide the finding, and report it against the line in the diff.
+that file to decide the finding, and anchor it to the line in that file, even when the diff
+does not touch it. The fix for a sequential scan or a missing composite index is usually in
+a migration, and an author sent to the query instead has to find that for themselves.
 
 Return JSON matching this schema as your entire final message:
 

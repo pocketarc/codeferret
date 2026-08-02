@@ -73,8 +73,8 @@ branch once over a fake `sk_live_...` Stripe key.
 
 ## Before you push
 
-`lefthook.yml` runs all of this, so a commit that would go red in CI fails here first. A
-fresh clone has no hooks until you install them:
+`lefthook.yml` runs all of this, so a push that would go red in CI fails here first, and
+the first three fail at commit time. A fresh clone has no hooks until you install them:
 
 ```sh
 brew install lefthook
@@ -102,10 +102,10 @@ the arguments behind them.
 
 - A lens's `in_diff` field is unreliable, and nothing reads it. On every run that used
   inline comments, a lens reported an out-of-diff finding as in-diff. Nothing anchors to a
-  line now, so there is nothing left to be wrong about, and the check that used to catch it
-  comes back with the first inline comment anyone adds.
+  line now, so there is nothing left to be wrong about. Whoever adds the first inline
+  comment back has to restore the check that caught it.
 - Do not ask the orchestrator for counts. It narrated "27 by three lenses" when the
-  answer was 31. `post-review.ts` computes totals, quorum, and severity spread.
+  answer was 31. `post-review.ts` and `review-body.ts` compute every count in the body.
 - A lens that returns zero findings is probably broken. One spent $1.28, exited 0,
   and emitted nothing after a complete and correct review. Every finding must go through
   the structured output, and the posted review carries `lens_health` so a dead lens shows
@@ -123,10 +123,10 @@ the arguments behind them.
   downstream can tell when it went wrong. `REVIEW.md` goes to `mattpocock-code-review` alone.
 - Do not put severity or lens agreement into a comment, and do not filter on either.
   Both are in `findings.json`, and severity orders the findings and decides which ones the
-  comment prints in full. Deciding what a comment reprints is not deciding what is reported.
-- A cap on tool input is not that filtering either. `review/tools/*` cap what they hand
-  the lens at 100 findings, sorted so the cap takes the low end, and everything raised stays
-  in `build/tool-*.json`. Cap the input, never the findings.
+  comment prints in full. Every finding stays in the file whatever the comment prints.
+- `review/tools/*` cap what they hand the lens at 100 findings, sorted so the cap takes
+  the low end, and everything a tool raised stays in `build/tool-*.json`. Cap what a lens
+  reads; the findings themselves are kept whole.
 - Lenses must not modify the working tree. Every lens reads the same checkout at once,
   so one edit corrupts every other lens's review. `Edit`, `Write`, `NotebookEdit` and
   `Agent` are all kept off the tool list in `agents/`, and `run.sh` denies the first three
@@ -152,35 +152,39 @@ the arguments behind them.
   `new` whenever it is unsure. If you tighten that, you trade duplicate comments for
   findings nobody sees. `findings.json` in the `codeferret-run` artifact holds every
   finding with its status, including the hidden ones.
-- What the last run said is in its findings file, not on the pull request. A review body
-  is neither a review thread nor a conversation comment, so nothing a comment fetch returns
-  carries it, and 60 findings of 100 would have been raised again on every push.
-  `fetch-previous.ts` reads the previous run's `codeferret-run` artifact instead.
+- The previous review is in that run's findings file. A review body is neither a review
+  thread nor a conversation comment, so nothing a comment fetch returns carries it, and 60
+  findings of 100 would have been posted again on every push. `fetch-previous.ts` reads the
+  previous run's `codeferret-run` artifact, and matches on the pull request number
+  `post-review.ts` writes into the `posted` record: a branch name is reused as soon as a
+  merged branch is recreated, and one branch can head two open pull requests at once.
 - The action keeps that artifact itself, and the shipped workflow grants `actions: read`.
   Both used to sit in the consumer's file, where a review repeated every finding on every
   push unless the consumer wrote an upload step with the right name and uncommented a
   permission, and the only sign of either mistake was the repetition. The name is protocol
   between the step that writes it and the run that reads it, so `artifact-path` chooses
-  what goes in and nothing chooses what it is called. The rule this replaces was right
-  about the code and wrong about the template: `fetch-previous.ts` still answers a missing
-  permission with a line on stderr and an empty file, because a review must not depend
-  on a permission a consumer can decline. Shipping the feature switched off is not that.
-- Only a review that was posted may suppress anything. `post-review.ts` writes `posted`
-  into the findings file once GitHub has accepted the review, and `fetch-previous.ts` skips
-  any artifact without it and takes the run before instead. A cancelled run, a 502, a token
-  without `pull-requests: write`, and `post: 'false'` all upload a findings file for a
-  review nobody ever saw. Do not treat an artifact as evidence on its own.
+  what goes in and nothing chooses what it is called. `fetch-previous.ts` still answers a
+  missing permission with a line on stderr and an empty file, because a review must not
+  depend on a permission a consumer can decline. The template grants it; a consumer who
+  deletes the line still gets a review, and it repeats itself.
+- Only a review that reached the pull request may suppress anything. `post-review.ts`
+  writes `posted` into the findings file once GitHub has accepted the review, and
+  `fetch-previous.ts` skips any artifact without it and takes the run before instead. A
+  cancelled run, a 502, a token without `pull-requests: write`, and `post: 'false'` all
+  upload a findings file for a review nobody ever saw. Do not treat an artifact as evidence
+  on its own. A run that found nothing new writes the record too, with no url: it posted
+  nothing because the last review still stood, and without a record ten quiet pushes put
+  that review past the ten artifacts `fetch-previous.ts` opens.
 - An artifact is only evidence if this repository's own run produced it. A
   `pull_request` run uses the workflow files as the pull request has them, so a fork's copy
   runs and what it uploads is stored here and listed here, under a branch name its author
   chose. `fetch-previous.ts` requires the producing run's two repository ids to match,
   which no fork run can manage.
-- Resolving a thread is a judgement, not a rule. `isOutdated` is evidence the
-  orchestrator weighs, not a gate. `post-review.ts` then refuses any thread
-  `fetch-existing.ts` did not mark `mine`, which needs the login the review posts under
-  *and* one of the two shapes an inline comment of ours ended in. Neither counts alone: an
-  HTML comment renders as nothing, so a marker on its own would let anyone who can comment
-  hand this run a thread to close.
+- Resolving a thread is a judgement the orchestrator makes, weighing `isOutdated` against
+  the diff as one piece of evidence. `post-review.ts` then refuses any thread
+  `fetch-existing.ts` did not mark `mine`, and that mark takes both a login and a comment
+  shape. `fetch-existing.ts` has why neither counts alone. Loosen either half and anyone
+  who can comment can hand this run a thread to close.
 - A reply cannot make a security defect safe. The carve-out is written into
   `orchestrator.md`, because "this is intentional" on a vulnerability would otherwise
   silence it for good. Keep it if you touch the decline rules.

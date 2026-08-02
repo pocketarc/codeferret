@@ -122,6 +122,24 @@ describe("substitutePlaceholders", () => {
 
         expect(text(substitutePlaceholders("s", source))).toBe(source.join("\n"));
     });
+
+    test("drops the whole-project offer that qualified the placeholder", () => {
+        expect(
+            text(substitutePlaceholders("s", lines("Review ${selection} (or entire project if no selection) now"))),
+        ).toBe("Review the diff under review now");
+    });
+
+    test("drops that offer from a skill vendored before this pass existed", () => {
+        expect(
+            text(substitutePlaceholders("s", lines("Review the diff under review (or entire project if no selection)"))),
+        ).toBe("Review the diff under review");
+    });
+
+    test("leaves a parenthetical that is not that offer", () => {
+        const source = "Review the schema (or the migration that changes it)";
+
+        expect(text(substitutePlaceholders("s", lines(source)))).toBe(source);
+    });
 });
 
 describe("rewriteMarkdown", () => {

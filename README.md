@@ -6,6 +6,11 @@ CodeFerret reviews a diff through fourteen independent code review skills at onc
 merges their findings into a single review comment. Each finding records which of the
 fourteen found it, so agreement between them stays visible.
 
+Every lens reads source. The accessibility and web design lenses have no browser and no
+rendered page, so contrast, focus visibility, focus order, target size, reflow, text
+spacing, timing and motion are not evaluated. Every review carries what each lens could
+not check, in that lens's own words.
+
 There are two ways to run it: as a GitHub action on every pull request, or as a Claude
 Code plugin on the branch in front of you.
 
@@ -39,9 +44,8 @@ can write contents is a token that can push. On `read`, everything else works an
 tries to close a thread.
 
 `actions: read` costs little and the review is worse without it. It is used for one thing:
-reading the previous run's `findings.json` back out of the artifact. Drop it and a run
-cannot see what the last one said, every finding counts as new, and the review repeats
-itself on every push.
+reading the previous run's `findings.json` back out of the artifact. Drop it and every
+finding is posted again on every push.
 
 The rest of that file is:
 
@@ -95,6 +99,10 @@ lines have moved.
 Posting uses your `gh` credential, which is usually scoped to everything you can reach.
 Export a fine-grained token as `GITHUB_TOKEN` if you would rather it were not: `gh` takes
 that in preference to its own.
+
+A review posted this way leaves no record the action can read. The action works out what
+has already been said from the previous run's artifact, and a session leaves no artifact
+behind, so the next run on that pull request posts all of these findings again.
 
 `/codeferret:install-workflow` writes the action's workflow into the repository you are
 in, for when you would rather have this run on every pull request.

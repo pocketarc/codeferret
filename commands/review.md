@@ -11,9 +11,9 @@ Both parts are optional, so decide by looking. A word is a lens when a directory
 name sits under `<plugin>/lenses/skills/` or `.claude/skills/`, and the base ref
 otherwise. `/codeferret:review caveman-review` names a lens, not a ref.
 
-Throughout, `<plugin>` is `${CLAUDE_PLUGIN_ROOT}`, and `<base>` and `<pr>` are values
-step 1 prints. Substitute them yourself rather than relying on a shell variable: each
-command runs in its own shell, so nothing you export survives. Put double quotes around
+Throughout, `<plugin>` is `${CLAUDE_PLUGIN_ROOT}`, and `<pr>` and `<base>` are the number
+and the ref step 1 prints. Substitute them yourself rather than relying on a shell variable:
+each command runs in its own shell, so nothing you export survives. Put double quotes around
 each one.
 
 Do not treat the quotes as what makes a value safe. `$(...)`, a backtick and `${...}` all
@@ -97,19 +97,23 @@ Run it in the background. It takes tens of minutes, which is longer than a foreg
 command is allowed.
 
 ```sh
-bash "<plugin>/review/local-run.sh" "<plugin>" "<base>"
+bash "<plugin>/review/local-run.sh" "<plugin>" ""
 ```
 
-`local-run.sh` works out the run directory, the defaults, and the gh credentials itself.
-Add to that command line where these apply:
+`local-run.sh` works out the run directory, the defaults, the gh credentials and the base
+ref itself, and prints which base it settled on. The empty second argument is what leaves
+the base to it. Add to that command line where these apply:
 
+- A ref in place of the empty string, when the user named one in `$ARGUMENTS`. Otherwise
+  leave it empty rather than passing back the `base` value step 1 printed: both are worked
+  out the same way, and a ref retyped is a ref that can be retyped wrong.
 - The lenses the user named, as further arguments. Naming any lens but `static-analysis`
   also drops the static analysis tools, whose reports only that lens reads.
-- To review uncommitted work as well, pass the `merge_base` value in place of `<base>`
-  and put `INCLUDE_WORKING_TREE=1` in front of the command.
+- To review uncommitted work as well, pass the `merge_base` value in place of the empty
+  string and put `INCLUDE_WORKING_TREE=1` in front of the command.
 - `EFFORT=low` (or `medium`, `high`, `xhigh`, `max`) in front of the command to set
-  reasoning effort. Leave it out for the model's own default. Turning it down changes
-  review quality and not only the bill, and nobody has measured by how much.
+  reasoning effort on the orchestrator's session. Leave it out for the model's own default.
+  Whether it reaches each lens is unmeasured, and so is what turning it down costs a review.
 
 Everything the run writes lands in `<git-dir>/codeferret/run/build/`, where `<git-dir>` is
 the `repo=` value from step 1, and the findings in `findings.json` beside `run.json`.
@@ -174,6 +178,12 @@ Offer to post only when the fresh output says `pr` is a number, `gh=ok`, `pushed
 review names is a line of the commit the lenses read, so a review of work GitHub has never
 seen sends its reader to code that is not there. `dirty=0` still applies when the review
 covered committed work only, because the lenses read files as they find them.
+
+Say what a review posted from here does not leave behind. The action reads what the last
+review raised out of that run's `codeferret-run` artifact, and a session's findings file
+never becomes one, so the next action run on this pull request has nothing to match against
+and posts every one of these findings again. Warn the user, so the repeat does not read as
+a bug.
 
 Ask before posting. It writes to a pull request other people are reading.
 

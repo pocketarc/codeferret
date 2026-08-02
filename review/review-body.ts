@@ -14,6 +14,11 @@ export interface Finding {
     file: string;
     line: number;
     end_line?: number;
+    /**
+     * One of `SEVERITY_ORDER`, but typed as a string because check-findings.ts keeps a
+     * finding whose severity it could not repair rather than dropping it. `isListed` and
+     * `severityRank` are where an unrecognised label is decided on.
+     */
     severity: string;
     category: string;
     title: string;
@@ -38,15 +43,22 @@ export interface Merged {
     findings: Finding[];
 }
 
-const SEVERITY_ORDER = ["critical", "high", "medium", "low", "nit", "question"];
+export const SEVERITY_ORDER = ["critical", "high", "medium", "low", "nit", "question"] as const;
+
+export type Severity = (typeof SEVERITY_ORDER)[number];
 
 /**
- * The severities the body carries in full.
+ * The severities the body carries in full when it has a run to defer the rest to.
  *
  * Everything else is in the findings file, which is what the agent doing the fixing reads.
  * A person reading the pull request gets the two that decide whether to stop and look.
+ *
+ * Declared as severities rather than as strings, so a name in this set that the schema no
+ * longer has fails to compile instead of listing nothing at run time.
  */
-export const LISTED = new Set(["critical", "high"]);
+const LISTED_SEVERITIES: readonly Severity[] = ["critical", "high"];
+
+export const LISTED: ReadonlySet<string> = new Set(LISTED_SEVERITIES);
 
 /** GitHub refuses a review body over 65536 characters. The difference is headroom. */
 export const MAX_BODY = 60000;
@@ -59,8 +71,25 @@ export const MAX_PROSE = 4000;
 export const MAX_LENS_DETAIL = 600;
 
 export function severityRank(s: string): number {
-    const i = SEVERITY_ORDER.indexOf(s);
+    const i = SEVERITY_ORDER.findIndex((known) => known === s);
     return i === -1 ? SEVERITY_ORDER.length : i;
+}
+
+/**
+ * Whether the body prints this finding in full rather than counting it.
+ *
+ * A severity the schema does not carry is listed. check-findings.ts lowercases and trims a
+ * severity it can repair and keeps the finding either way, so what reaches here
+ * unrecognised is a label nobody chose. Leaving a critical defect out of the comment on the
+ * strength of a label nothing here recognises is the wrong way to be wrong.
+ */
+export function isListed(f: Finding): boolean {
+    return LISTED.has(f.severity) || severityRank(f.severity) === SEVERITY_ORDER.length;
+}
+
+/** The lenses that did not report normally, which is the count the body leads with. */
+export function brokenLenses(health: LensHealth[]): LensHealth[] {
+    return health.filter((h) => !h.ok);
 }
 
 export interface Partitioned {
@@ -90,10 +119,11 @@ export function plural(n: number, word: string): string {
 /**
  * The workflow run this review came out of, or null when nothing names one.
  *
- * The body points at the run for every finding it does not list, and `local-post.sh` posts
- * from somebody's own machine, where there is no run and no artifact. So the environment
- * decides whether that sentence carries a link, rather than a URL being assembled out of
- * empty variables and going nowhere.
+ * It is also what decides whether there is an artifact behind the review. On a runner the
+ * findings file is one download away, so the body lists the critical and high findings and
+ * links the rest. `local-post.sh` posts from somebody's own machine, where the findings
+ * file is a path under `.git/` that means nothing to anyone else reading the pull request,
+ * so there the body carries every finding instead.
  */
 export function runUrl(env: Record<string, string | undefined>): string | null {
     const server = env.GITHUB_SERVER_URL;
@@ -156,15 +186,88 @@ export function escapeInline(text: string): string {
 }
 
 /**
+ * A model's one-line field on one line.
+ *
+ * `title` is asked for as one line and nothing checks that it is. A newline inside a list
+ * item ends the item, so the rest of a suppressed or declined list renders outside the
+ * `<details>` block it belongs to, and inside `bullet` the same newline closes the strong
+ * emphasis and leaves a literal `**` on the page.
+ */
+export function flatten(text: string): string {
+    return text.replace(/\s*\n+\s*/g, " ").trim();
+}
+
+/**
+ * A path inside a code span, with a delimiter long enough to hold it.
+ *
+ * A backtick is legal in a POSIX filename, and a one-backtick span closes at the first
+ * backtick inside it, so the rest of the bullet renders as prose and the leftover delimiter
+ * pairs with the next backtick in the review.
+ */
+export function code(text: string): string {
+    const flat = flatten(text);
+
+    let longest = 0;
+    for (const run of flat.match(/`+/g) ?? []) longest = Math.max(longest, run.length);
+
+    const fence = "`".repeat(longest + 1);
+    // A span whose content starts or ends with a backtick needs a space, which markdown
+    // then strips back off.
+    const pad = flat.startsWith("`") || flat.endsWith("`") ? " " : "";
+
+    return `${fence}${pad}${flat}${pad}${fence}`;
+}
+
+/**
+ * A link target, or null when the string is not one.
+ *
+ * The url arrives from a model and survives a round trip through the previous run's
+ * artifact. A space or a `)` in it ends the link target early and spills the rest of the
+ * line into the body, so a url that does not parse becomes no link rather than a broken
+ * one. The brackets are encoded because `URL` leaves them alone and markdown does not.
+ */
+export function linkTarget(url: string | undefined): string | null {
+    if (!url) return null;
+
+    try {
+        const parsed = new URL(url);
+
+        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+
+        return parsed.href.replace(/\(/g, "%28").replace(/\)/g, "%29");
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Escape the block a line would otherwise open.
+ *
+ * The review's own headings are an h2 and h3s below it, so a model's line opening with `#`
+ * emits an h1 into the middle of the body, and heading level is what a screen reader
+ * navigates by. `<` is worse: GitHub passes `<details>` and `<div>` through, and one left
+ * unclosed hides everything after it, the suppressed list, the declined list and the
+ * caveats included, which are where a reader learns how much of the review to trust.
+ */
+function escapeBlockStart(line: string): string {
+    return line.replace(/^(\s*)([#<])/, "$1\\$2");
+}
+
+/** The same, over the lines of a block, leaving what is inside a fence alone. */
+function escapeBlockStarts(lines: string[]): string[] {
+    const fenced = fenceMap(lines);
+    return lines.map((line, i) => (fenced[i] ? line : escapeBlockStart(line)));
+}
+
+/**
  * One finding as a bullet: where it is, what it is, and the body in full.
  *
  * The position comes first because the reader is usually an agent about to open the file.
  *
  * The continuation indent is two spaces. Four after a blank line is an indented code
- * block in markdown, which takes the formatting out of the body and stops it wrapping.
- * Two spaces still sit inside the list item's content column, so a body line opening with
- * `#` is an ATX heading, and one finding can emit an h1 into a review whose own title is
- * an h2.
+ * block in markdown, which takes the formatting out of the body and stops it wrapping. Two
+ * spaces still sit inside the list item's content column, which is why the body's lines go
+ * through `escapeBlockStart`.
  *
  * A body that opens a fence and never closes it takes everything after it into the code
  * block: the findings below, the suppressed and declined lists, the caveats. A truncated
@@ -172,55 +275,73 @@ export function escapeInline(text: string): string {
  * the map is built, and the closing line is indented with the rest.
  */
 export function bullet(f: Finding): string {
-    const lines = closeOpenFence(f.body).split("\n");
-    const fenced = fenceMap(lines);
-
-    const body = lines
-        .map((line, i) => (fenced[i] ? line : line.replace(/^(\s*)#/, "$1\\#")))
-        .join("\n  ");
+    const body = escapeBlockStarts(closeOpenFence(f.body).split("\n")).join("\n  ");
 
     // check-findings.ts keeps a finding whose category is missing rather than dropping it,
     // so the line goes rather than rendering the word "undefined" under the body.
     const category = f.category ? `\n\n  _${escapeInline(f.category)}_` : "";
 
-    return `- \`${where(f)}\` — **${escapeInline(f.title)}**\n\n  ${body}${category}`;
+    return `- ${code(where(f))}: **${escapeInline(flatten(f.title))}**\n\n  ${body}${category}`;
 }
 
 /**
  * Where a finding sits, for a reader.
  *
  * A finding with no usable line still reaches the body, so the path alone is what there is
- * to say. Interpolating the number regardless printed the word "undefined" beside the file.
+ * to say. check-findings.ts warns about a line of `0` or a missing one and keeps the
+ * finding either way, and a reader following `path:0` from a terminal arrives nowhere.
  */
 export function where(f: Finding): string {
-    if (!Number.isInteger(f.line)) return f.file;
-    if (f.end_line && f.end_line !== f.line) return `${f.file}:${f.line}-${f.end_line}`;
+    if (!Number.isInteger(f.line) || f.line < 1) return f.file;
+    if (Number.isInteger(f.end_line) && f.end_line && f.end_line > f.line) {
+        return `${f.file}:${f.line}-${f.end_line}`;
+    }
     return `${f.file}:${f.line}`;
 }
 
 /** One finding as a single line, for the sections that only say a finding was seen. */
 export function mention(f: Finding, link: string): string {
-    const url = f.existing_comment_url ? ` ([${link}](${f.existing_comment_url}))` : "";
-    return `- ${escapeInline(f.title)} (\`${where(f)}\`)${url}`;
+    const target = linkTarget(f.existing_comment_url);
+    const url = target ? ` ([${link}](${target}))` : "";
+
+    return `- ${escapeInline(flatten(f.title))} (${code(where(f))})${url}`;
 }
 
 /**
  * Prose the orchestrator wrote, cut to a length the findings can still fit around.
  *
- * Cut on a paragraph boundary and close whatever fence the cut left open. A cut at a
- * character offset lands mid-span or mid-fence, and an unbalanced fence renders the
- * counts, the lens health and every listed finding below it as one code block.
+ * Cut on the largest boundary inside the window and close whatever fence the cut left open.
+ * A cut at a character offset lands mid-span or mid-fence, and an unbalanced fence renders
+ * the counts, the lens health and every listed finding below it as one code block. The
+ * paragraph is not always there to cut on: a lens's list of what it could not check is
+ * often one paragraph or a run of single-newline lines, and that is the field where a cut
+ * mid-word does the most damage.
  */
 export function clamp(prose: string, limit = MAX_PROSE): string {
     if (prose.length <= limit) return prose;
 
     const window = prose.slice(0, limit);
-    const boundary = window.lastIndexOf("\n\n");
+    const cut = (kept: string): string => `${closeOpenFence(kept)}\n\n_(cut for length)_`;
 
-    return `${closeOpenFence(boundary > 0 ? window.slice(0, boundary) : window)}\n\n_(cut for length)_`;
+    const paragraph = window.lastIndexOf("\n\n");
+    if (paragraph > 0) return cut(window.slice(0, paragraph));
+
+    // The full stop is kept; the space after it is what the index names.
+    const sentence = window.lastIndexOf(". ");
+    if (sentence > 0) return cut(window.slice(0, sentence + 1));
+
+    const word = window.lastIndexOf(" ");
+    if (word > 0) return cut(window.slice(0, word));
+
+    return cut(window);
 }
 
-/** A collapsed block. Written by hand in four places once, and GitHub is unforgiving about the markup. */
+/** Prose the orchestrator wrote, cut to length, with the blocks it would open escaped. */
+export function prose(text: string, limit = MAX_PROSE): string {
+    return escapeBlockStarts(clamp(text, limit).split("\n")).join("\n");
+}
+
+/** A collapsed block. GitHub renders nothing at all if the markup is a line out. */
 export function details(summary: string, body: string, open = false): string {
     return `<details${open ? " open" : ""}>\n<summary>${summary}</summary>\n\n${body}\n</details>`;
 }
@@ -228,6 +349,7 @@ export function details(summary: string, body: string, open = false): string {
 /** A heading, a reason, and findings listed under it. The one section that can run long. */
 export interface Listing {
     heading: string;
+    /** Why these findings and not others. Empty when the section holds all of them. */
     lead: string;
     items: Finding[];
 }
@@ -249,7 +371,7 @@ export function assemble(head: string[], listing: Listing | null, tail: string[]
     const rendered = [...head];
 
     if (listing) {
-        const heading = `### ${listing.heading}\n\n${listing.lead}`;
+        const heading = listing.lead ? `### ${listing.heading}\n\n${listing.lead}` : `### ${listing.heading}`;
         // Reserved for the omission line, so saying what went missing cannot itself be
         // the thing that does not fit.
         budget -= heading.length + 2 + 200;
@@ -296,21 +418,33 @@ export interface Outcome {
     env: Record<string, string | undefined>;
 }
 
-/** The whole review body: which sections appear, in what order, and under what headings. */
-export function composeReview(merged: Merged, outcome: Outcome): string {
-    const { fresh, suppressed, declined } = partition(merged.findings);
+/**
+ * The whole review body: which sections appear, in what order, and under what headings.
+ *
+ * The partition is a parameter so that a caller counting the same findings for its log
+ * counts them once. Left to a default, the two derivations drift the day anything filters
+ * or re-orders before calling this, and the body and the log then describe different
+ * reviews with nothing saying so.
+ */
+export function composeReview(
+    merged: Merged,
+    outcome: Outcome,
+    parts: Partitioned = partition(merged.findings),
+): string {
+    const { fresh, suppressed, declined } = parts;
     const { resolved, resolveDenied, leftOpen, env } = outcome;
 
     const health = merged.lens_health ?? [];
-    const brokenLenses = health.filter((h) => !h.ok);
+    const broken = brokenLenses(health);
+    const limited = health.filter((h) => h.detail);
 
     const counts = [`**${plural(fresh.length, "new finding")}**`];
-    if (suppressed.length > 0) counts.push(`${suppressed.length} already commented on above`);
+    if (suppressed.length > 0) counts.push(`${suppressed.length} raised in an earlier review`);
     if (declined.length > 0) counts.push(`${declined.length} raised before and declined`);
 
     const head: string[] = ["## CodeFerret"];
 
-    if (merged.summary) head.push(clamp(merged.summary));
+    if (merged.summary) head.push(prose(merged.summary));
 
     // A screen reader speaks a separator between joined counts as nothing, so three of them
     // run into each other. Past one, they are a list.
@@ -332,26 +466,35 @@ export function composeReview(merged: Merged, outcome: Outcome): string {
                 // into it.
                 // Clamped before it is flattened, because the cut marker `clamp` appends
                 // carries newlines of its own, and one of those inside a list item ends
-                // the item and drops the rest of the list out of the block.
+                // the item and drops the rest of the list out of the block. `escapeInline`
+                // leaves `#` and `>` alone, and the flattened line starts at the item's own
+                // content column, where either one opens a block of its own.
                 const detail = h.detail
-                    ? `\n  ${escapeInline(clamp(h.detail, MAX_LENS_DETAIL).replace(/\n+/g, " "))}`
+                    ? `\n  ${escapeInline(clamp(h.detail, MAX_LENS_DETAIL).replace(/\n+/g, " ")).replace(/^([#>])/, "\\$1")}`
                     : "";
                 return `- **${name}**: ${plural(h.findings_returned, "finding")}${flag}${detail}`;
             })
             .join("\n");
 
-        if (brokenLenses.length > 0) {
+        // What a lens could not check is the one thing in this block a reader has to see
+        // without opening it: a reader takes a review of an interface change for an
+        // accessibility pass unless something names the criteria nothing evaluated.
+        if (broken.length > 0) {
             head.push(
-                `> ${brokenLenses.length} of ${health.length} lenses did not report normally, so this review covers less than it appears to.`,
+                `> ${broken.length} of ${health.length} lenses did not report normally, so this review covers less than it appears to.`,
+            );
+        } else if (limited.length > 0) {
+            head.push(
+                `> ${limited.length} of ${health.length} lenses named something they could not check. The list below has each in its own words.`,
             );
         }
 
         const heading =
-            brokenLenses.length > 0
-                ? `${health.length} lenses ran, ${brokenLenses.length} needing attention`
+            broken.length > 0
+                ? `${health.length} lenses ran, ${broken.length} needing attention`
                 : `${health.length} lenses ran, all reporting`;
 
-        head.push(details(heading, items, brokenLenses.length > 0));
+        head.push(details(heading, items, broken.length > 0));
     }
 
     const tail: string[] = [];
@@ -359,7 +502,7 @@ export function composeReview(merged: Merged, outcome: Outcome): string {
     if (suppressed.length > 0) {
         tail.push(
             details(
-                `${plural(suppressed.length, "finding")} already commented on`,
+                `${plural(suppressed.length, "finding")} raised in an earlier review`,
                 suppressed.map((f) => mention(f, "earlier comment")).join("\n"),
             ),
         );
@@ -391,29 +534,35 @@ export function composeReview(merged: Merged, outcome: Outcome): string {
         );
     }
 
-    if (merged.notes) tail.push(`### Caveats\n\n${clamp(merged.notes)}`);
+    if (merged.notes) tail.push(`### Caveats\n\n${prose(merged.notes)}`);
 
-    // The whole review is in findings.json, so the body names where that file is rather than
-    // reprinting it. Without a run to link, the sentence still has to say which file, because
-    // a reader who cannot follow a link still needs to know what to ask for.
+    // With a run behind it the body prints the two severities that decide whether to stop
+    // and names the artifact for the rest, because that artifact is one download away for
+    // everybody reading the pull request. Posted from a session there is no artifact and no
+    // run, and the findings file is a path under `.git/` on one person's machine, so every
+    // finding goes in the body instead. `assemble` still bounds it and says how many did
+    // not fit.
     const run = runUrl(env);
-    const holdsEveryOne = run
-        ? `\`findings.json\` in the \`codeferret-run\` artifact of [this run](${run}) holds every one`
-        : "`findings.json` in the run's build directory holds every one";
+    const listed = run ? fresh.filter(isListed) : fresh;
 
-    const listed = fresh.filter((f) => LISTED.has(f.severity));
+    let listing: Listing | null = null;
 
-    const listing: Listing | null =
-        fresh.length === 0
-            ? null
-            : {
-                  heading: listed.length > 0 ? "Critical and high findings" : "Findings",
-                  lead:
-                      listed.length > 0
-                          ? `${listed.length} of ${plural(fresh.length, "finding")}. ${holdsEveryOne}.`
-                          : `No finding is critical or high. ${holdsEveryOne}.`,
-                  items: listed,
-              };
+    if (listed.length > 0) {
+        listing = {
+            heading: run ? "Critical and high findings" : "Findings",
+            lead: run
+                ? `${listed.length} of ${plural(fresh.length, "finding")}.` +
+                  ` \`findings.json\` in the \`codeferret-run\` artifact of [this run](${run}) holds every one.`
+                : "",
+            items: listed,
+        };
+    } else if (fresh.length > 0 && run) {
+        // A heading is a promise of something under it, and the count is already above.
+        tail.unshift(
+            `No finding is critical or high.` +
+                ` \`findings.json\` in the \`codeferret-run\` artifact of [this run](${run}) holds every one.`,
+        );
+    }
 
     return assemble(head, listing, tail);
 }
