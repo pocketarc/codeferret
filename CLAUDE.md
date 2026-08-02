@@ -73,9 +73,20 @@ branch once over a fake `sk_live_...` Stripe key.
 
 ## Before you push
 
+`lefthook.yml` runs all of this, so a commit that would go red in CI fails here first. A
+fresh clone has no hooks until you install them:
+
 ```sh
-bun scripts/validate-manifests.ts
+brew install lefthook
+lefthook install
+```
+
+By hand, or to see one on its own:
+
+```sh
+bun scripts/validate-manifests.ts   # also both generators, and action.yml's shell
 bun run typecheck
+shellcheck -e SC2016 review/*.sh scripts/*.sh
 bun test
 ```
 

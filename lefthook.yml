@@ -1,0 +1,31 @@
+# The same checks lint.yml runs, so a push that would go red fails here first.
+#
+# Nothing is scoped by `glob`. Every check here finishes in under a second, and every one
+# of them is cross-file: adding a lens under lenses/skills/ changes what action.yml must
+# say, what review/defaults/ must hold, and what agents/ must contain. A glob narrow
+# enough to be worth having is one that eventually misses the file that mattered.
+
+pre-commit:
+    parallel: true
+    commands:
+        manifests:
+            tags: manifests static-analysis
+            # Also re-runs both generators with --check and shellchecks action.yml's
+            # `run:` blocks, which are the only shell in the repository that lives as a
+            # string inside YAML.
+            run: bun scripts/validate-manifests.ts
+        typecheck:
+            tags: ts types
+            run: bun run typecheck
+        shellcheck:
+            tags: shell lint
+            # SC2016 fires on every backtick inside a single-quoted printf format, and
+            # these scripts write markdown into a prompt, so each hit is a false positive.
+            run: shellcheck -e SC2016 review/*.sh scripts/*.sh
+
+pre-push:
+    parallel: true
+    commands:
+        test:
+            tags: ts test
+            run: bun test
