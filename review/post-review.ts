@@ -9,24 +9,19 @@
  * stops to look: the summary, the counts, which lenses reported, the critical and high
  * findings in full, and a link to the run holding the rest.
  *
+ * Once GitHub accepts the review, the findings file is rewritten with a `posted` record.
+ * That is the only evidence anywhere that a run's findings were ever said out loud, and
+ * `fetch-previous.ts` will not suppress a finding without it.
+ *
  * Usage: bun post-review.ts <findings.json> <head-sha> <pr-number>
  * Env:   GITHUB_TOKEN, GITHUB_REPOSITORY
  *        GITHUB_SERVER_URL and GITHUB_RUN_ID link the run, when a runner sets them.
  */
 
 import { dirname, join } from "node:path";
-import {
-    assemble,
-    clamp,
-    details,
-    escapeInline,
-    LISTED,
-    mention,
-    plural,
-    runUrl,
-    severityRank,
-} from "./review-body.ts";
-import type { Listing, Merged } from "./review-body.ts";
+import { graphql, graphqlFailure, rest } from "./github.ts";
+import { composeReview, LISTED, partition, plural } from "./review-body.ts";
+import type { Merged } from "./review-body.ts";
 
 const [findingsPath, headSha, prNumber] = process.argv.slice(2);
 const token = process.env.GITHUB_TOKEN;
@@ -84,19 +79,7 @@ if (typeof merged !== "object" || merged === null || !Array.isArray(merged.findi
     process.exit(1);
 }
 
-const allFindings = [...merged.findings].sort(
-    (a, b) => severityRank(a.severity) - severityRank(b.severity),
-);
-
-// Keeping a count makes a matcher that eats findings visible.
-const suppressed = allFindings.filter((f) => f.status === "already-reported");
-const declined = allFindings.filter((f) => f.status === "declined");
-const findings = allFindings.filter((f) => f.status !== "already-reported" && f.status !== "declined");
-
-/** The plugin namespace is an implementation detail, so it is dropped for display. */
-function lensLabel(lens: string): string {
-    return lens.replace(/^[^:]+:/, "");
-}
+const { all: allFindings, fresh: findings, suppressed, declined } = partition(merged.findings);
 
 // Resolving is a write, so a dry run reports the decision without making it.
 const mine = await ownThreads();
@@ -105,7 +88,7 @@ const asked = merged.resolve ?? [];
 // The orchestrator is told to leave a human's thread open, and that judgement is made in a
 // session that has just read every comment on the pull request, written by anyone who can
 // comment. `mine` is the non-model signal beside it: the login the review posts under, and
-// the marker every comment of ours carried. Resolving somebody else's thread takes their
+// the shape an inline comment of ours ended in. Resolving somebody else's thread takes their
 // words off the page, and the next run reads the resolved thread back as a declined
 // finding, so one wrong call suppresses a finding for good.
 const foreign = asked.filter((entry) => !mine.has(entry.thread_id));
@@ -124,18 +107,14 @@ let resolveDenied = false;
 if (toResolve.length > 0 && !process.env.DRY_RUN) {
     for (const { thread_id, reason } of toResolve) {
         if (resolveDenied) break;
-        const response = await fetch("https://api.github.com/graphql", {
-            method: "POST",
-            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-            body: JSON.stringify({
-                query: `mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { thread { isResolved } } }`,
-                variables: { id: thread_id },
-            }),
-        });
 
-        const payload = (await response.json()) as { errors?: Array<{ message: string }> };
+        const result = await graphql(
+            token,
+            `mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { thread { isResolved } } }`,
+            { id: thread_id },
+        );
 
-        const failure = payload.errors?.map((e) => e.message).join("; ");
+        const failure = graphqlFailure(result);
 
         if (failure?.includes("not accessible by integration")) {
             // resolveReviewThread is gated on repository write, which pull-requests:
@@ -148,8 +127,8 @@ if (toResolve.length > 0 && !process.env.DRY_RUN) {
             continue;
         }
 
-        if (!response.ok || failure) {
-            console.error(`could not resolve ${thread_id}: ${failure ?? response.status}`);
+        if (failure) {
+            console.error(`could not resolve ${thread_id}: ${failure}`);
             continue;
         }
 
@@ -158,112 +137,10 @@ if (toResolve.length > 0 && !process.env.DRY_RUN) {
 }
 
 const leftOpen = toResolve.length - resolved.length;
-
-const health = merged.lens_health ?? [];
-const brokenLenses = health.filter((h) => !h.ok);
-
-const counts = [`**${plural(findings.length, "new finding")}**`];
-if (suppressed.length > 0) counts.push(`${suppressed.length} already commented on above`);
-if (declined.length > 0) counts.push(`${declined.length} raised before and declined`);
-
-const head: string[] = ["## CodeFerret"];
-
-if (merged.summary) head.push(clamp(merged.summary));
-
-// A screen reader speaks a separator between joined counts as nothing, so three of them
-// run into each other. Past one, they are a list.
-const [onlyCount] = counts;
-head.push(counts.length === 1 && onlyCount ? onlyCount : counts.map((c) => `- ${c}`).join("\n"));
-
-if (health.length > 0) {
-    // A list, not a table: GitHub gives a wide column the container and starves the
-    // rest, and most lenses report no detail at all. Punctuation a screen reader speaks,
-    // for the reason the counts above are a list.
-    const items = health
-        .map((h) => {
-            const name = escapeInline(lensLabel(h.lens));
-            const flag = h.ok ? "" : ", **needs attention**";
-            // Escaped because this list sits inside the `<details>` block below it, and a
-            // lens that reports what it could not check writes about markup. One wrote
-            // "the native <details> disclosures", which opens a second block whose close
-            // takes the outer one's `</details>`, and the rest of the review disappears
-            // into it.
-            const detail = h.detail ? `\n  ${escapeInline(h.detail.replace(/\n+/g, " "))}` : "";
-            return `- **${name}**: ${plural(h.findings_returned, "finding")}${flag}${detail}`;
-        })
-        .join("\n");
-
-    if (brokenLenses.length > 0) {
-        head.push(
-            `> ${brokenLenses.length} of ${health.length} lenses did not report normally, so this review covers less than it appears to.`,
-        );
-    }
-
-    const heading =
-        brokenLenses.length > 0
-            ? `${health.length} lenses ran, ${brokenLenses.length} needing attention`
-            : `${health.length} lenses ran, all reporting`;
-
-    head.push(details(heading, items, brokenLenses.length > 0));
-}
-
-const tail: string[] = [];
-
-if (suppressed.length > 0) {
-    tail.push(
-        details(
-            `${plural(suppressed.length, "finding")} already commented on`,
-            suppressed.map((f) => mention(f, "earlier comment")).join("\n"),
-        ),
-    );
-}
-
-if (declined.length > 0) {
-    tail.push(
-        details(
-            `${plural(declined.length, "finding")} raised before and declined`,
-            declined.map((f) => mention(f, "thread")).join("\n"),
-        ),
-    );
-}
-
-if (resolved.length > 0) {
-    tail.push(details(`${plural(resolved.length, "thread")} resolved`, resolved.map((r) => `- ${r.reason}`).join("\n")));
-}
-
-if (resolveDenied) {
-    tail.push(
-        `> ${plural(leftOpen, "thread")} judged finished could not be resolved:` +
-            ` the workflow grants \`pull-requests: write\`, and \`resolveReviewThread\` needs` +
-            ` \`contents: write\`.`,
-    );
-}
-
-if (merged.notes) tail.push(`### Caveats\n\n${clamp(merged.notes)}`);
-
-// The whole review is in findings.json, so the body names where that file is rather than
-// reprinting it. Without a run to link, the sentence still has to say which file, because
-// a reader who cannot follow a link still needs to know what to ask for.
-const run = runUrl(process.env);
-const holdsEveryOne = run
-    ? `\`findings.json\` in the \`codeferret-run\` artifact of [this run](${run}) holds every one`
-    : "`findings.json` in the run's build directory holds every one";
-
+const brokenLenses = (merged.lens_health ?? []).filter((h) => !h.ok);
 const listed = findings.filter((f) => LISTED.has(f.severity));
 
-const listing: Listing | null =
-    findings.length === 0
-        ? null
-        : {
-              heading: listed.length > 0 ? "Critical and high findings" : "Findings",
-              lead:
-                  listed.length > 0
-                      ? `${listed.length} of ${plural(findings.length, "finding")}. ${holdsEveryOne}.`
-                      : `No finding is critical or high. ${holdsEveryOne}.`,
-              items: listed,
-          };
-
-const reviewBody = assemble(head, listing, tail);
+const reviewBody = composeReview(merged, { resolved, resolveDenied, leftOpen, env: process.env });
 
 console.log(
     `total=${allFindings.length} new=${findings.length} suppressed=${suppressed.length}` +
@@ -291,14 +168,9 @@ if (process.env.DRY_RUN) {
     process.exit(0);
 }
 
-const response = await fetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}/reviews`, {
+const response = await rest(token, `/repos/${repo}/pulls/${prNumber}/reviews`, {
     method: "POST",
-    headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ commit_id: headSha, body: reviewBody, event: "COMMENT", comments: [] }),
 });
 
@@ -316,6 +188,30 @@ try {
     created = JSON.parse(detail);
 } catch {
     console.error(`the review posted, but its response body was not JSON: ${detail.slice(0, 200)}`);
+}
+
+// The record that this review reached the pull request, written into the one file every
+// consumer keeps. The action uploads on its last step, after this one, so the record is in
+// the file by the time it is packed. fetch-previous.ts will not suppress a finding on the
+// strength of an artifact without it, for the reasons named at the top of that file.
+//
+// A failure to write it costs a repeated comment on the next run and nothing worse, so it
+// is logged rather than allowed to fail a job whose review has already landed.
+try {
+    await Bun.write(
+        findingsPath,
+        `${JSON.stringify(
+            { ...merged, posted: { at: new Date().toISOString(), url: created.html_url ?? null } },
+            null,
+            2,
+        )}\n`,
+    );
+} catch (error) {
+    console.error(
+        `the review posted, but ${findingsPath} could not be marked as posted:` +
+            ` ${error instanceof Error ? error.message : String(error)}.` +
+            " The next run will raise these findings again.",
+    );
 }
 
 console.log(`posted: ${created.html_url ?? "(no url returned)"}`);

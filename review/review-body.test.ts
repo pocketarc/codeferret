@@ -1,6 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { assemble, bullet, clamp, escapeInline, MAX_BODY, mention, runUrl } from "./review-body.ts";
-import type { Finding } from "./review-body.ts";
+import {
+    assemble,
+    bullet,
+    clamp,
+    composeReview,
+    escapeInline,
+    MAX_BODY,
+    mention,
+    partition,
+    runUrl,
+} from "./review-body.ts";
+import type { Finding, Merged, Outcome } from "./review-body.ts";
 
 function finding(over: Partial<Finding> = {}): Finding {
     return {
@@ -26,6 +36,22 @@ describe("escapeInline", () => {
     test("escapes a link opener and raw html", () => {
         expect(escapeInline("a [b] <c>")).toBe("a \\[b\\] \\<c>");
     });
+
+    test("escapes a backtick that opens no span, so it cannot pair with one below", () => {
+        expect(escapeInline("the `foo parameter")).toBe("the \\`foo parameter");
+    });
+
+    test("escapes a backslash, which would otherwise cancel the escape after it", () => {
+        expect(escapeInline("a\\*b")).toBe("a\\\\\\*b");
+    });
+
+    test("escapes a trailing backslash, which would eat the closing emphasis", () => {
+        expect(bullet(finding({ title: "windows\\path\\" }))).toContain("**windows\\\\path\\\\**");
+    });
+
+    test("escapes a tilde pair, which renders as strikethrough", () => {
+        expect(escapeInline("~~draft~~")).toBe("\\~\\~draft\\~\\~");
+    });
 });
 
 describe("bullet", () => {
@@ -49,6 +75,14 @@ describe("bullet", () => {
 
     test("names the file alone when the finding has no usable line", () => {
         expect(bullet(finding({ line: undefined as unknown as number }))).toStartWith("- `a.ts` —");
+    });
+
+    test("closes a fence the body left open, so the rest of the review is not code", () => {
+        expect(bullet(finding({ body: "```sh\nx" }))).toContain("```sh\n  x\n  ```");
+    });
+
+    test("leaves the category line out when the finding has none", () => {
+        expect(bullet(finding({ category: "" }))).not.toContain("undefined");
     });
 });
 
@@ -127,5 +161,106 @@ describe("assemble", () => {
         const body = assemble(["## CodeFerret"], { heading: "Findings", lead: "lead", items }, ["### Caveats"]);
 
         expect(body).toEndWith("### Caveats");
+    });
+});
+
+describe("partition", () => {
+    test("splits on status and orders by severity", () => {
+        const { all, fresh, suppressed, declined } = partition([
+            finding({ title: "low", severity: "low" }),
+            finding({ title: "seen", status: "already-reported" }),
+            finding({ title: "crit", severity: "critical" }),
+            finding({ title: "no", status: "declined" }),
+        ]);
+
+        expect(all.map((f) => f.title)).toEqual(["crit", "low", "seen", "no"]);
+        expect(fresh.map((f) => f.title)).toEqual(["crit", "low"]);
+        expect(suppressed.map((f) => f.title)).toEqual(["seen"]);
+        expect(declined.map((f) => f.title)).toEqual(["no"]);
+    });
+});
+
+describe("composeReview", () => {
+    const quiet: Outcome = { resolved: [], resolveDenied: false, leftOpen: 0, env: {} };
+
+    function review(over: Partial<Merged> = {}, outcome: Partial<Outcome> = {}): string {
+        return composeReview({ findings: [], ...over }, { ...quiet, ...outcome });
+    }
+
+    test("titles the listing for the severities it carries", () => {
+        expect(review({ findings: [finding({ severity: "high" })] })).toContain("### Critical and high findings");
+        expect(review({ findings: [finding({ severity: "low" })] })).toContain("### Findings");
+    });
+
+    test("announces a lens that did not report, above the collapsed list", () => {
+        const body = review({
+            lens_health: [
+                { lens: "codeferret:caveman-review", findings_returned: 0, ok: false, detail: "no output" },
+                { lens: "codeferret:writing-review", findings_returned: 3, ok: true },
+            ],
+        });
+
+        expect(body).toContain("> 1 of 2 lenses did not report normally");
+        expect(body).toContain("2 lenses ran, 1 needing attention");
+        expect(body).toContain("**caveman-review**: 0 findings, **needs attention**");
+    });
+
+    test("keeps a runaway lens detail on one line, inside its list item", () => {
+        const body = review({
+            lens_health: [{ lens: "codeferret:x", findings_returned: 1, ok: true, detail: "x".repeat(2000) }],
+        });
+
+        const item = body.split("\n").find((line) => line.includes("xxx"));
+
+        expect(item).toContain("(cut for length)");
+        expect(item?.length).toBeLessThan(800);
+    });
+
+    test("says nothing about attention when every lens reported", () => {
+        const body = review({ lens_health: [{ lens: "codeferret:x", findings_returned: 1, ok: true }] });
+
+        expect(body).toContain("1 lenses ran, all reporting");
+        expect(body).not.toContain("needs attention");
+    });
+
+    test("lists what was suppressed and what was declined, separately", () => {
+        const body = review({
+            findings: [
+                finding({ title: "Seen before", status: "already-reported" }),
+                finding({ title: "Turned down", status: "declined" }),
+            ],
+        });
+
+        expect(body).toContain("1 finding already commented on");
+        expect(body).toContain("1 finding raised before and declined");
+        expect(body).toContain("Seen before");
+        expect(body).toContain("Turned down");
+    });
+
+    test("escapes a resolve reason, which is model prose inside a details block", () => {
+        const body = review({}, { resolved: [{ reason: "the </details> case\nis gone" }] });
+
+        expect(body).toContain("- the \\</details> case is gone");
+    });
+
+    test("says which threads were left open when the token could not resolve them", () => {
+        const body = review({}, { resolveDenied: true, leftOpen: 2 });
+
+        expect(body).toContain("2 threads judged finished could not be resolved");
+    });
+
+    test("links the run for the findings the body does not print", () => {
+        const body = review(
+            { findings: [finding({ severity: "high" })] },
+            {
+                env: {
+                    GITHUB_SERVER_URL: "https://github.com",
+                    GITHUB_REPOSITORY: "pocketarc/codeferret",
+                    GITHUB_RUN_ID: "7",
+                },
+            },
+        );
+
+        expect(body).toContain("[this run](https://github.com/pocketarc/codeferret/actions/runs/7)");
     });
 });

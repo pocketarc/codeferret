@@ -108,9 +108,8 @@ Add to that command line where these apply:
 - To review uncommitted work as well, pass the `merge_base` value in place of `<base>`
   and put `INCLUDE_WORKING_TREE=1` in front of the command.
 - `EFFORT=low` (or `medium`, `high`, `xhigh`, `max`) in front of the command to set
-  reasoning effort. Leave it out for the model's own default. Nobody has measured what a
-  lower effort does to a review here, so treat it as a change to review quality and not
-  only to the bill.
+  reasoning effort. Leave it out for the model's own default. Turning it down changes
+  review quality and not only the bill, and nobody has measured by how much.
 
 Everything the run writes lands in `<git-dir>/codeferret/run/build/`, where `<git-dir>` is
 the `repo=` value from step 1, and the findings in `findings.json` beside `run.json`.

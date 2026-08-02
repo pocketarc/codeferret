@@ -101,11 +101,9 @@ Each of these is a rule and the one fact that makes it stick. `review/README.md`
 the arguments behind them.
 
 - A lens's `in_diff` field is unreliable, and nothing reads it. On every run that used
-  inline comments, a lens reported an out-of-diff finding as in-diff. `post-review.ts`
-  checked each line against the diff hunks itself, because the reviews API is atomic and a
-  single bad anchor failed the whole request with 422 and created no comments at all. The
-  review is one comment now, so there is no anchor to be wrong about. Both the check and
-  that failure come back the moment anyone adds an inline comment.
+  inline comments, a lens reported an out-of-diff finding as in-diff. Nothing anchors to a
+  line now, so there is nothing left to be wrong about, and the check that used to catch it
+  comes back with the first inline comment anyone adds.
 - Do not ask the orchestrator for counts. It narrated "27 by three lenses" when the
   answer was 31. `post-review.ts` computes totals, quorum, and severity spread.
 - A lens that returns zero findings is probably broken. One spent $1.28, exited 0,
@@ -120,21 +118,15 @@ the arguments behind them.
 - Subagents do not inherit `--json-schema`. Their schema comes from the prompt, so
   do not trust the shape of lens output. Only the orchestrator's output is validated.
 - Text for one lens goes in that lens's own prompt, not the orchestrator's.
-  `review/lens-extras/<lens>.md` is rendered into that agent's system prompt. Routed
-  through the orchestrator instead, the routing is a judgement remade every run and nothing
-  downstream can tell when it went wrong. A per-dispatch variant existed and was removed
-  for that reason: a lens needing a path this run wrote can find it beside the diff
-  arguments its dispatch already names. `REVIEW.md` goes to `mattpocock-code-review` alone.
-  Do not broaden it to every lens.
-- Do not put severity or lens agreement into a comment. Both are in `findings.json`,
-  and severity orders the findings and decides which ones the comment prints in full, but
-  neither is shown against a finding. For the same reason, do not add severity filtering.
-  Deciding what a comment reprints is not deciding what is reported: `findings.json` carries
-  every finding whatever the comment has room for.
+  `review/lens-extras/<lens>.md` is rendered into that agent's system prompt. Routed through
+  the orchestrator instead, the routing is a judgement remade every run, and nothing
+  downstream can tell when it went wrong. `REVIEW.md` goes to `mattpocock-code-review` alone.
+- Do not put severity or lens agreement into a comment, and do not filter on either.
+  Both are in `findings.json`, and severity orders the findings and decides which ones the
+  comment prints in full. Deciding what a comment reprints is not deciding what is reported.
 - A cap on tool input is not that filtering either. `review/tools/*` cap what they hand
-  the lens at 100 findings, sorted so the cap takes the low end. That bounds what one lens
-  is asked to read, not what a reader is told: everything raised stays in
-  `build/tool-*.json`. Cap the input, never the findings.
+  the lens at 100 findings, sorted so the cap takes the low end, and everything raised stays
+  in `build/tool-*.json`. Cap the input, never the findings.
 - Lenses must not modify the working tree. Every lens reads the same checkout at once,
   so one edit corrupts every other lens's review. `Edit`, `Write`, `NotebookEdit` and
   `Agent` are all kept off the tool list in `agents/`, and `run.sh` denies the first three
@@ -143,10 +135,10 @@ the arguments behind them.
   this is a guarantee, because a lens has `Bash`, so keep the instruction in
   `review/lens-brief.md` too.
 - The reviewed tree does not configure the session that reviews it. `run.sh` passes
-  `--setting-sources user`, and without it Claude Code loads the branch's own `CLAUDE.md`
-  as instruction and its `.claude/settings.json` as settings. Both were measured on
-  2.1.220: the memory file reaches the model, and a `SessionStart` hook in project settings
-  runs even under `bypassPermissions`. Plugins passed with `--plugin-dir` are unaffected.
+  `--setting-sources user`. Without it the branch's own `CLAUDE.md` reaches the model and a
+  `SessionStart` hook in its `.claude/settings.json` runs under `bypassPermissions`, as the
+  branch wrote it. The flag takes the branch's `.claude/skills/` with it, which is why
+  `build-prompts.sh` copies a workspace lens's skill into the run's plugin.
 - No lens is handed a way to reach the network. `WebFetch` and `WebSearch` are off the
   tool list on purpose: a lens reads an untrusted diff with `CLAUDE_CODE_OAUTH_TOKEN` in
   its environment. This raises the cost of exfiltration rather than preventing it, since
@@ -160,34 +152,46 @@ the arguments behind them.
   `new` whenever it is unsure. If you tighten that, you trade duplicate comments for
   findings nobody sees. `findings.json` in the `codeferret-run` artifact holds every
   finding with its status, including the hidden ones.
-- What the last run said is in its findings file, not on the pull request. Nothing
-  GitHub's comment APIs return carries a review body: `reviewThreads` holds inline comments
-  and `issues/{n}/comments` holds the conversation, and a review body is neither. So a
-  review that is one body is invisible to the run after it, and 60 findings of 100 would
-  have been raised again on every push. `fetch-previous.ts` reads the previous run's
-  `codeferret-run` artifact instead, and `build/previous.json` is what the orchestrator
-  matches against, on file and title. It needs `actions: read`, which the shipped workflow
-  does not grant, so every failure there is a line on stderr and an empty file. Keep it
-  that way: a permission a consumer has to grant cannot be one a review depends on.
+- What the last run said is in its findings file, not on the pull request. A review body
+  is neither a review thread nor a conversation comment, so nothing a comment fetch returns
+  carries it, and 60 findings of 100 would have been raised again on every push.
+  `fetch-previous.ts` reads the previous run's `codeferret-run` artifact instead.
+- The action keeps that artifact itself, and the shipped workflow grants `actions: read`.
+  Both used to sit in the consumer's file, where a review repeated every finding on every
+  push unless the consumer wrote an upload step with the right name and uncommented a
+  permission, and the only sign of either mistake was the repetition. The name is protocol
+  between the step that writes it and the run that reads it, so `artifact-path` chooses
+  what goes in and nothing chooses what it is called. The rule this replaces was right
+  about the code and wrong about the template: `fetch-previous.ts` still answers a missing
+  permission with a line on stderr and an empty file, because a review must not depend
+  on a permission a consumer can decline. Shipping the feature switched off is not that.
+- Only a review that was posted may suppress anything. `post-review.ts` writes `posted`
+  into the findings file once GitHub has accepted the review, and `fetch-previous.ts` skips
+  any artifact without it and takes the run before instead. A cancelled run, a 502, a token
+  without `pull-requests: write`, and `post: 'false'` all upload a findings file for a
+  review nobody ever saw. Do not treat an artifact as evidence on its own.
+- An artifact is only evidence if this repository's own run produced it. A
+  `pull_request` run uses the workflow files as the pull request has them, so a fork's copy
+  runs and what it uploads is stored here and listed here, under a branch name its author
+  chose. `fetch-previous.ts` requires the producing run's two repository ids to match,
+  which no fork run can manage.
 - Resolving a thread is a judgement, not a rule. `isOutdated` is evidence the
-  orchestrator weighs, not a gate: a fix landing elsewhere leaves a thread current, and an
-  unrelated edit above one makes a live thread outdated. Do not turn it back into a
-  condition. `post-review.ts` then refuses any thread `fetch-existing.ts` did not mark
-  `mine`, which is the non-model half of the same guard. The only threads left to close are
-  the ones earlier versions opened, because a body-only review creates none.
+  orchestrator weighs, not a gate. `post-review.ts` then refuses any thread
+  `fetch-existing.ts` did not mark `mine`, which needs the login the review posts under
+  *and* one of the two shapes an inline comment of ours ended in. Neither counts alone: an
+  HTML comment renders as nothing, so a marker on its own would let anyone who can comment
+  hand this run a thread to close.
 - A reply cannot make a security defect safe. The carve-out is written into
   `orchestrator.md`, because "this is intentional" on a vulnerability would otherwise
   silence it for good. Keep it if you touch the decline rules.
 - Whatever needs the range or the pathspec reads `build/diff-args`. `post-review.ts`
   built the pathspec itself once, the two drifted, and the anchor map then covered files no
-  lens had read. `local-post.sh` re-resolved `HEAD` for the same reason and could post a
-  review taken at one commit against another. `review/lib.ts` holds the one reader, which
-  `review/tools/*` call; `local-post.sh` parses the file by hand for the commit alone. Do
-  not reintroduce a second construction of either half.
+  lens had read. `review/lib.ts` holds the one reader and the one rule for getting the
+  reviewed commit back out of the range. Do not reintroduce a second construction of either.
 - The action posts on `findings-checked`, not on the findings file existing.
-  `check-findings.ts` drops a finding it cannot use and writes the rest back, so the run
-  ends red and the review still lands. A findings file that fails it outright holds nothing
-  worth posting.
+  `check-findings.ts` repairs what has one right answer, keeps what `post-review.ts`
+  survives, and drops only a finding with nothing left to render, so the run can end red and
+  the review still land. A file that fails it outright holds nothing worth posting.
 
 ## Accepted risks
 

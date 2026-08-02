@@ -21,9 +21,6 @@ jobs:
         permissions:
             contents: read
             pull-requests: write
-            # The template ships this commented out, because it is a permission a consumer
-            # has to grant. This repository grants it so that every fixture run exercises
-            # the path that reads the previous run's findings out of the artifact below.
             actions: read
 
         steps:
@@ -37,11 +34,8 @@ jobs:
               uses: ./
               with:
                   claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-
-            - name: Keep the run for inspection
-              if: always()
-              uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-              with:
-                  name: codeferret-run
-                  path: ${{ runner.temp }}/codeferret/build/
-                  retention-days: 14
+                  # The whole build directory rather than the findings alone, which is the
+                  # default and what a consumer should keep. The fixture runs are what a
+                  # maintainer reads when a review goes wrong, and the rest of that
+                  # directory is where the answer usually is.
+                  artifact-path: '.'

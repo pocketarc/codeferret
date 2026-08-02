@@ -109,6 +109,15 @@ against the diff yourself. Where it holds, mark `ok: true` and put the reason in
 A domain lens with nothing in its domain did its job. If you file it as broken, readers
 learn to skip that line, and they will miss the lens that really did die.
 
+`detail` is not only for a lens that returned nothing. Wherever a lens named something it
+could not check — a criterion needing a rendered page, a rule needing a running database,
+a file it could not read — put it in that lens's `detail`, in the lens's own words,
+whatever it returned and whether or not you mark it `ok`. That is the only per-lens channel
+a reader sees. A lens that reports three findings on a large interface change and also
+lists eight criteria it could not judge is covering less than its count suggests. If its
+limits stay in its report, nobody learns that. Do not route them through `notes` instead:
+`notes` is yours, and it is cut to a fixed length that fourteen lenses cannot share.
+
 A lens that never started needs an entry too. When a session hits a budget or concurrency
 limit, later agents never launch, while the ones already running report as usual. Without
 an entry for each, the review looks whole and covers only the lenses that started.

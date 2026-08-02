@@ -28,6 +28,10 @@ LENSES_FILE=${5:-}
 BUILD="$PLUGIN/build"
 RESOLVE_THREADS=${RESOLVE_THREADS:-1}
 
+# For a containerised toolchain, where `command-prefix` is set and the action deliberately
+# installs nothing on the runner. run.sh passes it through.
+PREFIX=${PREFIX:-}
+
 # shellcheck source=review/lib.sh
 . "$ACTION/review/lib.sh"
 
@@ -175,13 +179,20 @@ for lens in "${LENSES[@]}"; do
         # pass on, and a lens that never received that line reviewed under its name with
         # no skill loaded, which nothing downstream can tell from a real review.
         #
+        # The skill is copied in beside it rather than left where it is. run.sh passes
+        # `--setting-sources user`, which on 2.1.220 takes a project's .claude/skills/
+        # with it: measured against a real dispatch, a session started in a directory
+        # holding one could not find it, and the same session without the flag loaded it.
+        # So every workspace lens would take its agent's own instruction to stop and
+        # return nothing.
+        #
         # The agent body comes from lens-brief.md and is ours. The skill it loads is not:
-        # it sits in the tree the pull request modified, and Claude Code reads it from
-        # there. So naming a workspace lens puts that repository's .claude/skills/ inside
-        # the CI trust boundary, where any branch can write the instructions for an agent
-        # that has Bash and runs in the job holding the tokens. Bundled lenses carry no
-        # such exposure.
-        bun "$ACTION/scripts/build-lens-agents.ts" --one "$lens" "$PLUGIN/agents/$lens.md"
+        # it sits in the tree the pull request modified. So naming a workspace lens puts
+        # that repository's .claude/skills/ inside the CI trust boundary, where any branch
+        # can write the instructions for an agent that has Bash and runs in the job holding
+        # the tokens. Bundled lenses carry no such exposure.
+        $PREFIX bun "$ACTION/scripts/build-lens-agents.ts" --one "$lens" "$PLUGIN/agents/$lens.md"
+        cp -R "$WORKSPACE/.claude/skills/$lens" "$PLUGIN/skills/$lens"
     else
         echo "lens '$lens' has no SKILL.md in the action's bundled lenses or in" >&2
         echo "$WORKSPACE/.claude/skills/$lens/" >&2

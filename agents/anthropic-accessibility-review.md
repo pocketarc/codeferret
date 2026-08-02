@@ -74,9 +74,10 @@ as judging the rendered result:
   resulting order is logical is the part you cannot decide.
 
 Name in `notes` the criteria the changed files would otherwise have raised and that you
-could not evaluate without rendering. Your notes go into the posted review under
-"Caveats", and without them a pull request full of interface changes comes back looking as
-though its accessibility had been checked.
+could not evaluate without rendering. Say it plainly and in one place: the orchestrator is
+told to carry what a lens could not check into that lens's own line of the posted review,
+and it can only carry what you have written down. Without that line, a pull request full of
+interface changes comes back looking as though its accessibility had been checked.
 
 Return JSON matching this schema as your entire final message:
 

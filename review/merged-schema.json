@@ -41,7 +41,10 @@
                         "type": "boolean",
                         "description": "False when the lens errored, could not load its skill, or returned an unusable response."
                     },
-                    "detail": { "type": "string" }
+                    "detail": {
+                        "type": "string",
+                        "description": "What this lens could not check, in its own words, and why it returned what it did. The only per-lens line a reader sees, so a lens's coverage limits belong here whatever its finding count."
+                    }
                 }
             }
         },

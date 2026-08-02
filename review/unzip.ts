@@ -30,12 +30,27 @@ const MAX_COMMENT = 0xffff;
 const ZIP64 = 0xffffffff;
 
 /**
+ * What one entry may come to once it is decompressed.
+ *
+ * The compressed size bounds nothing on its own: deflate reaches past 1000:1, so an
+ * archive small enough to download holds an entry that inflates to tens of gigabytes and
+ * takes the runner with it. This whole path is built to fail soft, and an out-of-memory
+ * kill is the one failure that does not. The only file read out of an artifact here is a
+ * findings file, and the largest run so far wrote well under a megabyte.
+ */
+export const MAX_ENTRY_BYTES = 8 * 1024 * 1024;
+
+/**
  * The bytes of the first entry whose name `wanted` accepts, or null when there is none.
  *
  * Throws when the archive itself cannot be read, so that a malformed download is
  * distinguishable from an artifact that does not hold the file.
  */
-export function readFromZip(zip: Uint8Array, wanted: (name: string) => boolean): Uint8Array | null {
+export function readFromZip(
+    zip: Uint8Array,
+    wanted: (name: string) => boolean,
+    limit = MAX_ENTRY_BYTES,
+): Uint8Array | null {
     const view = new DataView(zip.buffer, zip.byteOffset, zip.byteLength);
     const names = new TextDecoder();
 
@@ -63,6 +78,7 @@ export function readFromZip(zip: Uint8Array, wanted: (name: string) => boolean):
 
         const method = view.getUint16(at + 10, true);
         const compressed = view.getUint32(at + 20, true);
+        const uncompressed = view.getUint32(at + 24, true);
         const nameLength = view.getUint16(at + 28, true);
         const extraLength = view.getUint16(at + 30, true);
         const commentLength = view.getUint16(at + 32, true);
@@ -73,6 +89,13 @@ export function readFromZip(zip: Uint8Array, wanted: (name: string) => boolean):
             if (compressed === ZIP64) throw new Error(`'${name}' is a zip64 entry, which this cannot read`);
             if (local + LOCAL_SIZE > zip.length || view.getUint32(local, true) !== LOCAL_SIGNATURE) {
                 throw new Error(`'${name}' has no local header where the directory says it is`);
+            }
+
+            // The declared size first, for the message it gives an honest archive. A
+            // writer is free to understate it, which is what `maxOutputLength` below is
+            // for.
+            if (uncompressed > limit) {
+                throw new Error(`'${name}' says it holds ${uncompressed} bytes, more than the ${limit} this reads`);
             }
 
             // The local header repeats the name and the extra field at its own lengths,
@@ -86,8 +109,15 @@ export function readFromZip(zip: Uint8Array, wanted: (name: string) => boolean):
 
             const data = zip.subarray(start, start + compressed);
 
-            if (method === 0) return data;
-            if (method === 8) return new Uint8Array(inflateRawSync(data));
+            if (method === 0) {
+                if (data.length > limit) {
+                    throw new Error(`'${name}' is ${data.length} bytes, more than the ${limit} this reads`);
+                }
+
+                return data;
+            }
+
+            if (method === 8) return new Uint8Array(inflateRawSync(data, { maxOutputLength: limit }));
 
             throw new Error(`'${name}' uses compression method ${method}, which this cannot read`);
         }

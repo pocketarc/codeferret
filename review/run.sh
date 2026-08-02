@@ -47,9 +47,7 @@ PREFIX=${PREFIX:-}
 # 574k output tokens to find 29 things where Opus spent 412k to find 90.
 MODEL=${MODEL:-opus}
 
-# Empty leaves the model's own default. Nobody has measured what a lower effort does to a
-# review here, so treat turning it down as a change to review quality and not only to the
-# bill.
+# Empty leaves the model's own default. What turning it down costs a review is unmeasured.
 EFFORT=${EFFORT:-}
 PERMISSION_MODE=${PERMISSION_MODE:-bypassPermissions}
 
@@ -58,8 +56,10 @@ PERMISSION_MODE=${PERMISSION_MODE:-bypassPermissions}
 # shellcheck source=review/lib.sh
 . "$ACTION/review/lib.sh"
 
+# PREFIX goes with it because build-prompts.sh runs bun too, to render an agent for a lens
+# the action does not bundle.
 printf '%s\n' "$LENSES" |
-    bash "$ACTION/review/build-prompts.sh" "$BASE" "$ACTION" "$OUT" "$WORKSPACE"
+    PREFIX="$PREFIX" bash "$ACTION/review/build-prompts.sh" "$BASE" "$ACTION" "$OUT" "$WORKSPACE"
 
 # Everything after this finds the repository from the working directory rather than from
 # an argument: each tool asks git for a top level, and the orchestrator and its lenses
@@ -153,13 +153,20 @@ for tool in ${TOOLS:-}; do
     # that is not there is invisible to the lens: it accounts for what it was handed, so a
     # tool that never ran leaves no trace in the review. The stub is what gives the lens
     # something to report.
-    if ! $PREFIX bun "$ACTION/review/tools/$tool.ts" "$BUILD"; then
-        code=$?
+    #
+    # The exit code is taken from a plain run and not from inside `if ! cmd`, where `$?` is
+    # the status of the negation and always 0. The report then said the tool had exited 0
+    # without writing a report, which is a sentence that contradicts itself and loses the
+    # one number telling an out-of-memory kill from a missing binary.
+    code=0
+    $PREFIX bun "$ACTION/review/tools/$tool.ts" "$BUILD" || code=$?
+
+    if [ "$code" -ne 0 ]; then
         echo "tool '$tool' failed. The review carries on without its report." >&2
 
         if [ ! -f "$BUILD/tool-$tool.json" ]; then
-            printf '{"tool": "%s", "ran": false, "reason": "the tool exited %s without writing a report", "how": null, "scanned": 0, "raised": 0, "truncated": 0, "findings": []}\n' \
-                "$tool" "$code" >"$BUILD/tool-$tool.json"
+            $PREFIX bun "$ACTION/review/tool-stub.ts" "$tool" "$BUILD" "$code" ||
+                echo "could not write a stub report for '$tool'; the lens will not know it ran." >&2
         fi
     fi
 done
@@ -178,13 +185,11 @@ status=0
 # with nothing to merge.
 #
 # `--setting-sources user` keeps the reviewed tree out of the session's own configuration.
-# The session starts in that tree, so without it Claude Code loads the branch's CLAUDE.md
-# as instruction and its .claude/settings.json as settings. Both were measured on 2.1.220:
-# the memory file reaches the model, and a SessionStart hook in project settings runs even
-# under --permission-mode bypassPermissions, which is arbitrary command execution written
-# by whoever opened the pull request. Plugins passed with --plugin-dir still load, so the
-# lens agents are unaffected. A repository's review conventions reach a lens the way
-# REVIEW.md already does, through review/lens-extras/.
+# The session starts in that tree, and a SessionStart hook declared there runs even under
+# bypassPermissions. Plugins passed with --plugin-dir still load, so the lens agents are
+# unaffected; a workspace lens's skill is copied into that plugin, because the flag puts
+# the tree's own .claude/skills/ out of reach along with the rest. "The reviewed tree does
+# not configure the session" in review/README.md has what was measured and how.
 $PREFIX claude -p "$(cat "$BUILD/orchestrator.txt")" \
     --model "$MODEL" \
     ${EFFORT:+--effort "$EFFORT"} \

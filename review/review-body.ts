@@ -7,6 +7,8 @@
  * negative drops the findings the body exists to carry.
  */
 
+import { closeOpenFence, fenceMap } from "./markdown.ts";
+
 export interface Finding {
     found_by?: string[];
     file: string;
@@ -53,9 +55,32 @@ export const MAX_BODY = 60000;
 // produces. Left unbounded, a runaway summary eats the length the findings need.
 export const MAX_PROSE = 4000;
 
+/** One lens's line about what it could not check. Every lens is asked for one. */
+export const MAX_LENS_DETAIL = 600;
+
 export function severityRank(s: string): number {
     const i = SEVERITY_ORDER.indexOf(s);
     return i === -1 ? SEVERITY_ORDER.length : i;
+}
+
+export interface Partitioned {
+    all: Finding[];
+    /** The ones this review posts. */
+    fresh: Finding[];
+    suppressed: Finding[];
+    declined: Finding[];
+}
+
+/** Keeping a count of what was taken out makes a matcher that eats findings visible. */
+export function partition(findings: Finding[]): Partitioned {
+    const all = [...findings].sort((a, b) => severityRank(a.severity) - severityRank(b.severity));
+
+    return {
+        all,
+        fresh: all.filter((f) => f.status !== "already-reported" && f.status !== "declined"),
+        suppressed: all.filter((f) => f.status === "already-reported"),
+        declined: all.filter((f) => f.status === "declined"),
+    };
 }
 
 export function plural(n: number, word: string): string {
@@ -80,49 +105,6 @@ export function runUrl(env: Record<string, string | undefined>): string | null {
     return `${server}/${repo}/actions/runs/${id}`;
 }
 
-const FENCE = /^\s*(```+|~~~+)/;
-
-/** Whether a line index falls inside a fenced code block. */
-function fenceMap(lines: string[]): boolean[] {
-    const inside: boolean[] = [];
-    let open: string | null = null;
-
-    for (const line of lines) {
-        const fence = line.match(FENCE)?.[1];
-
-        if (open === null && fence) {
-            open = fence[0] === "`" ? "`" : "~";
-            inside.push(true);
-            continue;
-        }
-
-        if (open !== null && fence && fence[0] === open) {
-            open = null;
-            inside.push(true);
-            continue;
-        }
-
-        inside.push(open !== null);
-    }
-
-    return inside;
-}
-
-/** Close a fence the cut left open, so the rest of the body does not render as code. */
-export function closeOpenFence(text: string): string {
-    const lines = text.split("\n");
-    let open: string | null = null;
-
-    for (const line of lines) {
-        const fence = line.match(FENCE)?.[1];
-        if (!fence) continue;
-        if (open === null) open = fence;
-        else if (fence[0] === open[0]) open = null;
-    }
-
-    return open === null ? text : `${text}\n${open}`;
-}
-
 /**
  * Escape the markdown a model did not mean to write, leaving the markdown it did.
  *
@@ -130,6 +112,13 @@ export function closeOpenFence(text: string): string {
  * so a bare `build` exclusion glob renders as emphasis debris rather than as a path. Text
  * inside a code span is left alone, because the orchestrator writes code spans
  * deliberately and escaping inside one puts backslashes on the page.
+ *
+ * The backslash is escaped first, and before anything else in the set, because one already
+ * in the text cancels the escape put after it: `a\*b` would become `a\\*b`, a literal
+ * backslash followed by a live asterisk. A title ending in one is worse, since `bullet`
+ * wraps a title in `**`, and the trailing backslash then escapes the first closing
+ * asterisk and the emphasis runs on into the body. Windows paths, regexes and LaTeX
+ * fragments all reach a title.
  */
 export function escapeInline(text: string): string {
     let out = "";
@@ -150,9 +139,16 @@ export function escapeInline(text: string): string {
                 i = close + run;
                 continue;
             }
+
+            // Nothing closes it, so this opens no code span. Left alone it pairs with the
+            // next backtick markdown finds, usually one in the finding's own body, and
+            // renders everything between the two as code.
+            out += "\\`".repeat(run);
+            i += run;
+            continue;
         }
 
-        out += "*_[]<".includes(char) ? `\\${char}` : char;
+        out += "\\*_[]<~".includes(char) ? `\\${char}` : char;
         i += 1;
     }
 
@@ -169,16 +165,25 @@ export function escapeInline(text: string): string {
  * Two spaces still sit inside the list item's content column, so a body line opening with
  * `#` is an ATX heading, and one finding can emit an h1 into a review whose own title is
  * an h2.
+ *
+ * A body that opens a fence and never closes it takes everything after it into the code
+ * block: the findings below, the suppressed and declined lists, the caveats. A truncated
+ * example or a body quoting a fence is all it takes, so the fence is closed here before
+ * the map is built, and the closing line is indented with the rest.
  */
 export function bullet(f: Finding): string {
-    const lines = f.body.split("\n");
+    const lines = closeOpenFence(f.body).split("\n");
     const fenced = fenceMap(lines);
 
     const body = lines
         .map((line, i) => (fenced[i] ? line : line.replace(/^(\s*)#/, "$1\\#")))
         .join("\n  ");
 
-    return `- \`${where(f)}\` — **${escapeInline(f.title)}**\n\n  ${body}\n\n  _${f.category}_`;
+    // check-findings.ts keeps a finding whose category is missing rather than dropping it,
+    // so the line goes rather than rendering the word "undefined" under the body.
+    const category = f.category ? `\n\n  _${escapeInline(f.category)}_` : "";
+
+    return `- \`${where(f)}\` — **${escapeInline(f.title)}**\n\n  ${body}${category}`;
 }
 
 /**
@@ -275,4 +280,140 @@ export function assemble(head: string[], listing: Listing | null, tail: string[]
     // Reached only when the short sections alone exceed the limit, which takes a
     // lens_health list or a suppressed list of a size nothing here has seen.
     return body.length > MAX_BODY ? clamp(body, MAX_BODY) : body;
+}
+
+/** The plugin namespace is an implementation detail, so it is dropped for display. */
+export function lensLabel(lens: string): string {
+    return lens.replace(/^[^:]+:/, "");
+}
+
+/** What became of the threads the orchestrator asked to close, which the body reports. */
+export interface Outcome {
+    resolved: Array<{ reason: string }>;
+    resolveDenied: boolean;
+    /** How many threads judged finished that refusal left open. */
+    leftOpen: number;
+    env: Record<string, string | undefined>;
+}
+
+/** The whole review body: which sections appear, in what order, and under what headings. */
+export function composeReview(merged: Merged, outcome: Outcome): string {
+    const { fresh, suppressed, declined } = partition(merged.findings);
+    const { resolved, resolveDenied, leftOpen, env } = outcome;
+
+    const health = merged.lens_health ?? [];
+    const brokenLenses = health.filter((h) => !h.ok);
+
+    const counts = [`**${plural(fresh.length, "new finding")}**`];
+    if (suppressed.length > 0) counts.push(`${suppressed.length} already commented on above`);
+    if (declined.length > 0) counts.push(`${declined.length} raised before and declined`);
+
+    const head: string[] = ["## CodeFerret"];
+
+    if (merged.summary) head.push(clamp(merged.summary));
+
+    // A screen reader speaks a separator between joined counts as nothing, so three of them
+    // run into each other. Past one, they are a list.
+    const [onlyCount] = counts;
+    head.push(counts.length === 1 && onlyCount ? onlyCount : counts.map((c) => `- ${c}`).join("\n"));
+
+    if (health.length > 0) {
+        // A list, not a table: GitHub gives a wide column the container and starves the
+        // rest, and most lenses report no detail at all. Punctuation a screen reader speaks,
+        // for the reason the counts above are a list.
+        const items = health
+            .map((h) => {
+                const name = escapeInline(lensLabel(h.lens));
+                const flag = h.ok ? "" : ", **needs attention**";
+                // Escaped because this list sits inside the `<details>` block below it, and a
+                // lens that reports what it could not check writes about markup. One wrote
+                // "the native <details> disclosures", which opens a second block whose close
+                // takes the outer one's `</details>`, and the rest of the review disappears
+                // into it.
+                // Clamped before it is flattened, because the cut marker `clamp` appends
+                // carries newlines of its own, and one of those inside a list item ends
+                // the item and drops the rest of the list out of the block.
+                const detail = h.detail
+                    ? `\n  ${escapeInline(clamp(h.detail, MAX_LENS_DETAIL).replace(/\n+/g, " "))}`
+                    : "";
+                return `- **${name}**: ${plural(h.findings_returned, "finding")}${flag}${detail}`;
+            })
+            .join("\n");
+
+        if (brokenLenses.length > 0) {
+            head.push(
+                `> ${brokenLenses.length} of ${health.length} lenses did not report normally, so this review covers less than it appears to.`,
+            );
+        }
+
+        const heading =
+            brokenLenses.length > 0
+                ? `${health.length} lenses ran, ${brokenLenses.length} needing attention`
+                : `${health.length} lenses ran, all reporting`;
+
+        head.push(details(heading, items, brokenLenses.length > 0));
+    }
+
+    const tail: string[] = [];
+
+    if (suppressed.length > 0) {
+        tail.push(
+            details(
+                `${plural(suppressed.length, "finding")} already commented on`,
+                suppressed.map((f) => mention(f, "earlier comment")).join("\n"),
+            ),
+        );
+    }
+
+    if (declined.length > 0) {
+        tail.push(
+            details(
+                `${plural(declined.length, "finding")} raised before and declined`,
+                declined.map((f) => mention(f, "thread")).join("\n"),
+            ),
+        );
+    }
+
+    if (resolved.length > 0) {
+        tail.push(
+            details(
+                `${plural(resolved.length, "thread")} resolved`,
+                resolved.map((r) => `- ${escapeInline(r.reason.replace(/\n+/g, " "))}`).join("\n"),
+            ),
+        );
+    }
+
+    if (resolveDenied) {
+        tail.push(
+            `> ${plural(leftOpen, "thread")} judged finished could not be resolved:` +
+                ` the workflow grants \`pull-requests: write\`, and \`resolveReviewThread\` needs` +
+                ` \`contents: write\`.`,
+        );
+    }
+
+    if (merged.notes) tail.push(`### Caveats\n\n${clamp(merged.notes)}`);
+
+    // The whole review is in findings.json, so the body names where that file is rather than
+    // reprinting it. Without a run to link, the sentence still has to say which file, because
+    // a reader who cannot follow a link still needs to know what to ask for.
+    const run = runUrl(env);
+    const holdsEveryOne = run
+        ? `\`findings.json\` in the \`codeferret-run\` artifact of [this run](${run}) holds every one`
+        : "`findings.json` in the run's build directory holds every one";
+
+    const listed = fresh.filter((f) => LISTED.has(f.severity));
+
+    const listing: Listing | null =
+        fresh.length === 0
+            ? null
+            : {
+                  heading: listed.length > 0 ? "Critical and high findings" : "Findings",
+                  lead:
+                      listed.length > 0
+                          ? `${listed.length} of ${plural(fresh.length, "finding")}. ${holdsEveryOne}.`
+                          : `No finding is critical or high. ${holdsEveryOne}.`,
+                  items: listed,
+              };
+
+    return assemble(head, listing, tail);
 }

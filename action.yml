@@ -169,6 +169,25 @@ inputs:
         description: Set to 'false' to run the review and skip posting it.
         required: false
         default: 'true'
+    artifact-path:
+        description: |
+            What to keep as the `codeferret-run` artifact, relative to the run's build
+            directory. The next run reads the findings file back out of it to know what
+            this one already said. On the default a finding is raised once rather than on
+            every push, and that read needs `actions: read`.
+
+            The name is not configurable. A later run looks for `codeferret-run` and
+            nothing else.
+
+            Set it to '.' to keep the whole build directory while debugging a run, then
+            put it back. Beside the findings sits run.json, the orchestrator's final
+            result object, which is not secret-masked and whose prose quotes the diff.
+            Anyone can download an artifact from a public repository.
+
+            Set it to an empty string to upload nothing. Every finding is then raised
+            again on every push.
+        required: false
+        default: findings.json
 
 outputs:
     findings-file:
@@ -349,6 +368,46 @@ runs:
                   exit 1
               fi
 
+              # What the lenses read, which is `git rev-parse HEAD` in the workspace when
+              # the run started, and need not be what the event named: under
+              # `checkout: skip`, or where the probe found a checkout an earlier step
+              # produced, the workspace is at whatever that step chose.
+              #
+              # Said rather than acted on. The review is one body with no anchored
+              # comments, so the commit it is recorded against is a record and not a
+              # position, and the honest-looking fix costs more than the defect: a caller
+              # who checks out for themselves usually gets `refs/pull/N/merge`, a commit
+              # the reviews API refuses because it is not on the pull request, and the
+              # review would be lost rather than misfiled.
+              reviewed=$($PREFIX bun "$GITHUB_ACTION_PATH/review/reviewed-commit.ts" \
+                  "$RUNNER_TEMP/codeferret/build/diff-args" 2>/dev/null || true)
+
+              if [ -n "$reviewed" ] && [ "$reviewed" != "$HEAD" ]; then
+                  echo "the lenses read $reviewed and this review is recorded against $HEAD." >&2
+                  echo "every line a finding names is a line of $reviewed." >&2
+                  echo "pass head-sha, or drop checkout: skip, to make the two agree." >&2
+              fi
+
               $PREFIX bun "$GITHUB_ACTION_PATH/review/post-review.ts" \
                   "$RUNNER_TEMP/codeferret/build/findings.json" \
                   "$HEAD" "$PR"
+
+        # Last, and after the posting step rather than before it. `post-review.ts` writes
+        # the `posted` record into the findings file once GitHub has accepted the review,
+        # and a later run steps over any artifact that carries no such record: what a run
+        # never said cannot be counted as said.
+        #
+        # Uploaded from here rather than from the caller's workflow because the name is
+        # protocol between this step and the run that reads it. A consumer who holds the
+        # step in their own file can rename it, drop it, or point it elsewhere, and the
+        # only symptom is a review that says the same things on every push.
+        #
+        # `always()`, so a failed run still leaves what it had, and someone can read it by
+        # hand. A failed run cannot suppress anything, because it never wrote the record.
+        - name: Keep the run for inspection
+          if: ${{ always() && inputs.artifact-path != '' }}
+          uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+          with:
+              name: codeferret-run
+              path: ${{ runner.temp }}/codeferret/build/${{ inputs.artifact-path }}
+              retention-days: 14

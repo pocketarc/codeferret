@@ -50,12 +50,13 @@ with `--check`, so a hand edit to either fails the check. The lens loads
 namespaced as `codeferret:<name>`.
 
 To add one for a single repository, put the skill under that repository's own
-`.claude/skills/<name>/` and name it in the action's `lenses` input. It loads under its
-bare name, and `build-prompts.sh` renders it an agent of its own for the run. Know what
-that buys: the skill is read from the working tree, so any branch can rewrite it, and it
-becomes the instructions for an agent with `Bash` in the job holding the tokens. Naming a
-workspace lens puts `.claude/skills/` inside the CI trust boundary. A bundled lens is
-vendored at a pinned commit and carries no such exposure.
+`.claude/skills/<name>/` and name it in the action's `lenses` input. `build-prompts.sh`
+renders it an agent of its own for the run and copies the skill into the run's plugin, so
+it loads namespaced like any other. Know what that buys: the skill is read from the working
+tree, so any branch can rewrite it, and it becomes the instructions for an agent with
+`Bash` in the job holding the tokens. Naming a workspace lens puts `.claude/skills/` inside
+the CI trust boundary. A bundled lens is vendored at a pinned commit and carries no such
+exposure.
 
 ```yaml
 - uses: pocketarc/codeferret@v1
@@ -130,13 +131,15 @@ plugin passed with `--plugin-dir` takes the namespace and shadows the installed 
 is the behaviour you want: the built one holds exactly the lenses this run asked for.
 
 Print the review without posting it. The head is the commit the lenses read, which the
-review is recorded against. It is the text after `...` in the first NUL-separated field of
-`build/diff-args`:
+review is recorded against, and `reviewed-commit.ts` reads it back out of the run's
+`diff-args`:
 
 ```sh
+BUILD="$RT/codeferret/build"
+
 DRY_RUN=1 GITHUB_TOKEN=x GITHUB_REPOSITORY=pocketarc/codeferret \
-  bun review/post-review.ts "$RT/codeferret/build/findings.json" \
-  "$(tr '\0' '\n' <"$RT/codeferret/build/diff-args" | sed -n '1s/.*\.\.\.//p')" 1
+  bun review/post-review.ts "$BUILD/findings.json" \
+  "$(bun review/reviewed-commit.ts "$BUILD/diff-args")" 1
 ```
 
 Use the findings file in the run's own `build/`. `post-review.ts` reads `existing.json`
@@ -186,10 +189,14 @@ the orchestrator's last turn alone, and undercounted one full run sixtyfold.
 | `unzip.ts` | Reads one file out of an artifact's zip, with `unzip.test.ts` beside it. |
 | `extract-findings.ts` | Reads the merged findings out of the run log, and what the run cost. |
 | `summary.ts` | Renders those numbers into the action's job summary. |
-| `check-findings.ts` | Checks those findings against the shape `post-review.ts` reads, and drops what it cannot use. |
-| `post-review.ts` | Renders the review body and posts it. |
+| `check-findings.ts` | Checks those findings against the shape `post-review.ts` reads, and repairs, keeps or drops each fault. |
+| `post-review.ts` | Renders the review body, posts it, and records that it landed. |
 | `review-body.ts` | The rendering behind it, with `review-body.test.ts` beside it. |
-| `lib.ts`, `lib.sh` | The contracts more than one process depends on: the thread marker, the `diff-args` reader, the guards on a value that reaches a command line. |
+| `markdown.ts` | Where a fenced block starts and stops, for the two scripts here that rewrite markdown. |
+| `reviewed-commit.ts` | Prints the commit the lenses read, for whoever is about to post against it. |
+| `tool-stub.ts` | Writes the report for a tool that died before it could write one itself. |
+| `github.ts` | How these scripts talk to GitHub: the token handshake, the headers, the shape of a failure. |
+| `lib.ts`, `lib.sh` | The contracts more than one process depends on: how a thread of ours is recognised, the `diff-args` reader, the guards on a value that reaches a command line. |
 
 ## Why it is built this way
 
@@ -259,15 +266,36 @@ run after it could see none of it. This predates the change: on the last run bef
 cap at forty comments left 60 findings of 100 in the body alone, and every one of those was
 going to be raised as new on every push for as long as the pull request stayed open.
 
-So `fetch-previous.ts` fetches the newest unexpired `codeferret-run` artifact for this
-pull request's branch, reads `findings.json` out of the zip, and writes the file, line,
-title and status of each finding to `build/previous.json`. The bodies are left behind:
-matching is on the file and the title, and carrying a previous review's prose into this
-run's context buys nothing.
+So `fetch-previous.ts` fetches `codeferret-run` artifacts for this pull request's branch,
+newest first, reads `findings.json` out of the zip, and writes the file, line, title and
+status of each finding to `build/previous.json`. The bodies are left behind: matching is on
+the file and the title, and carrying a previous review's prose into this run's context buys
+nothing.
 
-The newest artifact wins whatever its run concluded, because a run that ends red still
-posts. `check-findings.ts` drops what it cannot use, the review lands, and the job goes red
-over what was dropped; those findings were said, so they count as said.
+An artifact has to prove two things before what it holds silences anything.
+
+Its review has to have been posted. `post-review.ts` writes `posted` into `findings.json`
+once GitHub has accepted the review, and the action uploads after that, so the record
+travels inside the one file every consumer keeps. Four ordinary paths reach an uploaded
+artifact with no review on the pull request: `post: 'false'`, a 502 from the reviews
+endpoint, a token without `pull-requests: write`, and a run that `cancel-in-progress`
+kills while the upload still runs `if: always()`. A run that believes one of those marks
+every finding `already-reported` against comments nobody ever saw, and writes that status
+into its own findings file, so the suppression lasts as long as the pull request. That is
+the failure this whole path exists to avoid, caused by the path itself. A run that ends
+red is a different case and still counts: `check-findings.ts` drops what it cannot use,
+the review lands, and the job goes red over what was dropped. So the newest artifact
+carrying a posted review wins, and one carrying none is stepped over for the run before
+it.
+
+It has to have come from a run of a branch pushed here. For a `pull_request` event GitHub
+runs the workflow files as the pull request has them, so a fork's copy of the workflow
+runs, and whatever it uploads is stored against this repository and listed by the artifacts
+endpoint. `head_branch` is a name whoever opened the pull request chose, and open branch
+names are public, so matching on it is no evidence at all. What a fork run cannot produce
+is a match between the producing run's `repository_id` and its `head_repository_id`, so
+that is what is required. What remains is anyone with push access, who could change
+`fetch-previous.ts` instead.
 
 Reading an artifact needs `actions: read`, which the shipped workflow does not grant. So
 every failure is a line on stderr and a file holding no findings. No permission, no
@@ -276,7 +304,9 @@ every finding is new. That is what happened before this existed, so a repository
 grants nothing is exactly where it was. `unzip.ts` reads the archive itself rather than
 shelling out to `unzip`. That binary is not on every runner, and it is rarely in the
 container a `command-prefix` points at, where a missing binary would look identical to a
-pull request with no previous run.
+pull request with no previous run. `unzip.ts` also bounds what one entry may inflate to,
+because deflate reaches past 1000:1 and an out-of-memory kill is the one failure this path
+is not allowed to have.
 
 ### Excluded paths are excluded in git
 
@@ -352,11 +382,17 @@ any it is unsure about. Each closure carries a reason, and the review body carri
 reasons, so a wrong call is visible.
 
 Which threads are the run's own is decided by two things together: the login the review
-posts under, and a hidden marker earlier versions wrote into every inline comment.
-`github-actions[bot]` is the login of every workflow posting with `github.token`, so the
-login alone would put another workflow's threads on the list this run may close. Nothing
-writes the marker now, and the threads it identifies are the ones those versions left
-behind, still open on pull requests that were reviewed before this change.
+posts under, and the shape an inline comment of ours ended in. `github-actions[bot]` is the
+login of every workflow posting with `github.token`, so the login alone would put another
+workflow's threads on the list this run may close. The shape alone is worse: one of the two
+is a hidden HTML comment, which renders as nothing, so anyone who can open a review thread
+could write it into their own and have this run adopt the thread. Both halves are required.
+
+There are two shapes because the shape changed once. Every released version ended an
+inline comment with the category in a `<sub>`, and the marker went in later and reached
+only the runs made while the plugin work was in progress. Nothing writes either now: a
+body-only review creates no threads at all, and what is left to recognise is what those
+versions left open.
 
 A resolved thread also settles its finding: `resolved: true` marks it `declined` with no
 reading of replies. That makes resolving a thread the way to dismiss a finding for good.
@@ -434,9 +470,16 @@ lenses the action does: Claude Code loads a plugin's agents when the session sta
 nothing can add more halfway through.
 
 A lens the plugin does not bundle has no agent to check in, so `build-prompts.sh` renders
-one into the run's plugin with the same script. It used to dispatch the generic agent and
-tell the orchestrator which skill to pass on, and a lens that never received that line
-returned a competent general review under its name with no skill loaded.
+one into the run's plugin with the same script, and copies the skill in beside it. It used
+to dispatch the generic agent and tell the orchestrator which skill to pass on, and a lens
+that never received that line returned a competent general review under its name with no
+skill loaded.
+
+The copy is not tidiness. `--setting-sources user` takes a project's own `.claude/skills/`
+with it. That was measured against a real dispatch on 2.1.220: a session started in a
+directory holding one could not find it, and the same session without the flag loaded it.
+Left where it lives, every workspace lens would follow its agent's own instruction to stop
+and return nothing, which is the failure the paragraph above describes.
 
 ### The action assembles its plugin in `RUNNER_TEMP`
 
@@ -531,12 +574,13 @@ dispatch whenever it changes.
    token that can write contents is a token that can push. Without it everything else
    works and nothing tries to close a thread.
 
-   Add `actions: read` to stop a finding being raised on every push. It is the permission
-   that lets a run read the previous run's findings out of the `codeferret-run` artifact,
-   which is the only record of what the last review said. Without it every finding counts
-   as new and the review repeats itself. It grants read access to the repository's workflow
-   runs and their artifacts, and nothing else. The template ships it commented out, so
-   taking it is a decision rather than a default.
+   `actions: read` is what stops a finding being raised on every push. A run reads the
+   previous run's findings out of the `codeferret-run` artifact, which is the only record
+   of what the last review said, and that read is the only thing the permission is used
+   for. Drop it and every finding counts as new, so the review repeats itself. It grants
+   read access to the repository's workflow runs and their artifacts, and nothing else. The
+   template grants it now. Commented out, it left every repository that took the default
+   with a review that said the same things on every push.
 
 2. Set `CLAUDE_CODE_OAUTH_TOKEN` as a repository secret. Create the token with
    `claude setup-token`.

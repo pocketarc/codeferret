@@ -1,20 +1,28 @@
 /**
- * The two things a run's scripts have to agree on across process boundaries.
+ * What a run's scripts have to agree on across process boundaries: how a thread of ours is
+ * recognised, and what the lenses were told to diff.
  *
  * Each was written out twice before, once at each end, and neither end could tell when
- * the other had moved.
+ * the other had moved. How those scripts talk to GitHub is the same argument, in
+ * `review/github.ts`.
  */
 
 /**
- * What fetch-existing.ts looks for before it will call a review thread the run's own, which
- * decides which threads a run may resolve.
+ * The two shapes an inline comment of ours was ever written in, which is how
+ * fetch-existing.ts recognises a thread an earlier version left behind. Both are matched
+ * against the run's own login as well; neither carries any weight on its own.
  *
- * Nothing writes it any more: a review is one body now and creates no threads at all. The
- * threads it identifies are the ones earlier versions posted, which are still on open pull
- * requests and still worth closing when their defect goes. Change the string and those
- * threads become unrecognisable, nothing is resolved, and nothing reports a problem.
+ * Nothing writes either now: a review is one body and creates no threads at all. What is
+ * left to recognise is what is still open on pull requests reviewed before this change.
+ * `<sub>` is the released shape, from `@v1.0.0` and everything before it. The marker went
+ * in later, alongside the italic category line, and only ever reached the runs made while
+ * this branch was being built. Change either string and those threads become
+ * unrecognisable, nothing is resolved, and nothing reports a problem.
  */
 export const MARKER = "<!-- codeferret -->";
+
+/** The category trailer every released inline comment ended with. */
+export const RELEASED_TRAILER = /<sub>[^<]*<\/sub>\s*$/;
 
 export interface DiffArgs {
     /** The commit range the lenses reviewed under. */
@@ -42,4 +50,17 @@ export async function readDiffArgs(argsFile: string): Promise<DiffArgs> {
     if (!range) throw new Error(`${argsFile} names no range`);
 
     return { range, pathspec };
+}
+
+/**
+ * The commit the lenses reviewed, or null when the run reviewed the working tree instead.
+ *
+ * build-prompts.sh pins `HEAD` when a run starts, because a run takes tens of minutes and
+ * whoever started it is usually still committing, so the range is the only place that
+ * commit is written down.
+ */
+export function reviewedCommit(range: string): string | null {
+    const at = range.lastIndexOf("...");
+
+    return at === -1 ? null : range.slice(at + 3);
 }

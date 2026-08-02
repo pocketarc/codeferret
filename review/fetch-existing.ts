@@ -13,16 +13,13 @@
  * Env:   GITHUB_TOKEN (or the token on stdin), GITHUB_REPOSITORY
  */
 
-import { MARKER } from "./lib.ts";
+import { graphqlFailure, graphql as request, restJson, splitRepository, tokenFromStdinOrEnv } from "./github.ts";
+import { MARKER, RELEASED_TRAILER } from "./lib.ts";
 
 const [prNumber, outPath, ownArg] = process.argv.slice(2);
 const own = (ownArg || "github-actions").replace(/\[bot\]$/, "");
 const repo = process.env.GITHUB_REPOSITORY;
-
-// Stdin is how run.sh passes it, so that the token is in no process's argument list.
-// The environment variable is for running this by hand.
-const token =
-    process.env.GITHUB_TOKEN || (process.stdin.isTTY ? "" : (await Bun.stdin.text()).trim());
+const token = await tokenFromStdinOrEnv();
 
 if (!prNumber || !outPath || !token || !repo) {
     console.error("usage: bun fetch-existing.ts <pr-number> <out.json> [<own-login>]");
@@ -30,15 +27,14 @@ if (!prNumber || !outPath || !token || !repo) {
     process.exit(2);
 }
 
-// Checked here rather than left to the destructuring below, which would send `undefined`
-// into the GraphQL variables and come back with a coercion error naming `$name`, telling
-// the reader nothing about the environment variable that is actually wrong.
-const [owner, name] = repo.split("/");
+const split = splitRepository(repo);
 
-if (!owner || !name || repo.split("/").length !== 2) {
+if (!split) {
     console.error(`GITHUB_REPOSITORY is '${repo}'. It has to be owner/name.`);
     process.exit(2);
 }
+
+const { owner, name } = split;
 
 interface GqlComment {
     author: { login: string } | null;
@@ -97,22 +93,12 @@ const MORE_COMMENTS = `query($id: ID!, $cursor: String) {
 }`;
 
 async function graphql(query: string, variables: Record<string, unknown>): Promise<unknown> {
-    const response = await fetch("https://api.github.com/graphql", {
-        method: "POST",
-        headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ query, variables }),
-    });
+    const result = await request(token, query, variables);
+    const failure = graphqlFailure(result);
 
-    const payload = (await response.json()) as { data?: unknown; errors?: Array<{ message: string }> };
+    if (failure) throw new Error(failure);
 
-    if (!response.ok || payload.errors) {
-        throw new Error(payload.errors?.map((e) => e.message).join("; ") ?? `HTTP ${response.status}`);
-    }
-
-    return payload.data;
+    return result.data;
 }
 
 async function threadPage(cursor: string | null): Promise<Page<GqlThread>> {
@@ -165,22 +151,11 @@ async function fetchConversation(): Promise<IssueComment[]> {
     const all: IssueComment[] = [];
 
     for (let page = 1; ; page += 1) {
-        const response = await fetch(
-            `https://api.github.com/repos/${repo}/issues/${prNumber}/comments?per_page=100&page=${page}`,
-            {
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                    Accept: "application/vnd.github+json",
-                    "X-GitHub-Api-Version": "2022-11-28",
-                },
-            },
-        );
+        const batch = (await restJson(
+            token,
+            `/repos/${repo}/issues/${prNumber}/comments?per_page=100&page=${page}`,
+        )) as IssueComment[];
 
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status} on page ${page}: ${(await response.text()).slice(0, 200)}`);
-        }
-
-        const batch = (await response.json()) as IssueComment[];
         all.push(...batch);
         if (batch.length < 100) return all;
     }
@@ -209,14 +184,17 @@ try {
     console.error(`could not list review threads: ${threadError}`);
 }
 
-// Earlier versions of post-review.ts ended every inline comment with the marker, and those
-// threads are still open on pull requests this script runs against. The login is not enough
-// on its own: `github-actions[bot]` is the identity of every workflow posting with
-// `github.token`, so matching on it alone puts another workflow's threads on the list of
-// ones this run may resolve, and resolving takes that workflow's words off the page. The
-// marker alone is enough, because nothing else writes it, and that is what keeps a thread
-// posted before the marker existed from becoming permanently unresolvable: the login still
-// identifies those.
+// Both halves of `mine` are required.
+//
+// The login alone is not enough: `github-actions[bot]` is the identity of every workflow
+// posting with `github.token`, so matching on it puts another workflow's threads on the
+// list this run may resolve, and resolving takes that workflow's words off the page.
+//
+// Neither shape is enough alone either. An HTML comment renders as nothing, so anyone who
+// can open a review thread can put the marker in it and have this run adopt the thread;
+// `<sub>` is ordinary markup somebody could reach by accident. Resolving is the one
+// non-model control on what gets taken off the page, so it is not opened to whoever can
+// comment.
 const threads = raw.map((t) => {
     const root = t.comments.nodes[0];
     const body = root?.body ?? "";
@@ -229,7 +207,7 @@ const threads = raw.map((t) => {
         file: root?.path ?? "",
         line: root?.line ?? root?.originalLine ?? null,
         url: root?.url ?? "",
-        mine: body.includes(MARKER) || (login === own && /\n_[^\n]+_\n*$/.test(body)),
+        mine: login === own && (body.includes(MARKER) || RELEASED_TRAILER.test(body)),
         comments: t.comments.nodes.map((c) => ({
             author: c.author?.login ?? "unknown",
             association: c.authorAssociation,

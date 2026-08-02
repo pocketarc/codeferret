@@ -19,7 +19,7 @@ to:
 permissions:
     contents: read # write instead to let it resolve finished threads
     pull-requests: write
-    # actions: read # so a finding is not raised again on every push
+    actions: read # so a finding is not raised again on every push
 
 steps:
     - uses: pocketarc/codeferret@v1
@@ -28,15 +28,20 @@ steps:
           resolve-threads: 'false' # 'true' with contents: write
 ```
 
+That is the whole job. The action keeps its own `codeferret-run` artifact holding
+`findings.json`, so there is no upload step to write and no name to get right. The comment
+carries the critical and high findings in full and points at that file for the rest: every
+medium, low and nit finding. That file is also what the next run reads to know what was
+said before.
+
 `contents: write` costs something. The review runs an agent with Bash, so a token that
 can write contents is a token that can push. On `read`, everything else works and nothing
 tries to close a thread.
 
-`actions: read` costs nothing much and is worth taking. A review is one comment, and
-nothing GitHub's comment APIs return carries a review body, so a run works out what it
-already said by reading the previous run's `findings.json` out of the `codeferret-run`
-artifact. That read is all the permission is used for. Without it every finding counts as
-new and the review says the same things on every push.
+`actions: read` costs little and the review is worse without it. It is used for one thing:
+reading the previous run's `findings.json` back out of the artifact. Drop it and a run
+cannot see what the last one said, every finding counts as new, and the review repeats
+itself on every push.
 
 The rest of that file is:
 
@@ -47,10 +52,9 @@ The rest of that file is:
 - A gate on author association, limiting who can spend the budget to an owner, a member
   or a collaborator.
 - A 60-minute timeout.
-- A step that uploads `findings.json` as an artifact and keeps it for 14 days. The comment
-  carries the critical and high findings in full. That file carries every finding, the
-  suppressed ones included, and it is what the next run reads to know what was said before.
-  Whoever can read the repository's artifacts can read all of it.
+
+The action's own artifact is kept for 14 days, and whoever can read the repository's
+artifacts can read every finding in `findings.json`, the suppressed ones included.
 
 The action checks the repository out and installs what it needs. It also runs semgrep and
 osv-scanner before the review, from the runner's binaries if they are there and from

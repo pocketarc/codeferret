@@ -34,20 +34,12 @@ if [ ! -f "$BUILD/findings-checked" ]; then
 fi
 
 # The commit the lenses actually read, taken from the arguments they were given rather
-# than resolved again here. build-prompts.sh pins HEAD when a run starts, because a run
-# takes tens of minutes and whoever started it is usually still committing. Every line the
-# review names is a line of that commit, so a review taken at one commit and posted against
-# another sends the reader to code nobody reviewed.
-IFS= read -r -d '' RANGE <"$BUILD/diff-args" || true
-
-case $RANGE in
-*...*) REVIEWED_HEAD=${RANGE##*...} ;;
-*)
-    echo "this run reviewed the working tree, not a commit ('$RANGE')." >&2
-    echo "a review is recorded against a commit, so there is nothing to post against." >&2
+# than resolved again here. Every line the review names is a line of that commit, so a
+# review taken at one commit and posted against another sends the reader to code nobody
+# reviewed. reviewed-commit.ts owns how the file is read, beside the code that writes it.
+if ! REVIEWED_HEAD=$(bun "$PLUGIN/review/reviewed-commit.ts" "$BUILD/diff-args"); then
     exit 1
-    ;;
-esac
+fi
 
 LOCAL_HEAD=$(git rev-parse HEAD)
 

@@ -111,4 +111,30 @@ describe("readFromZip", () => {
             /not a zip/,
         );
     });
+
+    test("refuses an entry that says it holds more than the limit", () => {
+        const archive = zip([{ name: "findings.json", body: "x".repeat(4096), deflate: true }]);
+
+        expect(() => readFromZip(archive, () => true, 1024)).toThrow(/more than the 1024/);
+    });
+
+    test("refuses an entry that inflates past the limit having understated itself", () => {
+        const archive = zip([{ name: "findings.json", body: "x".repeat(4096), deflate: true }]);
+        const view = new DataView(archive.buffer, archive.byteOffset, archive.byteLength);
+
+        // The declared size is what a zip bomb lies about. Overwritten with one under the
+        // limit, so that the inflate has to be what stops this. The end record is the last
+        // 22 bytes, because this writer adds no archive comment, and it carries the offset
+        // of the central directory.
+        const central = view.getUint32(archive.length - 22 + 16, true);
+        view.setUint32(central + 24, 8, true);
+
+        expect(() => readFromZip(archive, () => true, 1024)).toThrow(/buffer|memory|size/i);
+    });
+
+    test("refuses a stored entry longer than the limit", () => {
+        const archive = zip([{ name: "findings.json", body: "x".repeat(4096) }]);
+
+        expect(() => readFromZip(archive, () => true, 1024)).toThrow(/more than the 1024/);
+    });
 });

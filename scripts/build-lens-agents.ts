@@ -105,14 +105,17 @@ if (one !== -1) {
         process.exit(2);
     }
 
-    // Bare, not namespaced: this skill sits in the reviewed repository's own
-    // .claude/skills/, which Claude Code loads outside the plugin's namespace.
+    // Namespaced like a bundled lens, because build-prompts.sh copies the workspace skill
+    // into the run's plugin beside this agent. It cannot be loaded where it lives: run.sh
+    // passes `--setting-sources user`, which on 2.1.220 puts a project's own
+    // .claude/skills/ out of the session's reach along with everything else the reviewed
+    // tree declares.
     await Bun.write(
         outPath,
         agent(
             lens,
             `CodeFerret's ${lens} lens, from this repository's own .claude/skills/. Dispatched by /codeferret:review; not for general use.`,
-            render(`Load the \`${lens}\` skill and review the diff under it.`, await extrasFor(lens)),
+            render(`Load the \`${namespace}:${lens}\` skill and review the diff under it.`, await extrasFor(lens)),
         ),
     );
 

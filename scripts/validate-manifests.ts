@@ -259,7 +259,26 @@ async function checkMarketplace(): Promise<Failures> {
     return list;
 }
 
-const bundled = new Set<string>();
+let cachedBundled: Set<string> | undefined;
+
+/**
+ * The lenses this repository bundles: a directory under lenses/skills holding a SKILL.md.
+ *
+ * Read from the tree rather than filled in as a side effect of another check. Any check
+ * can be named on its own, and `provenance` alone once reported all fourteen bundled
+ * lenses as missing because the check that populated the set had not run.
+ */
+function bundledLenses(): Set<string> {
+    if (cachedBundled === undefined) {
+        cachedBundled = new Set(
+            readdirSync("lenses/skills", { withFileTypes: true })
+                .filter((entry) => entry.isDirectory() && existsSync(`lenses/skills/${entry.name}/SKILL.md`))
+                .map((entry) => entry.name),
+        );
+    }
+
+    return cachedBundled;
+}
 
 async function checkBundledSkills(): Promise<Failures> {
     const list: Failures = [];
@@ -277,8 +296,6 @@ async function checkBundledSkills(): Promise<Failures> {
             fail(list, skillFile, "bundled lens has no SKILL.md");
             continue;
         }
-
-        bundled.add(entry.name);
 
         const skill = await frontmatter(list, skillFile);
         if (!skill) continue;
@@ -333,6 +350,8 @@ async function checkProvenance(): Promise<Failures> {
             .map((line) => (line.split("\t")[0] ?? "").trim())
             .filter(Boolean),
     );
+
+    const bundled = bundledLenses();
 
     for (const lens of bundled) {
         if (!recorded.has(lens)) fail(list, file, `has no row for bundled lens '${lens}'`);

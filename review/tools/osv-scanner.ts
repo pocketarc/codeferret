@@ -10,11 +10,11 @@
  * The lookup goes to osv.dev, so the package names and versions in every changed lockfile
  * leave the runner. Run this tool nowhere that matters.
  *
- * It scans a different set of files from every lens, on purpose. `exclude-paths` keeps
- * lockfiles out of the review because nobody wants a reviewer reading one, and a lockfile
- * is exactly what this needs. So the range comes from the run's own diff (the same commits
- * the lenses read) and the pathspec beside it is dropped. Each tool has its own scope;
- * `exclude-paths` is about what deserves a reader's attention, not a machine's.
+ * It scans a different set of files from every lens, on purpose: the range comes from the
+ * run's own diff, the same commits the lenses read, and the pathspec beside it is dropped.
+ * Every lockfile name is in the `exclude-paths` default, and a lockfile is the only thing
+ * here that can carry an advisory. "Each tool has its own pathspec" in `review/README.md`
+ * has the argument.
  *
  * Usage: bun review/tools/osv-scanner.ts <build-dir>
  */
