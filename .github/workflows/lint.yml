@@ -8,6 +8,8 @@ permissions:
     contents: read
 
 jobs:
+    # This job runs a fork's pull request code: `bun test` executes the test files as that
+    # pull request has them. So it holds no secrets and no write permissions.
     manifests:
         runs-on: ubuntu-latest
         steps:
@@ -17,12 +19,11 @@ jobs:
             - name: Install Bun
               run: npm install -g bun
 
-            - name: Validate manifests
-              run: bun scripts/validate-manifests.ts
+            - name: Validate the repository
+              run: bun scripts/validate-repo.ts
 
-            # This job runs a fork's pull request code: `bun test` executes the test files
-            # as that pull request has them. So it is kept free of secrets and of write
-            # permissions, and what is left to lose is runner time.
+            # `--ignore-scripts` because the manifest and the lockfile are the fork's too,
+            # and an install script in either would otherwise run before the tests do.
             - name: Install dev dependencies
               run: bun install --frozen-lockfile --ignore-scripts
 

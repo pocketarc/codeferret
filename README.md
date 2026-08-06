@@ -2,17 +2,15 @@
 
 Like CodeRabbit, but it uses your Claude subscription, and goes even deeper.
 
-CodeFerret reviews a diff through thirteen independent code review skills at once, then
+CodeFerret reviews a diff through several independent code review skills at once, then
 merges their findings into a single review comment. Each finding records which lenses found
 it, so agreement between them stays visible.
 
 Every lens reads source. The accessibility and web design lenses have no browser and no
-rendered page, so no criterion whose outcome depends on a computed style, a live focus ring,
-an accessibility tree, timing or motion is evaluated: contrast, focus order, target size,
-reflow, text spacing and timing limits among them.
-What the source can settle and what it cannot is written out in full in
-[`review/lens-extras/anthropic-accessibility-review.md`](review/lens-extras/anthropic-accessibility-review.md).
-Every review carries what each lens could not check, in that lens's own words.
+rendered page, so any criterion that needs a rendered page, contrast and focus order among
+them, goes unchecked. Which criteria those are is written out one by one in
+[`review/lens-extras/anthropic-accessibility-review.md`](review/lens-extras/anthropic-accessibility-review.md),
+and every review says what each lens could not check, in that lens's own words.
 
 There are two ways to run it: as a GitHub action on every pull request, or as a Claude
 Code plugin on the branch in front of you.
@@ -37,10 +35,10 @@ steps:
 
 That is the whole job. The action keeps its own `codeferret-run` artifact holding
 `findings.json`, so there is no upload step to write and no name to get right. The comment
-carries the critical and high findings in full and points at that file for the rest. That
+prints the critical and high findings in full and points at that file for the rest. That
 file is also what the next run reads to know what was said before.
 
-`contents: write` buys one thing, and only for a while. A review is one body and opens no
+`contents: write` adds one thing, and only for a while. A review is one body and opens no
 thread of its own, so the threads left to close are the inline ones that versions released
 before `v1.1.0` left behind. `resolve-threads: 'true'` and `contents: write` together close
 those. The review runs an agent with Bash, so a token that can write contents is a token
@@ -52,12 +50,12 @@ finding is posted again on every push.
 
 The rest of that file is:
 
-- A concurrency group, so three pushes in a row do not buy three full reviews.
-- A gate on drafts, so a push to unfinished work costs nothing. The review runs when the
-  author marks the pull request ready.
-- A gate on forks, which cannot read the secret.
-- A gate on author association, limiting who can spend the budget to an owner, a member
-  or a collaborator.
+- A concurrency group, so three pushes in a row do not start three full reviews.
+- An `if:` on the job with three conditions: the pull request is not a draft, so a push to
+  unfinished work starts nothing until the author marks it ready; its head branch is on
+  this repository, because GitHub withholds the secret from a fork's run no matter who
+  opened the pull request; and its author is an owner, a member or a collaborator, so only
+  those three roles can spend the budget.
 - A 60-minute timeout.
 
 The action's own artifact is kept for 14 days, and whoever can read the repository's
@@ -111,9 +109,10 @@ behind, so the next run on that pull request posts all of these findings again.
 in, for when you would rather have this run on every pull request.
 
 Lenses run in parallel, so the bill grows with the number of lenses and the wait barely
-does. Three took about 15 minutes; a fourteen-lens run came to $36.00 in 20m46s on Opus and
-returned 97 findings. `/codeferret:review` says how many lenses it is about to dispatch, and
-waits; the action reports what each run cost in the job summary.
+does. Three took about 15 minutes. An earlier run of 14 came to $36.00 in 20m46s on Opus
+and returned 97 findings. Budget between $2.50 and $2.70 a lens on Opus, and about 20
+minutes whatever the count. `/codeferret:review` says how many lenses it is about to
+dispatch, and waits; the action reports what each run cost in the job summary.
 
 ## Where things are
 

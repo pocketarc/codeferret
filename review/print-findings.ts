@@ -4,8 +4,8 @@
  *
  * `/codeferret:review` reads this out at the end of a run. It exists so that a session and
  * a posted review cannot disagree about what a review found: the partition, the vetting of
- * declines and the position of a finding all come from the same modules `post-review.ts`
- * uses. The prose rules it replaces were a second implementation kept in step by hand.
+ * suppressions, the caveat a lens is held to and the position of a finding all come from
+ * the same modules `post-review.ts` uses.
  *
  * What differs from the posted body is what suits a terminal. Findings are grouped by file
  * rather than ordered by severity, because whoever reads this opens the files next. Nothing
@@ -15,11 +15,11 @@
  * Usage: bun print-findings.ts <findings.json>
  */
 
-import { dirname, join } from "node:path";
-import { brokenLenses, partition, plural, vetDeclines } from "./findings.ts";
+import { dirname } from "node:path";
+import { brokenLenses, isMerged, partition, vetAgainstExisting } from "./findings.ts";
 import type { Finding, Merged } from "./findings.ts";
 import { reason } from "./json.ts";
-import { lensLabel, where } from "./review-body.ts";
+import { caveatOf, lensLabel, plural, where } from "./review-body.ts";
 
 const [findingsPath] = process.argv.slice(2);
 
@@ -39,27 +39,14 @@ try {
     process.exit(1);
 }
 
-if (typeof merged !== "object" || merged === null || !Array.isArray(merged.findings)) {
+if (!isMerged(merged)) {
     console.error(`${findingsFile}: has no \`findings\` array`);
     process.exit(1);
 }
 
-/** The comments the run read, when there was a pull request to read them from. */
-async function readExisting(): Promise<unknown> {
-    const file = Bun.file(join(dirname(findingsFile), "existing.json"));
-
-    if (!(await file.exists())) return {};
-
-    try {
-        return JSON.parse(await file.text());
-    } catch {
-        return {};
-    }
-}
-
-// A decline the posting path would overturn has to be overturned here too, or a session
+// A suppression the posting path would overturn has to be overturned here too, or a session
 // reports as settled a finding a posted review would raise.
-const vetted = vetDeclines(merged.findings, await readExisting());
+const vetted = await vetAgainstExisting(merged.findings, dirname(findingsFile));
 const { fresh, suppressed, declined } = partition(vetted.findings);
 
 /** By file, then by line within it, which is the order a reader opens them in. */
@@ -84,22 +71,26 @@ if (fresh.length === 0) {
 const older = suppressed.length + declined.length;
 
 if (older > 0) {
-    out.push(`${plural(older, "finding")} were raised before and are in ${findingsFile}.`);
+    out.push(`${findingsFile} holds ${plural(older, "finding")} raised before.`);
 }
 
 const health = merged.lens_health ?? [];
 const broken = brokenLenses(health);
 
 for (const h of broken) {
-    out.push(`${lensLabel(h.lens)} did not report normally: ${h.detail ?? "no detail given"}`);
+    out.push(`${lensLabel(h.lens)} did not report normally: ${caveatOf(h) ?? "no detail given"}`);
 }
 
-// A working domain lens with nothing in its domain: not a failure, but the one line saying
-// what this review did not cover.
+// What this review did not cover, in the lens's own words and in the standing sentence for
+// a lens that ships without the capability its skill describes. `caveatOf` rather than
+// `detail`, because a terminal that leaves out "no page was rendered" reads as an
+// accessibility pass just as a posted body would.
 for (const h of health) {
-    if (!h.ok || !h.detail) continue;
+    if (!h.ok) continue;
 
-    out.push(`${lensLabel(h.lens)}: ${h.detail}`);
+    const caveat = caveatOf(h);
+
+    if (caveat) out.push(`${lensLabel(h.lens)}: ${caveat}`);
 }
 
 if (merged.notes) out.push(`Caveats: ${merged.notes}`);

@@ -81,9 +81,23 @@ export function closeOpenFence(text: string): string {
  * The counterpart to `closeOpenFence`, and it exists for the review body's last-resort cut:
  * a browser closes an unclosed `<details>` at the end of the comment, hiding everything
  * after the cut inside a collapsed disclosure. `fit` in review-body.ts has the rest.
+ *
+ * Counted over the same view of the text the renderer sees, which means line by line: a
+ * fenced line is a code sample and a `\<` is prose that came through `escapeTags`, and
+ * neither opens a disclosure. Prose and samples about markup are what these lenses write,
+ * so counting the raw string appends a stray closer to an ordinary review.
  */
 export function closeOpenDetails(text: string): string {
-    const open = (text.match(/<details\b/g) ?? []).length - (text.match(/<\/details>/g) ?? []).length;
+    const lines = text.split("\n");
+    const fenced = fenceMap(lines);
+    let open = 0;
+
+    for (const [i, line] of lines.entries()) {
+        if (fenced[i]) continue;
+
+        open += (line.match(/(?<!\\)<details\b/g) ?? []).length;
+        open -= (line.match(/(?<!\\)<\/details>/g) ?? []).length;
+    }
 
     if (open <= 0) return text;
 
@@ -286,7 +300,16 @@ export function prose(text: string, limit: number): string {
     return escapeBlocks(clamp(text, limit).split("\n")).join("\n");
 }
 
-/** A collapsed block. GitHub renders nothing at all if the markup is a line out. */
+/**
+ * A collapsed block. GitHub renders nothing at all if the markup is a line out.
+ *
+ * The summary is escaped here. Every caller today builds one out of counts, but nothing in
+ * the signature says so, and an unbalanced tag in a `<summary>` swallows the rest of the
+ * disclosure with no sign of it in the review. The body is the caller's to escape, because
+ * each one is a different shape of model prose.
+ */
 export function details(summary: string, body: string, open = false): string {
-    return `<details${open ? " open" : ""}>\n<summary>${summary}</summary>\n\n${body}\n</details>`;
+    const heading = escapeInline(flatten(summary));
+
+    return `<details${open ? " open" : ""}>\n<summary>${heading}</summary>\n\n${body}\n</details>`;
 }

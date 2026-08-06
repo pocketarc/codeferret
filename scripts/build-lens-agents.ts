@@ -8,7 +8,7 @@
  * schema, which are fixed per lens.
  *
  * Everything in agents/ is generated from review/lens-brief.md by this script. Run it
- * after editing that file; validate-manifests.ts re-runs it with --check and fails when
+ * after editing that file; validate-repo.ts re-runs it with --check and fails when
  * the checked-in agents have drifted.
  *
  * Usage: bun scripts/build-lens-agents.ts [--check]
@@ -70,7 +70,7 @@ const schema = (await Bun.file("review/lens-schema.json").text()).trim();
 // Text meant for one lens and no other belongs in that lens's own system prompt. Routed
 // through the orchestrator instead, it becomes a line the orchestrator has to hand to the
 // right lens and no one else, every run, and nothing downstream can tell when it gets that
-// wrong. One such instruction travelled that way once and was moved here.
+// wrong.
 async function extrasFor(lens: string): Promise<string> {
     const path = `${EXTRAS_DIR}/${lens}.md`;
     return existsSync(path) ? `\n${(await Bun.file(path).text()).trim()}\n` : "";

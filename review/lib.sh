@@ -1,14 +1,7 @@
 # shellcheck shell=bash
-# Guards for the values a model pastes into a command line. Sourced, never run.
-#
-# /codeferret:review has a model substitute a base ref, a lens name and a tool name into
-# the shell it runs, and the action takes the same three from workflow inputs. Quoting is
-# no defence: `$(...)`, backticks and `${...}` all expand inside double quotes. So a value
-# that is not a plain ref or a plain name never reaches a command line.
-#
-# Both classes are deliberately narrower than git allows. `git check-ref-format` accepts
-# `$`, `(`, `)`, a backtick, `;`, `&` and `|`, so a ref name can run on substitution. A
-# legal ref this turns away is a refusal the caller can see and rename around.
+# What more than one of this repository's shell scripts needs. Sourced, never run.
+
+# ---- GitHub Actions step outputs ----------------------------------------------------
 
 # One GitHub Actions step output, for action.yml's `run:` steps.
 #
@@ -43,17 +36,78 @@ emit_output_file() {
     emit_output "$1" "$(cat "$2")"
 }
 
+# ---- The one name two scripts have to agree on --------------------------------------
+
 # The lens the static analysis tools report to, and the only one that reads their reports.
 # Declared once, because two scripts decide what to run by matching this name against a
-# lens list, and validate-manifests.ts checks the action's defaults against it.
+# lens list, and validate-repo.ts checks the action's defaults against it.
 export TOOLS_LENS=static-analysis
+
+# ---- Where a run keeps its files ----------------------------------------------------
+
+# The run directory and the build directory inside it, as RUN_DIR and BUILD_DIR.
+#
+# `build/` is the one name every part of a run has to agree on: action.yml names it in three
+# steps, run.sh and build-prompts.sh derive it, and the two local scripts read it back.
+# Renamed in one of those and missed in another, a review runs, costs the money, and posts
+# against a diff nothing read. The pathspec was built twice once and drifted, which is why
+# review/diff-args.ts exists; this is the same fact one level up.
+#
+# The root is the caller's: `runner_run_dir` on a runner, `session_run_dir` on somebody's
+# own machine.
+run_dirs() {
+    RUN_DIR="$1"
+    BUILD_DIR="$1/build"
+    export RUN_DIR BUILD_DIR
+}
+
+# Where the action puts a run. Under RUNNER_TEMP, which the runner clears between jobs, and
+# which `command-prefix` is asked to mount at the same absolute path.
+runner_run_dir() {
+    printf '%s/codeferret' "$RUNNER_TEMP"
+}
+
+# Where /codeferret:review puts a run: inside the git dir, so it is never in the tree under
+# review and never in a sibling worktree of it.
+session_run_dir() {
+    printf '%s/codeferret/run' "$(git rev-parse --absolute-git-dir)"
+}
+
+# ---- Reaching a containerised toolchain ---------------------------------------------
+
+# Whether `command-prefix` can see a path at the same place the runner has it.
+#
+# A prefix mounts only what whoever wrote it was told to mount, and two of the three paths a
+# run needs are outside the checkout. Each is named here, because a missing action path
+# shows up in the first seconds as a bun module-resolution error, and a missing build
+# directory shows up much later, with every lens reading no diff at all and the review
+# coming back empty for no stated reason.
+#
+# Each call has to sit after the path exists on the runner and before the first `$PREFIX
+# bun` that would create it inside the container. Bun.write makes parent directories, so one
+# such call is all it takes for `test -d` to answer yes about a directory only the container
+# has.
+prefix_reaches() {
+    if [ -z "${PREFIX:-}" ]; then
+        return 0
+    fi
+
+    if $PREFIX test -d "$1"; then
+        return 0
+    fi
+
+    echo "the command prefix cannot reach $1. Mount it in the container at that same path." >&2
+    exit 1
+}
+
+# ---- What gh and git can tell a local run -------------------------------------------
 
 # What the scripts a session runs hand to fetch-existing.ts, fetch-previous.ts and
 # post-review.ts. Both callers pass the same two values, taken from the same tool: a token
 # read one way and a repository name read another can name two different repositories.
 #
-# Empty on failure rather than fatal: without gh a review still runs and prints, and it is
-# the caller that decides whether what it is about to do needs the credential.
+# Empty on failure: without gh a review still runs and prints, and it is the caller that
+# decides whether what it is about to do needs the credential.
 gh_credentials() {
     GITHUB_TOKEN=$(gh auth token 2>/dev/null || true)
     GITHUB_REPOSITORY=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)
@@ -129,6 +183,17 @@ resolve_base() {
 
     return 0
 }
+
+# ---- Guards on the values a model pastes into a command line -------------------------
+#
+# /codeferret:review has a model substitute a base ref, a lens name and a tool name into
+# the shell it runs, and the action takes the same three from workflow inputs. Quoting is
+# no defence: `$(...)`, backticks and `${...}` all expand inside double quotes. So a value
+# that is not a plain ref or a plain name never reaches a command line.
+#
+# Both classes are deliberately narrower than git allows. `git check-ref-format` accepts
+# `$`, `(`, `)`, a backtick, `;`, `&` and `|`, so a ref name can run on substitution. A
+# legal ref this turns away is a refusal the caller can see and rename around.
 
 # A git ref: the plain-name set plus `/`. A leading `-` is barred separately, because it
 # is legal in a ref name and git would read it as an option.

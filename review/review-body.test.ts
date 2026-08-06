@@ -150,7 +150,18 @@ describe("destinationOf", () => {
                 GITHUB_REPOSITORY: "pocketarc/codeferret",
                 GITHUB_RUN_ID: "42",
             }),
-        ).toEqual({ kind: "run", url: "https://github.com/pocketarc/codeferret/actions/runs/42" });
+        ).toEqual({ kind: "run", url: "https://github.com/pocketarc/codeferret/actions/runs/42", artifact: false });
+    });
+
+    test("carries whether the run kept the findings file", () => {
+        expect(
+            destinationOf({
+                GITHUB_SERVER_URL: "https://github.com",
+                GITHUB_REPOSITORY: "pocketarc/codeferret",
+                GITHUB_RUN_ID: "42",
+                ARTIFACT_HAS_FINDINGS: "true",
+            }),
+        ).toMatchObject({ artifact: true });
     });
 
     test("is a session outside a run, so nothing links a page that does not exist", () => {
@@ -225,12 +236,19 @@ describe("composeReview", () => {
         GITHUB_SERVER_URL: "https://github.com",
         GITHUB_REPOSITORY: "pocketarc/codeferret",
         GITHUB_RUN_ID: "7",
+        ARTIFACT_HAS_FINDINGS: "true",
+    });
+
+    const withNoArtifact = destinationOf({
+        GITHUB_SERVER_URL: "https://github.com",
+        GITHUB_REPOSITORY: "pocketarc/codeferret",
+        GITHUB_RUN_ID: "7",
     });
 
     function review(over: Partial<Merged> = {}, posting: Partial<Posting> = {}): string {
         const merged: Merged = { findings: [], ...over };
 
-        return composeReview(merged, { ...quiet, ...posting }, partition(merged.findings));
+        return composeReview(merged, { ...quiet, ...posting }, partition(merged.findings)).body;
     }
 
     test("lists the critical and high findings when a run holds the rest", () => {
@@ -322,7 +340,7 @@ describe("composeReview", () => {
         expect(body).toContain("No browser was available");
     });
 
-    test("prefers the lens's own words to the standing sentence", () => {
+    test("keeps the standing sentence beside the lens's own words rather than losing it", () => {
         const body = review({
             lens_health: [
                 {
@@ -335,7 +353,13 @@ describe("composeReview", () => {
         });
 
         expect(body).toContain("1.4.3 needs a rendered page");
-        expect(body).not.toContain("No page was rendered");
+        expect(body).toContain("No page was rendered");
+    });
+
+    test("survives a lens named after an Object.prototype key", () => {
+        const body = review({ lens_health: [{ lens: "codeferret:constructor", findings_returned: 0, ok: true }] });
+
+        expect(body).toContain("- constructor: 0 findings");
     });
 
     test("says outside the block that a healthy lens could not check something", () => {
@@ -393,5 +417,24 @@ describe("composeReview", () => {
         const body = review({ findings: [finding({ severity: "high" })] }, { to: onARunner });
 
         expect(body).toContain("[this run](https://github.com/pocketarc/codeferret/actions/runs/7)");
+    });
+
+    test("carries every finding when the run kept no artifact to defer to", () => {
+        const body = review({ findings: [finding({ severity: "low", title: "A low one" })] }, { to: withNoArtifact });
+
+        expect(body).toContain("A low one");
+        expect(body).not.toContain("codeferret-run");
+    });
+
+    test("reports what composed the body, so a log beside it cannot disagree", () => {
+        const merged: Merged = { findings: [finding({ severity: "high" }), finding({ severity: "low" })] };
+        const composed = composeReview(
+            merged,
+            { ...quiet, to: onARunner },
+            partition(merged.findings),
+        );
+
+        expect(composed.listed).toHaveLength(1);
+        expect(composed.broken).toHaveLength(0);
     });
 });

@@ -29,6 +29,12 @@ no tables, no headings. Some skills grade with a red circle or a tick in their o
 template, and that template is for the prose it describes, not for these fields. Severity
 has a field of its own, and a reader is shown neither it nor anything standing in for it.
 
+Wrap every code fragment in a `body` in a code span or a fenced block. A body renders as
+markdown, and a fragment left bare is read as markup: two `COUNT(*)` in one paragraph
+render as emphasis, taking both asterisks off the page and italicising the sentence between
+them, so the finding loses the thing it is about. A wrapped fragment reaches the reader as
+written.
+
 Be exhaustive. Read every changed file end to end and follow the data. Nothing
 downstream catches what you miss.
 
@@ -46,6 +52,17 @@ Say none of that and you are read as broken, which is the safe assumption.
 Report, do not repair. Other lenses are reading the same working tree at the same time,
 so changing a file corrupts their review as well as this one. Say what the fix is. Do
 not apply it.
+
+A comment must not count what this repository holds. "The third of the `local-*` scripts",
+"four sections", "its two callers": each is right the day it is written and wrong at the
+commit that adds one, and nothing fails when it goes wrong, so a reader simply believes it.
+Report every comment that carries such a count. What it should say is what the thing is,
+not how many there are.
+
+A measurement is not a census. "One lens spent $1.28 and returned nothing", "the
+orchestrator narrated 27 when the answer was 31": each records what happened once, the
+number is the evidence for the rule beside it, and no later commit can make it wrong. The
+rules in this repository are anchored to measurements like those. Leave them alone.
 
 Return JSON matching this schema as your entire final message:
 

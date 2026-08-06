@@ -151,17 +151,28 @@ interface IssueComment {
 }
 
 /**
+ * How far the conversation is read. Ten pages is a thousand comments, past anything a
+ * pull request carries in practice, and the cap is what stops a paging-ignoring response
+ * from filling memory in a step that holds the tokens.
+ */
+const MAX_PAGES = 10;
+
+/**
  * The comments not anchored to a line.
  *
  * A failure comes back rather than being logged and swallowed. An empty list and a clean
  * exit is indistinguishable from a pull request nobody has commented on, so a finding
  * declined in a conversation comment would be reposted on every run with nothing saying
  * the fetch had failed. A 502 on page three is the same problem one step in.
+ *
+ * A conversation the cap cut short is the same problem again, so it throws. The comment a
+ * fetch misses is a decline that gets reposted, and running out of pages in silence would
+ * leave that reading as a short conversation.
  */
 async function fetchConversation(): Promise<IssueComment[]> {
     const all: IssueComment[] = [];
 
-    for (let page = 1; ; page += 1) {
+    for (let page = 1; page <= MAX_PAGES; page += 1) {
         const batch = (await restJson(
             token,
             `/repos/${repo}/issues/${prNumber}/comments?per_page=100&page=${page}`,
@@ -170,6 +181,8 @@ async function fetchConversation(): Promise<IssueComment[]> {
         all.push(...batch);
         if (batch.length < 100) return all;
     }
+
+    throw new Error(`the conversation is still going after ${MAX_PAGES} pages of 100 comments`);
 }
 
 const raw: GqlThread[] = [];

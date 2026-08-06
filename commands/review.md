@@ -12,13 +12,12 @@ name sits under `<plugin>/lenses/skills/` or `.claude/skills/`, and the base ref
 otherwise. `/codeferret:review caveman-review` names a lens, not a ref.
 
 Throughout, `<plugin>` is `${CLAUDE_PLUGIN_ROOT}`, and `<pr>` and `<base>` are the number
-and the ref step 1 prints. Substitute them yourself rather than relying on a shell variable:
-each command runs in its own shell, so nothing you export survives. Put double quotes around
-each one.
+and the ref step 1 prints. Substitute them yourself: each command runs in its own shell, so
+nothing you export survives. Put double quotes around each one.
 
 Do not treat the quotes as what makes a value safe. `$(...)`, a backtick and `${...}` all
 expand inside double quotes. What makes a value safe is `local-preflight.sh`, which prints
-`unsafe` rather than a ref or a path holding a character that would run. Stop when you see
+`unsafe` in place of a ref or a path holding a character that would run. Stop when you see
 `unsafe`. Stop as well when the user hands you a ref carrying `$`, a backtick, a quote or
 a semicolon, and do not pass it on.
 
@@ -83,18 +82,18 @@ Use the lenses named in `$ARGUMENTS`. Otherwise the run uses every line of
 `<plugin>/review/defaults/lenses.txt`, which is the set the action runs. Read that file to
 say how many that is.
 
-Before running, say how many lenses it is, taking the number from that file rather than
-from here, and what it costs: a fourteen-lens run took 20m46s and $36.00 on Opus and
-returned 97 findings, and the bill scales with the number of lenses rather than the wait.
+Before running, say how many lenses it is, taking the number from that file and not from
+here, and what it costs: an earlier run of fourteen took 20m46s and $36.00 on Opus and
+returned 97 findings. The bill scales with the number of lenses; the wait barely does.
 Then stop and wait for the user to agree, in a turn of their own. A bare
 `/codeferret:review` is the whole default set, and someone typing it to see what the command
 does has not agreed to that.
 
 ## 4. Run it
 
-The review runs as its own `claude` process rather than in this session. It reads a diff,
-and pull request comments, written by whoever opened them. This session holds the user's
-editor, shell and MCP servers, and there is no reason to introduce the two.
+The review runs as its own `claude` process. It reads a diff, and pull request comments,
+written by whoever opened them. This session holds the user's editor, shell and MCP servers,
+and there is no reason to introduce the two.
 
 Run it in the background. It takes tens of minutes, which is longer than a foreground
 command is allowed.
@@ -178,5 +177,5 @@ bash "<plugin>/review/local-post.sh" "<plugin>" "<pr>"
 refuses when the pull request's head is a different commit. Report what it says rather than
 working around it.
 
-Put `DRY_RUN=1` in front of that command to print the review instead of posting it.
+Put `DRY_RUN=1` in front of that command to print the review without posting it.
 Without it, the command posts.

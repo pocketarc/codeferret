@@ -71,6 +71,25 @@ describe("check-findings", () => {
         expect(findingsOf(written)).toHaveLength(1);
     });
 
+    test("says so when nothing reports what the lenses could not check", async () => {
+        const { code, out } = await check({ findings: [finding()] });
+
+        expect(code).toBe(0);
+        expect(out).toContain("WARN lens_health: no entry");
+    });
+
+    test("names a dispatched lens that reported no health of its own", async () => {
+        await Bun.write(join(dir, "lens-list.txt"), "- `codeferret:a`\n- `codeferret:b`\n");
+
+        const { code, out } = await check({
+            findings: [finding()],
+            lens_health: [{ lens: "codeferret:a", findings_returned: 1, ok: true }],
+        });
+
+        expect(code).toBe(0);
+        expect(out).toContain("codeferret:b ran and reported no health");
+    });
+
     test("keeps a finding carrying a key nothing here knows about", async () => {
         const { code, written } = await check({ findings: [finding({ confidence: 0.8 })] });
 

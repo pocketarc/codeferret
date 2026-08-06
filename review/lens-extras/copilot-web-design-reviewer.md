@@ -1,7 +1,7 @@
 The skill you are about to load assumes a running site and a browser it can drive. This
 session has neither: MCP servers are disabled, there is no Playwright, no `WebFetch`, no
-URL, and nobody to give you one. Read the skill for what it knows about interface quality,
-not for its workflow.
+URL, and nobody to give you one. The skill's checklists of interface quality still apply.
+Its workflow does not.
 
 - Skip Step 1's request for a URL and its questions about framework and styling. Your
   target is the diff, and nobody can answer a question.

@@ -4,9 +4,9 @@
 # The action calls this, and so does /codeferret:review. Everything either caller varies
 # goes in the environment below.
 #
-# The orchestrator runs here, in its own process, rather than in whoever's session asked
-# for it. It reads a diff and pull request comments written by whoever opened them, and a
-# session holds an editor, a shell, and whatever its owner has connected over MCP.
+# The orchestrator runs here, in a process of its own. It reads a diff and pull request
+# comments written by whoever opened them, and the session that asked for it holds an
+# editor, a shell, and whatever its owner has connected over MCP.
 #
 # Usage: run.sh <base-ref> <action-path> <out-dir> <workspace>
 #
@@ -27,8 +27,8 @@
 #   TOOLS             whitespace-separated static analysis tools to run before the review,
 #                     naming files in review/tools/. Their reports are read by the
 #                     `static-analysis` lens, which decides which findings hold. These run
-#                     under PREFIX and need git and docker rather than the repository's
-#                     own toolchain, so leave TOOLS empty where the prefix has neither.
+#                     under PREFIX, and what they need there is git and docker, so leave
+#                     TOOLS empty where the prefix has neither.
 #   RESOLVE_THREADS   0 to close no threads. Use 0 everywhere except CI.
 #   GITHUB_TOKEN, GITHUB_REPOSITORY   needed when PR is set.
 #   INCLUDE_WORKING_TREE  1 to review uncommitted work as well.
@@ -39,64 +39,61 @@ ACTION=${2:?missing action path}
 OUT=${3:?missing output dir}
 WORKSPACE=${4:?missing workspace}
 
-BUILD="$OUT/build"
 PREFIX=${PREFIX:-}
 
 # The one measurement of trading capability for price went the wrong way: Sonnet spent
 # 574k output tokens to find 29 things where Opus spent 412k to find 90.
 MODEL=${MODEL:-opus}
 
-# Passed to the orchestrator's session. Whether it reaches a lens dispatched from that
-# session is unmeasured, and the run log carries no effort field to read it back from.
 EFFORT=${EFFORT:-}
 PERMISSION_MODE=${PERMISSION_MODE:-bypassPermissions}
 
 : "${LENSES:?no lenses given}"
 
+# Checked here rather than left to the `claude` invocation at the end, which is after
+# build-prompts, both GitHub fetches and the whole tool stage. A misspelling would otherwise
+# cost a 420MB image pull and an osv.dev lookup per changed lockfile before failing with a
+# CLI usage error that names no input.
+case ${EFFORT:-} in
+"" | low | medium | high | xhigh | max) ;;
+*)
+    echo "effort is '$EFFORT'. It has to be low, medium, high, xhigh or max." >&2
+    exit 1
+    ;;
+esac
+
 # shellcheck source=review/lib.sh
 . "$ACTION/review/lib.sh"
 
-# A prefix mounts only what whoever wrote it was told to mount, and two of the three paths a
-# run needs are outside the checkout. Named here rather than left to fail on their own: a
-# missing action path shows up in the first seconds as a bun module-resolution error, and a
-# missing build directory shows up much later and much more quietly, with every lens reading
-# no diff at all and the review coming back empty for no stated reason.
-prefix_reaches() {
-    if [ -z "$PREFIX" ]; then
-        return 0
-    fi
-
-    if $PREFIX test -d "$1"; then
-        return 0
-    fi
-
-    echo "the command prefix cannot reach $1. Mount it in the container at that same path." >&2
-    exit 1
-}
+run_dirs "$OUT"
+BUILD=$BUILD_DIR
 
 prefix_reaches "$ACTION"
 
 # PREFIX goes with it because build-prompts.sh runs bun too, to render an agent for a lens
-# the action does not bundle.
+# the action does not bundle, and because the build directory's own reachability is checked
+# in there: it does not exist until that script creates it, and the first `$PREFIX bun`
+# after that would create it inside the container and hide the answer.
 printf '%s\n' "$LENSES" |
     PREFIX="$PREFIX" bash "$ACTION/review/build-prompts.sh" "$BASE" "$ACTION" "$OUT" "$WORKSPACE"
 
-prefix_reaches "$BUILD"
-
-# No `bun` this script starts may have the reviewed tree as its working directory. Bun
-# reads `bunfig.toml` from there, `preload` in that file names a script, and bun runs it
-# before the one on the command line. So whoever pushes a branch carrying that file has bun
-# run their script inside the job holding the tokens, before a lens is dispatched and with
-# no model in the loop. Only the working directory matters here: `-c` pointed at another
-# file does not suppress it, and the lookup does not walk up, so the build directory is out
-# of reach.
+# Every `bun` a review starts is given `--config=/dev/null`. Bun reads `bunfig.toml` from
+# its working directory, `preload` in that file names a script, and bun runs it before the
+# one on the command line. So whoever pushes a branch carrying that file would have bun run
+# their script inside the job holding the tokens, before a lens is dispatched and with no
+# model in the loop.
 #
-# Only the orchestrator starts in the workspace, and it does so in a subshell below,
-# because its lenses read whatever tree their session started in. The tools take the
-# workspace as an argument.
+# The working directory alone does not settle it. The lookup does not walk up, so `cd`
+# out of the reviewed tree closes the branch's own file, but every directory the session is
+# still allowed to run from is one it can write: the orchestrator has Bash, runs under
+# bypassPermissions, and its prompt names `$BUILD` absolutely. `--config` replaces the
+# lookup outright, and `/dev/null` is the one path on the runner whose contents nothing
+# short of root can change.
 #
-# Under `command-prefix` the working directory inside the container is the prefix's own,
-# which the action asks to be the repository root, so this closes nothing there.
+# The working directory still moves, because a relative path in a report or an argument
+# resolves against it. Only the orchestrator starts in the workspace, and it does so in a
+# subshell below, because its lenses read whatever tree their session started in. The tools
+# take the workspace as an argument.
 ACTION=$(cd "$ACTION" && pwd)
 cd "$BUILD"
 
@@ -155,30 +152,34 @@ done
 # GITHUB_REPOSITORY, and the `||` below would report that as a pull request nobody had
 # commented on, so the two values they read go across as arguments to `env`. Neither is
 # secret; the token is the one that stays off an argument list.
-if [ -n "${PR:-}" ]; then
-    across=(env "GITHUB_REPOSITORY=${GITHUB_REPOSITORY:-}" "GITHUB_RUN_ID=${GITHUB_RUN_ID:-}")
+across=(env "GITHUB_REPOSITORY=${GITHUB_REPOSITORY:-}" "GITHUB_RUN_ID=${GITHUB_RUN_ID:-}")
 
-    # Half the fetch can fail on its own. fetch-existing.ts writes the half that came back
-    # and names the half that did not, and the orchestrator treats only the named half as
-    # unread, so the message below is true either way, where reporting the whole file as
-    # empty would not be.
+# Half the fetch can fail on its own. fetch-existing.ts writes the half that came back and
+# names the half that did not, and the orchestrator treats only the named half as unread, so
+# the message below is true either way, where reporting the whole file as empty would not be.
+#
+# A function because this runs twice: once for the orchestrator to read, and again after it
+# has exited, for the two scripts that re-decide what it settled.
+fetch_existing() {
     printf '%s' "$token" |
-        $PREFIX "${across[@]}" bun "$ACTION/review/fetch-existing.ts" \
+        $PREFIX "${across[@]}" bun --config=/dev/null "$ACTION/review/fetch-existing.ts" \
             "$PR" "$BUILD/existing.json" ${OWN_LOGIN:+"$OWN_LOGIN"} ||
         echo "could not read all of this pull request's comments. Whatever went unread counts as new." >&2
+}
+
+if [ -n "${PR:-}" ]; then
+    fetch_existing
 
     # What the last run raised is in its own findings file, which needs `actions: read` to
     # read back. The shipped workflow grants it and a consumer can decline it, so this is
     # allowed to come back empty. fetch-previous.ts reports its own failures, so the `||`
     # is for a failure before it can.
     printf '%s' "$token" |
-        $PREFIX "${across[@]}" bun "$ACTION/review/fetch-previous.ts" "$PR" "$BUILD/previous.json" ||
+        $PREFIX "${across[@]}" bun --config=/dev/null "$ACTION/review/fetch-previous.ts" \
+            "$PR" "$BUILD/previous.json" ||
         echo "could not read the previous run's findings. Every finding will count as new." >&2
 fi
 
-# Overriding one of `tools` and `lenses` without the other is the ordinary customisation,
-# and neither half fails on its own: it costs reports nobody reads, or a lens dispatched
-# and paid for to say it found no reports. A warning here is cheaper than the bill.
 tools_named=$(printf '%s' "${TOOLS:-}" | tr -d '[:space:]')
 
 if printf '%s\n' "$LENSES" | tr -d '[:blank:]' | grep -qx "$TOOLS_LENS"; then
@@ -189,13 +190,10 @@ elif [ -n "$tools_named" ]; then
     echo "tools are named but the $TOOLS_LENS lens is not. Nothing will read their reports." >&2
 fi
 
-# Tools run before the dispatch, because their reports are input to a lens rather than
-# output of the review. A tool that is not installed writes that down and returns 0.
-#
-# A name reaches here from a workflow input and from a model composing an environment in
-# /codeferret:review, and it is pasted into a path that then gets executed. Globbing is off
-# for the split, so the shell leaves a `*` alone instead of expanding it against the
-# workspace.
+# A tool name reaches here from a workflow input and from a model composing an environment
+# in /codeferret:review, and it is pasted into a path that then gets executed. Globbing is
+# off for the split, so a `*` reaches `plain_name` as written and is never expanded against
+# the workspace.
 set -f
 for tool in ${TOOLS:-}; do
     if ! plain_name "$tool"; then
@@ -212,15 +210,15 @@ for tool in ${TOOLS:-}; do
     # the status of the negation and always 0. It is the one number telling an
     # out-of-memory kill from a missing binary, and the stub below reports it.
     code=0
-    $PREFIX bun "$ACTION/review/tools/$tool.ts" "$BUILD" "$WORKSPACE" || code=$?
+    $PREFIX bun --config=/dev/null "$ACTION/review/tools/$tool.ts" "$BUILD" "$WORKSPACE" || code=$?
 
     if [ "$code" -ne 0 ]; then
         echo "tool '$tool' failed. The review carries on without its report." >&2
 
-        # Only where the tool left no file. tool-stub.ts has why one is written at all.
+        # tool-stub.ts has why a report is written at all.
         if [ ! -f "$BUILD/tool-$tool.json" ]; then
-            $PREFIX bun "$ACTION/review/tool-stub.ts" "$tool" "$BUILD" "$code" ||
-                echo "could not write a stub report for '$tool'; the lens will not know it ran." >&2
+            $PREFIX bun --config=/dev/null "$ACTION/review/tool-stub.ts" "$tool" "$BUILD" "$code" ||
+                echo "could not write a stub report for '$tool'. The lens will not know it ran." >&2
         fi
     fi
 done
@@ -256,15 +254,27 @@ status=0
 ) >"$BUILD/run.json" || status=$?
 
 # The orchestrator ran with Bash under bypassPermissions and knows this directory: its
-# dispatch prompt names `build/diff-args`. Whether the action posts a review turns on the
-# two files below, and each is evidence only if the step that earns it wrote it during this
-# run. So anything at either path goes now, and the two steps below put it back or they do
-# not.
-rm -f "$BUILD/findings.json" "$BUILD/findings-checked"
+# dispatch prompt names `build/diff-args`, and build-prompts.sh puts the two json paths into
+# the prompt itself. Every file below decides something after the session has ended, and
+# none of them is evidence unless the step that earns it wrote it during this run. So each
+# path is cleared here, and what comes next puts it back or it does not.
+#
+# findings.json and findings-checked are what the action posts on. post-review.ts and
+# print-findings.ts re-decide every suppression and every thread closure against
+# existing.json, and the orchestrator could have written the copy it was handed. So the file
+# is fetched again from GitHub, and the fresh copy has whatever was said during the twenty
+# minutes the review took. The empty file is written first, so a fetch that fails before it
+# writes leaves nothing traced and every suppression reopened.
+rm -f "$BUILD/findings.json" "$BUILD/findings-checked" "$BUILD/existing.json"
+printf '{"threads": [], "conversation": []}\n' >"$BUILD/existing.json"
+
+if [ -n "${PR:-}" ]; then
+    fetch_existing
+fi
 
 if [ -s "$BUILD/run.json" ]; then
     extracted=0
-    $PREFIX bun "$ACTION/review/extract-findings.ts" \
+    $PREFIX bun --config=/dev/null "$ACTION/review/extract-findings.ts" \
         "$BUILD/run.json" "$BUILD/findings.json" || extracted=$?
 
     if [ "$status" -eq 0 ]; then
@@ -277,7 +287,7 @@ fi
 # posting, so the marker goes down and the run still ends red.
 if [ -f "$BUILD/findings.json" ]; then
     checked=0
-    $PREFIX bun "$ACTION/review/check-findings.ts" "$BUILD/findings.json" || checked=$?
+    $PREFIX bun --config=/dev/null "$ACTION/review/check-findings.ts" "$BUILD/findings.json" || checked=$?
 
     if [ "$checked" -eq 0 ] || [ "$checked" -eq 3 ]; then
         printf 'ok' >"$BUILD/findings-checked"

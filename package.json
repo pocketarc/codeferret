@@ -1,7 +1,7 @@
 {
     "name": "codeferret",
     "private": true,
-    "description": "Dev dependencies only. Nothing here ships: the action and the plugin run the scripts under review/ and scripts/ with bun directly.",
+    "description": "The action and the plugin run the scripts under review/ and scripts/ with bun directly, so there is no build step and no bundle that can fall out of date.",
     "scripts": {
         "typecheck": "tsc --noEmit",
         "test": "bun test",

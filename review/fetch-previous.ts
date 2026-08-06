@@ -40,7 +40,7 @@ const PER_PAGE = 100;
 /**
  * What action.yml keeps an artifact for. Nothing older is still downloadable.
  *
- * validate-manifests.ts checks the two against each other, because raising one without the
+ * validate-repo.ts checks the two against each other, because raising one without the
  * other stops this paging at an artifact that is still there.
  */
 const RETENTION_DAYS = 14;
@@ -72,7 +72,6 @@ requireRepository(repo);
 
 const pull: string = requirePullNumber(prNumber);
 
-/** How many redirects the artifact download follows before giving up. */
 const MAX_REDIRECTS = 5;
 
 /**
@@ -162,33 +161,34 @@ async function download(id: number): Promise<Uint8Array> {
 }
 
 /**
- * The workflow this run belongs to, or null when nothing names one.
+ * The workflow this run belongs to, or null where nothing names one.
  *
- * A failure to answer is a null rather than a throw: `sameWorkflow` then accepts any run,
- * which is what a session gets, and the alternative is a review that repeats itself because
- * one API call went wrong.
+ * Null is `/codeferret:review` on somebody's own machine, and `sameWorkflow` then accepts
+ * any run, because what a session does with a previous artifact is print it to the person
+ * who asked.
+ *
+ * A run id that is set and cannot be resolved is a different thing, and it throws. Answering
+ * null there would let one transient API error open the single path a forged artifact walks
+ * through, and that check exists because nothing on that path leaves a trace anywhere a
+ * reviewer looks. The throw costs one review that repeats itself, which is what every other
+ * refusal in this file costs.
  */
 async function ownWorkflow(): Promise<number | null> {
     const id = process.env.GITHUB_RUN_ID;
 
     if (!id || !/^[0-9]+$/.test(id)) return null;
 
-    try {
-        const run = record(await restJson(token, `/repos/${repo}/actions/runs/${id}`));
-        const workflow = run?.workflow_id;
+    const run = record(await restJson(token, `/repos/${repo}/actions/runs/${id}`));
+    const workflow = run?.workflow_id;
 
-        return Number.isInteger(workflow) && typeof workflow === "number" ? workflow : null;
-    } catch (error) {
-        console.error(`previous findings: this run's own workflow could not be read: ${reason(error)}`);
-        return null;
+    if (typeof workflow !== "number" || !Number.isInteger(workflow)) {
+        throw new Error(`run ${id} names no workflow, so no artifact can be checked against it`);
     }
+
+    return workflow;
 }
 
-const own = await ownWorkflow();
-
-if (own === null && process.env.GITHUB_RUN_ID) {
-    console.error("previous findings: nothing names this run's workflow, so an artifact of any workflow counts");
-}
+let own: number | null = null;
 
 /** One artifact's findings.json, parsed. */
 async function openArtifact(artifact: Artifact): Promise<unknown> {
@@ -201,6 +201,13 @@ async function openArtifact(artifact: Artifact): Promise<unknown> {
     const producer = artifact.workflow_run?.id;
 
     if (own !== null) {
+        // Said here rather than left to the request. Interpolated undefined asks GitHub for
+        // `/runs/undefined`, and the 404 that comes back reads as a run that is not there
+        // when the truth is that the listing named none.
+        if (!Number.isInteger(producer)) {
+            throw new Error(`artifact ${artifact.id} names no producing run`);
+        }
+
         const producingRun = await restJson(token, `/repos/${repo}/actions/runs/${producer}`);
 
         if (!sameWorkflow(own, producingRun)) {
@@ -282,6 +289,8 @@ let from: Artifact | null = null;
 let findings: Previous[] = [];
 
 try {
+    own = await ownWorkflow();
+
     const previous = await previousRun();
 
     if (previous) {

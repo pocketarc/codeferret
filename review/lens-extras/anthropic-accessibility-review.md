@@ -18,10 +18,18 @@ stop: anything the source settles outright is in scope, whether or not it is nam
 - A table without headers.
 - An input whose purpose is one WCAG names and which carries no `autocomplete` token
   (1.3.5).
-- `<video autoplay>` or `<audio autoplay>` with neither `controls` nor `muted` (1.4.2).
-- A link whose whole accessible content is "click here" or "read more" (2.4.4).
+- `<audio autoplay>`, or `<video autoplay>` carrying an audio track, with neither `controls`
+  nor `muted` (1.4.2). 1.4.2 is about audio that starts on its own, so silent video is
+  outside it.
+- `<video autoplay loop>` with no `controls` (2.2.2), which is the criterion that applies
+  to moving content.
+- A link whose whole accessible content is "click here" or "read more" and whose surrounding
+  markup supplies no purpose either (2.4.4). 2.4.4 is Link Purpose (In Context), so the
+  enclosing sentence, list item, table cell or heading counts; the source usually shows it.
 - A duplicated `id` that a `<label for>` or an `aria-labelledby` points at, which binds to
-  the first match and to nothing else (4.1.1).
+  the first match and leaves the second control with no accessible name (1.3.1, and 4.1.2
+  for the control left unnamed). Not 4.1.1: the WCAG 2.1 errata make it always satisfied,
+  and WCAG 2.2 removed it.
 
 The rule for the rest: a criterion whose outcome depends on a computed style, a live focus
 ring, an accessibility tree, timing or motion cannot be decided here. That rules out

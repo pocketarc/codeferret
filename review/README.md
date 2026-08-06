@@ -19,12 +19,12 @@ A run is one orchestrator and N lens subagents. The orchestrator merges the find
 
 Every lens reads source and nothing else. Two of the bundled lenses were written for more
 than that: `anthropic-accessibility-review` and `copilot-web-design-reviewer` assume a
-session holding a browser, and a review has none. So a criterion whose outcome depends on a
-computed style, a live focus ring, an accessibility tree, timing or motion is not evaluated.
-That line is drawn criterion by criterion in
-`review/lens-extras/anthropic-accessibility-review.md`, which is the one place it is written
-out. `lens_health` in the posted review carries what each lens reported it could not check,
-with a standing sentence for those two lenses when neither said anything.
+session holding a browser, and a review has none.
+`review/lens-extras/anthropic-accessibility-review.md` sets out, criterion by criterion,
+what that puts out of reach, and it is also the file the lens itself reads. `lens_health` in
+the posted review holds what each lens reported it could not check, and `review-body.ts`
+adds a standing sentence for those two lenses, so a review says what it did not reach even
+when a lens forgets to.
 
 There are two ways in, and both call `run.sh`, which is the whole sequence: build the
 prompts, read what has already been said, run the orchestrator, check what comes back.
@@ -51,7 +51,7 @@ default is written, and run:
 ```sh
 bun scripts/build-lens-agents.ts
 bun scripts/build-defaults.ts
-bun scripts/validate-manifests.ts
+bun scripts/validate-repo.ts
 ```
 
 `agents/` and `review/defaults/` are both generated. The validator re-runs each generator
@@ -61,11 +61,11 @@ namespaced as `codeferret:<name>`.
 To add one for a single repository, put the skill under that repository's own
 `.claude/skills/<name>/` and name it in the action's `lenses` input. `build-prompts.sh`
 renders it an agent of its own for the run and copies the skill into the run's plugin, so
-it loads namespaced like any other. Know what that buys: the skill is read from the working
-tree, so anyone who can push a branch can rewrite it, and it becomes the instructions for
-an agent with `Bash` in the job holding the tokens. Naming a workspace lens puts
-`.claude/skills/` inside the CI trust boundary. A bundled lens is vendored at a pinned
-commit and carries no such exposure.
+it loads namespaced like any other. Know what that opens up: the skill is read from the
+working tree, so anyone who can push a branch can rewrite it, and it becomes the
+instructions for an agent with `Bash` in the job holding the tokens. Naming a workspace lens
+puts `.claude/skills/` inside the CI trust boundary. A bundled lens is vendored at a pinned
+commit and has no such exposure.
 
 ```yaml
 - uses: pocketarc/codeferret@v1
@@ -83,7 +83,7 @@ both paths it searched.
 Never fetch a skill at run time. A review job holds a `pull-requests: write` token, so you
 should be able to review the code it runs, and that code should not change between runs.
 `lenses/skills/PROVENANCE.tsv` records the source repository, commit and path for each
-bundled lens, and marks one written here rather than vendored as `(first-party)`.
+bundled lens, and marks a lens written here as `(first-party)`.
 
 ### What vendoring rewrites
 
@@ -97,8 +97,9 @@ five frontmatter fields:
   lens agent is told which skill to load by name.
 - `disable-model-invocation: true` is removed. It leaves a skill reachable only by a
   person typing its slash command, and a lens agent loads its skill through the Skill
-  tool, which is model invocation. `cursor-thermo-nuclear-review` shipped with it, and
-  left in it would have cost one lens with nothing to show for it but a healthy run.
+  tool, which is model invocation. `cursor-thermo-nuclear-review` shipped with it. Left in,
+  it would have left that lens with no skill to load, and the run would still have come back
+  healthy.
 - `user-invocable: false` is removed, which keeps `/codeferret:<lens>` available for
   running one lens by hand. On 2.1.220 the flag only hides the slash menu entry: Claude
   Code still registers the skill and the model still sees it. The scoped description is what
@@ -150,32 +151,32 @@ BUILD="$RT/codeferret/build"
 FERRET="$PWD"
 
 (cd "$BUILD" && DRY_RUN=1 GITHUB_TOKEN=x GITHUB_REPOSITORY=pocketarc/codeferret \
-  bun "$FERRET/review/post-review.ts" "$BUILD/findings.json" \
-  "$(bun "$FERRET/review/reviewed-commit.ts" "$BUILD/diff-args")" 1)
+  bun --config=/dev/null "$FERRET/review/post-review.ts" "$BUILD/findings.json" \
+  "$(bun --config=/dev/null "$FERRET/review/reviewed-commit.ts" "$BUILD/diff-args")" 1)
 ```
 
-The subshell is what keeps `bun` out of the reviewed tree. "Bun runs what a `bunfig.toml`
-in the reviewed tree names" below says why every `bun` a review starts is run from somewhere
-else.
+The subshell and the `--config` flag are what keep the reviewed tree's own `bunfig.toml`
+away from `bun`. "Bun runs whatever a `bunfig.toml` in the reviewed tree names" below has
+why every `bun` a review starts takes both.
 
 Use the findings file in the run's own `build/`. `post-review.ts` reads `existing.json`
 beside it to know which threads are the run's own, and a run's findings and a different
 run's threads need not describe the same pull request.
 
-`review-body.ts` chooses what the body carries from two more variables.
+`review-body.ts` decides what the body prints from two more variables.
 `GITHUB_SERVER_URL` and `GITHUB_RUN_ID` name the run holding the artifact, and a runner sets
 both: there the body prints the critical and high findings and links the artifact for the
 rest. By hand and under `local-post.sh` they are unset, there is no artifact anybody could
-open, and the body carries every finding instead, bounded the same way.
+open, and the body prints every finding instead, bounded the same way.
 
-Budget roughly 15 minutes and several dollars per run on Opus with three lenses. Lenses run
-in parallel, so the bill grows with the number of lenses and the wall clock barely does:
-three took about 15 minutes, and the full fourteen with both static analysis tools took
-20m46s for $36.00, returning 97 findings with no permission denials. The twelve-lens set
-before them came to $31.80 in 19 minutes over a 47-file diff.
+Lenses run in parallel, so the bill grows with the number of lenses and the wall clock
+barely does. Three took about 15 minutes. An earlier fourteen-lens run with both static
+analysis tools took 20m46s for $36.00, returning 97 findings with no permission denials, and
+the 12-lens set before that came to $31.80 in 19 minutes over a 47-file diff. Budget between
+$2.50 and $2.70 a lens on Opus, and about 20 minutes whatever the count.
 
 `extract-findings.ts` prints that cost, `review/summary.ts` renders it into the job
-summary, and the action carries it in its `cost-usd` and `output-tokens` outputs. Read
+summary, and the action reports it in its `cost-usd` and `output-tokens` outputs. Read
 `modelUsage` in `run.json` if you want the breakdown. The `usage` object beside it covers
 the orchestrator's last turn alone, and undercounted one full run sixtyfold.
 
@@ -237,8 +238,8 @@ pass.
 ### The lens's prompt states the base ref
 
 For some skills, the subagent asks the user which commit to diff against. Nothing can
-answer in a headless run, so the subagent stalls. `lens-dispatch.md` carries the ref
-itself, and `lens-brief.md` carries both facts: the ref is decided, and there is nobody
+answer in a headless run, so the subagent stalls. `lens-dispatch.md` names the ref
+itself, and `lens-brief.md` states both facts: the ref is decided, and there is nobody
 to ask.
 
 ### Only the orchestrator's output is enforced
@@ -263,14 +264,31 @@ against an earlier one is the same question as merging two lenses' findings: the
 often moved, and the words are rewritten every run. So the orchestrator marks each finding
 `new`, `already-reported`, or `declined`, and `post-review.ts` posts only the new ones.
 
-A decline does not rest on the orchestrator's word alone. `vetDeclines` reads the cited
-comment's `authorAssociation` back out of `existing.json` and reopens any decline that
-cannot be traced to an owner, a member or a collaborator, or to a resolved thread. It also
-requires the comment to be about the finding's own file: a reply on a thread anchored there
-counts on its own, and anything else, a conversation comment included, has to name the file.
-Without that half, a maintainer who comments "LGTM, merging" settles every finding on the
-pull request. What is left is that a maintainer settling one finding in a file
-settles every finding this run made in that file, which is the direction to be wrong in.
+A suppression does not rest on the orchestrator's word alone. `vetSuppression` reads the
+cited comment back out of `existing.json` and reopens what the comments do not bear out.
+
+A decline needs an owner, a member or a collaborator, or a thread somebody closed. Closing
+one takes repository write: without it, `resolveReviewThread` fails. So a closed thread is
+evidence that somebody with write access settled it. Replying to one takes no more than
+commenting and does not reopen it, so a reply there settles the file its thread is anchored
+to and no other.
+
+An `already-reported` finding is held to less, because it stays a finding in the file and
+loses only its paragraph. Anyone's comment settles it. What it still needs is that the
+comment exists on this pull request and is about the same file.
+
+Both go through the same file test. A reply on a thread anchored to the finding's file
+counts on its own; anything else, a conversation comment included, has to name the path, or
+a basename of four characters or more with nothing but punctuation or space either side.
+Without that test, a maintainer who comments "LGTM, merging" settles every finding on the
+pull request. What is left is that a maintainer settling one finding in a file settles every
+finding this run made in that file, which is the direction to be wrong in.
+
+`existing.json` is fetched a second time once the orchestrator has exited, and that copy is
+what the vetting reads. The orchestrator holds the path in the same prompt as the rule, and
+it has `Bash` under `bypassPermissions`, so with the first copy `vetSuppression` would be
+checking the orchestrator's suppressions against a file the orchestrator could have written.
+The second fetch also picks up whatever was said during the twenty minutes the review took.
 
 It matches against two files. `build/previous.json` holds what the last run reported, and
 that is where a repeat is caught. `build/existing.json` holds the discussion on the pull
@@ -283,8 +301,8 @@ address.
 
 Two rules keep that safe. The orchestrator marks a finding `new` whenever it is unsure,
 because a repeated comment costs the author seconds while a suppressed finding is one
-nobody ever sees. And suppression is visible: the review body carries the count and the
-run artifact carries every finding with its status, so a matcher that starts eating
+nobody ever sees. And suppression is visible: the review body prints the count and the
+run artifact holds every finding with its status, so a matcher that starts eating
 findings shows up as a number.
 
 An outdated comment does not count as covering anything. GitHub collapses a comment when
@@ -292,7 +310,7 @@ the line it referred to changes, so a defect that survived an edit still needs s
 
 ### The previous run's findings come out of its artifact
 
-Nothing GitHub's comment APIs return carries a review body. `fetch-existing.ts` reads
+Nothing GitHub's comment APIs return includes a review body. `fetch-existing.ts` reads
 `reviewThreads`, which is inline comments, and `issues/{n}/comments`, which is the
 conversation; a review body is neither. The whole review is a body now, so without this the
 run after it could see none of it. This predates the change: on the last run before it, the
@@ -302,7 +320,7 @@ going to be raised as new on every push for as long as the pull request stayed o
 So `fetch-previous.ts` fetches `codeferret-run` artifacts for this pull request's branch,
 newest first, reads `findings.json` out of the zip, and writes the file, line, title and
 status of each finding to `build/previous.json`. The bodies are left behind: matching is on
-the file and the title, and carrying a previous review's prose into this run's context buys
+the file and the title, and pulling a previous review's prose into this run's context adds
 nothing.
 
 Four things have to be true of an artifact before what it holds can suppress a finding.
@@ -319,8 +337,7 @@ that status into its own findings file, so the suppression lasts as long as the 
 request. That is the failure this whole path exists to avoid, caused by the path itself. A
 run that ends red is a different case and still counts: `check-findings.ts` drops what it
 cannot use, the review lands, and the job goes red over what was dropped. So the newest
-artifact carrying a posted review wins, and one carrying none is stepped over for the run
-before it.
+artifact with a posted review wins, and one without is stepped over for the run before it.
 
 A run with nothing new to post records itself anyway, with a null url. It suppressed
 everything on the strength of a review that did land, and `previousRun` opens ten artifacts
@@ -332,7 +349,7 @@ That review has to have been of this pull request. Artifacts are found by head b
 a branch name is evidence of nothing: `fix/lint` and a release branch are deleted on merge
 and recreated inside the retention window, and GitHub allows one branch to head two open
 pull requests against different bases. So `post-review.ts` writes the number into the
-`posted` record and `previous.ts` requires it to match. A record carrying no number comes
+`posted` record and `previous.ts` requires it to match. A record with no number comes
 from a release that wrote none, and it does not match, which costs one round of repeated
 comments.
 
@@ -347,14 +364,14 @@ that is what is required.
 And it has to have come from a run of this workflow. The artifacts endpoint lists every
 `codeferret-run` artifact in the repository whatever produced it, so without this check
 anyone who can push a branch can add a throwaway workflow that uploads a `findings.json`
-carrying a `posted` record and a list of file and title pairs, let it run once, and delete
+holding a `posted` record and a list of file and title pairs, let it run once, and delete
 the workflow in the next push. The artifact outlives the branch for the whole retention
 window, the endpoint lists it ahead of every genuine one, and the next review marks each of
-those findings `already-reported`. Changing `fetch-previous.ts` would do the same thing and be in the diff
-a reviewer reads; this leaves nothing behind. So `fetch-previous.ts` reads its own run's
-`workflow_id` and requires the producing run to carry the same one. In a session nothing
-names a workflow and any run counts, because what a session does with a previous artifact is
-print it to the person who asked for it.
+those findings `already-reported`. Changing `fetch-previous.ts` would do the same thing and
+be in the diff a reviewer reads; this leaves nothing behind. So `fetch-previous.ts` reads
+its own run's `workflow_id` and requires the producing run to name the same one. In a
+session nothing names a workflow and any run counts, because what a session does with a
+previous artifact is print it to the person who asked for it.
 
 Reading an artifact needs `actions: read`, which the shipped workflow grants and a consumer
 can decline. So every failure is a line on stderr and a file holding no findings. No
@@ -371,9 +388,9 @@ is not allowed to have.
 
 The `exclude-paths` input becomes a pathspec on the diff command each lens is given, so
 a lockfile is not in the diff at all. `build-prompts.sh` writes that pathspec to
-`build/diff-args`, and everything downstream that needs it reads that file back rather than
-building its own. Two constructions of the same pathspec drifted once, and the anchor map
-`post-review.ts` built then covered files no lens had read.
+`build/diff-args`, and everything downstream that needs it reads that file back. Two
+constructions of the same pathspec drifted once, and the anchor map `post-review.ts` built
+then covered files no lens had read.
 
 ### Text for one lens goes in that lens's own prompt
 
@@ -384,11 +401,11 @@ come from lenses staying inside their own domain: on a ten-lens run the RSC boun
 violation, the missing index, and the keyboard-access failure were each found by exactly
 one lens.
 
-Routing it through the orchestrator instead is worse than either. A line telling it who to
-hand something to makes the scoping a judgement remade on every run, and nothing downstream
-can tell when it went to the wrong lens or to all of them.
+Routing it through the orchestrator instead is worse than either. Put that instruction in
+the orchestrator's prompt and the routing becomes a judgement the orchestrator remakes every
+run, with nothing downstream to show when the text went to the wrong lens or to all of them.
 
-What the directory carries is what a vendored skill assumes and this run cannot provide:
+What the directory holds is what a vendored skill assumes and this run cannot provide:
 that there is no browser and no running site for `copilot-web-design-reviewer`, that a
 criterion needing a rendered page is out of reach for the accessibility lens, and that the
 SQL lens's offer of a whole-project pass does not apply.
@@ -396,10 +413,10 @@ SQL lens's offer of a whole-project pass does not apply.
 Read a change to one of these files yourself, against the skill it overrides. When
 CodeFerret reviews this repository, the file under review is the instruction that the lens
 reviewing it ran under, and that lens can only notice a gap in the file by reading past its
-own prompt. `validate-manifests.ts` catches a file that names no lens, and nothing catches
+own prompt. `validate-repo.ts` catches a file that names no lens, and nothing catches
 one whose instructions no longer match the skill it overrides.
 
-A second directory used to carry per-lens text that depended on the run, spliced into the
+A second directory used to hold per-lens text that depended on the run, spliced into the
 lens list and handed on by the orchestrator. It is gone, for the reason the paragraph above
 gives: it made the routing a judgement remade every run. Nothing needed it. A lens that
 wants a path this run wrote can take it from the directory holding the `diff-args` file its
@@ -428,7 +445,7 @@ look. Hiding a low finding from the file would be the filtering the paragraph ab
 out.
 
 A review posted from a session has no artifact, and its findings file is a path under
-`.git/` on one person's machine. Nothing branches on severity there: the body carries every
+`.git/` on one person's machine. Nothing branches on severity there: the body prints every
 finding, and `assemble` cuts from the end and says how many did not fit. Splitting the
 review between a comment and a file only works where both are reachable.
 
@@ -443,10 +460,9 @@ the reader it is the consensus priority, which is the opposite of the truth.
 A thread is finished when its defect has left the code or when someone settled it, and
 neither is a question a rule answers. `isOutdated: true` means the anchored line changed,
 which a fix landing elsewhere does not produce and an unrelated edit above does, so the
-orchestrator weighs it against the diff instead of treating it as a condition. It leaves
-open any thread a human opened, any whose last comment asks an unanswered question, and
-any it is unsure about. Each closure carries a reason, and the review body carries the
-reasons, so a wrong call is visible.
+orchestrator weighs it against the diff. It leaves open any thread a human opened, any
+whose last comment asks an unanswered question, and any it is unsure about. Each closure
+has a reason, and `review-body.ts` prints them in the review, so a wrong call is visible.
 
 Which threads are the run's own is decided by two things together: the login the review
 posts under, and the shape an inline comment of ours ended in. `github-actions[bot]` is the
@@ -478,7 +494,7 @@ nobody had read yet. What acts on a review here is usually an agent, and what it
 severity and the lenses that found it, the suppressed ones included. So the comment is for
 the person deciding whether to stop, and the file is for whoever fixes it.
 
-That leaves a body carrying the summary, the counts, `lens_health`, and the findings the
+That leaves a body holding the summary, the counts, `lens_health`, and the findings the
 paragraph above says belong in it. `review-body.ts` bounds it: the short
 sections that make the review honest are assembled first, the listing takes what is left,
 and it drops whole findings from the end rather than being cut at a character offset, which
@@ -507,7 +523,7 @@ warnings on a healthy run teach a reader to skip the line, and the line is the o
 a lens that really did die shows up. A lens that returns nothing and says nothing is still
 a failure.
 
-A run in which nothing survives still posts. Zero findings and a failed lens is the shape
+A review is posted even when nothing survives. Zero findings and a failed lens is the shape
 of a review that never happened, and posting nothing leaves a pull request looking clean.
 
 ### The reviewed tree does not configure the session
@@ -526,12 +542,14 @@ whoever pushed that branch wrote. Plugins passed with `--plugin-dir` still load,
 agents are unaffected, and text meant for one of them reaches it through
 `review/lens-extras/` instead.
 
-### Bun runs what a `bunfig.toml` in the reviewed tree names
+### Bun runs whatever a `bunfig.toml` in the reviewed tree names
 
 Bun reads `bunfig.toml` from its working directory, and `preload` in that file names a
 script bun runs before the one on the command line. Bun looks in the working directory and
-nowhere else: the script's own path does not matter, `-c` pointed at another file does not
-suppress the preload, and bun does not walk up from the directory it starts in.
+nowhere else: the script's own path does not matter, and bun does not walk up from the
+directory it starts in. `--config=<path>` replaces that lookup outright, and the local file
+is then ignored. Measured on bun 1.3.5; `-c` is the same flag and takes its value with an
+`=`, so `-c file` is read as an entry point.
 
 A review is a job holding `CLAUDE_CODE_OAUTH_TOKEN` and a `pull-requests: write` token, and
 a run is several `bun` invocations, two of which are handed that token. So one `bunfig.toml`
@@ -540,16 +558,25 @@ dispatched, with no model in the loop and nothing to inject. Under `/codeferret:
 runs that script on the developer's machine, whatever the permission mode, because the only
 command Claude Code is asked to approve is `local-run.sh`.
 
-The fix is the working directory. `run.sh` runs from `$BUILD`, which is under the run
-directory rather than the checkout; `build-prompts.sh` and `local-post.sh` run their own
-from there in a subshell; the action's two `bun` steps set `working-directory`. Only the
-orchestrator starts in the workspace, in a subshell of its own, because its lenses read
-whatever tree their session started in. The tools take the workspace as an argument instead
-of finding it from the working directory, and ask git for the top level from there.
+The working directory was the first answer and it is not enough on its own. It closes the
+branch's own file: `run.sh` runs from `$BUILD`, `build-prompts.sh` and `local-post.sh` run
+theirs from there in a subshell, and the action's `bun` steps set `working-directory`. But
+every directory the session is still allowed to run from is one it can write. The
+orchestrator has `Bash` under `bypassPermissions` and its prompt names `$BUILD` absolutely,
+so `touch $BUILD/bunfig.toml` moves the same execution one step along. Under
+`command-prefix` the working directory is the prefix's own, which the action asks to be the
+repository root, so there it closed nothing at all.
 
-`command-prefix` is the exception, and the same caveat is written into that input's
-description in action.yml: a prefix sets its working directory inside the container, that
-directory has to be the repository root, and nothing here can change it.
+So every `bun` a review starts takes `--config=/dev/null` as well. That replaces the
+lookup wherever the process happens to be standing, and `/dev/null` is the one path on a
+runner whose contents nothing short of root can change. Fifteen invocations take the flag:
+six in `run.sh`, three in `build-prompts.sh`, three in action.yml, two in `local-post.sh` and
+one in `local-print.sh`.
+
+The working directory still moves, because a relative path in a report or an argument
+resolves against it. Only the orchestrator starts in the workspace, in a subshell of its
+own, because its lenses read whatever tree their session started in. The tools take the
+workspace as an argument and ask git for the top level from there.
 
 ### A lens agent ships pre-built
 
@@ -600,20 +627,23 @@ drops it. `exclude-paths` is about what deserves a reader's attention, not a mac
 
 Nothing else changes shape. The orchestrator still merges N lens reports and still
 deduplicates on what the defect is, so a rule and two lenses that spot the same thing
-produce one comment with three names in `found_by`. A tool
-that did not run is a lens that says so, which `lens_health` already knows how to
-report.
+produce one comment with three names in `found_by`. When a tool does not run, the lens says
+so, and the orchestrator already reports that in `lens_health`.
 
 That lens is told to keep anything it cannot rule out, for the same reason the
 orchestrator marks an uncertain finding `new`: a wrong keep costs a reader seconds, and
 a wrong drop is a finding that will be raised and discarded on every run without anybody
 seeing it. It reports how many it dropped, and `build/tool-*.json` holds what it was
-handed, so its judgement can be checked against the raw report.
+handed, so its judgement can be checked against the report.
 
-Each report caps what it hands the lens, and it caps the low end: semgrep's findings are
-sorted `ERROR` first and osv-scanner's by CVSS score before either is cut. A cap in
-emission order would drop a hundred `INFO` hits' worth of real ones. Both report how many
-went, and everything raised stays in `build/tool-*.json`.
+Each report caps what it hands the lens at 100 findings, and it caps the low end: semgrep's
+findings are sorted `ERROR` first and osv-scanner's by CVSS score before either is cut. A
+cap in emission order would drop a hundred `INFO` hits' worth of real ones.
+
+`build/tool-<name>.json` is therefore the lens's input and not the whole record. Past the
+cap a run also writes `build/raised-<name>.json`, holding every finding the tool produced.
+The name sits outside the `tool-*.json` glob `review/lens-extras/static-analysis.md` points
+the lens at, so widening the record does not widen what the lens reads.
 
 Both those checks need the file. `artifact-path` defaults to `findings.json`, so on the
 default the tool reports die with the runner and the check is possible only while the run
@@ -685,16 +715,16 @@ produced. Check out yourself and set `checkout: skip` if you need submodules, LF
 sparse checkout.
 
 The action also installs `bun` and `claude` when they are not already on PATH. Set
-`install: skip` to provide them yourself, which is also how you pin their versions
-rather than letting a job that holds your OAuth token install the latest.
+`install: skip` to provide them yourself, which is also how you pin their versions: on the
+default, a job that holds your OAuth token installs whatever npm has as the latest.
 
 Use `command-prefix` when the repository runs its toolchain in a container. For example,
 `docker compose exec -T -w /app devtools`. The prefix must put both binaries on PATH and
 start in the repository root, because the review reads the working tree and runs `git
 diff`. It must also mount three paths where the runner has them: the checkout,
 `$GITHUB_ACTION_PATH` for the scripts the prefix runs, and `$RUNNER_TEMP/codeferret` for
-the run's plugin, the diff command each lens is handed and the tool reports. `run.sh`
-checks the last two before it dispatches anything, because a lens that cannot reach the
+the run's plugin, the diff command each lens is handed and the tool reports. The
+run checks the last two before it dispatches anything, because a lens that cannot reach the
 build directory reads no diff and returns a review that is empty for no stated reason.
 
 Actions provides `GITHUB_TOKEN`, so `github-token` only needs setting to override it. Set
@@ -703,9 +733,9 @@ were posted under, and a token that is not the default posts under a different o
 
 ## Releasing
 
-Consumers pin `pocketarc/codeferret@v1`. GitHub resolves that as a plain git ref, not a
-semver range, so `v1` is a mutable tag this repository moves on every release. Skip the
-move and every consumer stays on the previous revision with no sign anything happened.
+Consumers pin `pocketarc/codeferret@v1`. GitHub resolves that as a plain git ref, so `v1`
+is a mutable tag this repository moves on every release. Skip the move and every consumer
+stays on the previous revision with no sign anything happened.
 
 ```sh
 git push origin main
@@ -719,20 +749,19 @@ A change that breaks a consumer's workflow (a new required input, a permission t
 have to grant, work moved out of the action and into their job) needs `v2` and a `v2` tag,
 because `@v1` carries it to everyone the moment the tag moves.
 
-The test is whether their job still works, not whether it behaves the same. 1.1.0 is the
-case that settled it: it stops posting inline comments, prints only the critical and high
-findings in the body, and uses `actions: read`, which an older workflow does not grant.
-Every one of those degrades rather than breaks: the review still posts, and a consumer who
-never grants the permission gets each finding raised again on every push, which is what the
-reviews looked like before. Nothing there needs a consumer to edit anything, so it stayed
-on `v1`. A change that would leave their job red, or leave no review posted at all, does
-not.
+The test is whether their job still works. 1.1.0 is the case that settled it: it stops
+posting inline comments, prints only the critical and high findings in the body, and uses
+`actions: read`, which an older workflow does not grant. Every one of those degrades
+gracefully: the review is still posted, and a consumer who never grants the permission gets
+each finding raised again on every push, which is what the reviews looked like before. Nothing
+there needs a consumer to edit anything, so it stayed on `v1`. A change that would leave
+their job red, or leave no review posted at all, needs `v2`.
 
 Bump `version` in `.claude-plugin/plugin.json` to the same number in the same commit.
 Plugin users see it in `/plugin`, and it is the only version they are shown.
-`validate-manifests.ts` checks every `@vX.Y.Z` in the template, the install command, the
-README and CLAUDE.md against that number, because twice those files named a tag that had
-never existed and the advice they gave failed the consumer's job at load.
+`validate-repo.ts` checks every `@vX.Y.Z` in the template, the install command, the README
+and CLAUDE.md against that number. Advice naming a tag nobody cut fails the consumer's job
+at load, and that advice is the one escape hatch from the mutable tag.
 
 Plugin users are not on tags at all. `/plugin marketplace add pocketarc/codeferret`
 follows this repository's default branch, and `/plugin update` gives them whatever is on

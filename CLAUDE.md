@@ -33,8 +33,7 @@ reviewed.
 **Never commit a tool change to a `test/` branch.** The reviewed diff is
 `test/fixture...test/fixture-defects`, so anything you add there becomes part of what
 the lenses review. This has already happened once: the whole action ended up inside
-the diff, and the lenses spent the run's budget reviewing themselves instead of the
-fixture.
+the diff, and the lenses spent the run's budget reviewing themselves.
 
 To get a tool change onto the fixture branches, first commit it to `main`. Then rebase
 both:
@@ -61,8 +60,8 @@ them, there is nothing left to score a review against.
 *outside* the reviewed diff, so a lens has to follow a defect out of the changed lines to
 find it. That used to exercise a code path of its own as well, because a finding there
 could not be anchored to a comment and went to a section of the body kept for those. The
-section is gone and the file still earns its place: it is what catches a lens that stops
-at the diff boundary. Leave it alone.
+section is gone, and the file is still worth keeping: a lens that stops at the diff
+boundary never reaches it. Leave it alone.
 
 The scoring key lives outside the repository. Do not add it. A reviewer that can read
 the answers cannot be measured.
@@ -84,7 +83,7 @@ bun install
 By hand, or to see one on its own:
 
 ```sh
-bun scripts/validate-manifests.ts   # also both generators, and action.yml's shell
+bun scripts/validate-repo.ts   # also both generators, and action.yml's shell
 bun run typecheck
 shellcheck -e SC2016 review/*.sh scripts/*.sh
 bun test
@@ -96,17 +95,30 @@ step of a real review fails. That is how an unquoted `pull-requests: write` insi
 input description shipped once. Quote any string that contains `: `.
 
 The shell inside `action.yml` runs nowhere else, so shellcheck is all that reads it before
-CI does, and shellcheck reads syntax rather than meaning. A `git rev-parse --verify -- "$ref"`
+CI does, and shellcheck reads only syntax. A `git rev-parse --verify -- "$ref"`
 shipped that way and failed every run at the fourth step: in `rev-parse`, `--` separates
 revisions from paths, so the ref landed on the path side and no revision was verified.
 `--end-of-options` is the marker that guards a leading dash. Run a line you changed here
 against a real repository before pushing it.
+
+Write a commit subject that names the change rather than the review that prompted it. A
+reader of "Stop the two pathspecs drifting" knows what moved. A reader of "Work through
+the third review" knows only that a review happened, and the ordinal means nothing to
+anyone who was not counting at the time.
 
 ## Things that will bite you
 
 Each of these is a rule and the one fact that makes it stick. The argument behind each one
 is in `review/README.md`.
 
+- Do not write a count of what this repository holds into a comment or a document. The
+  README led with "fourteen lenses" for a full round after the set became thirteen, and
+  nothing failed, so a check on that one numeral was added rather than the sentence being
+  rewritten. Name the set instead of counting it, and the check goes too. A measurement of
+  something that happened is a different thing and stays: "$1.28 and no findings" is the
+  evidence for the rule beside it, and no later commit can make it wrong.
+  `review/lens-extras/comment-review.md` asks that lens to report the ones that get past
+  this.
 - A lens's `in_diff` field is unreliable, and nothing reads it. On every run that used
   inline comments, a lens reported an out-of-diff finding as in-diff. Nothing anchors to a
   line now, so there is nothing left to be wrong about. Whoever adds the first inline
@@ -119,7 +131,7 @@ is in `review/README.md`.
   up as a number. The one exception is a lens that returns nothing *and* names a checkable
   reason, which the orchestrator reads against the diff. Do not widen it to zero findings
   with no reason given.
-- The lens's prompt must state the base ref. It travels in `review/lens-dispatch.md`.
+- The base ref belongs in the lens's prompt, and `review/lens-dispatch.md` holds it.
   Without it, some lenses stop and ask which commit to diff against, and nothing can
   answer in a headless run.
 - Subagents do not inherit `--json-schema`. Their schema comes from the prompt, so
@@ -132,8 +144,10 @@ is in `review/README.md`.
   Both are in `findings.json`, and severity orders the findings and decides which ones the
   comment prints in full. Every finding stays in the file whatever the comment prints.
 - `review/tools/*` cap what they hand the lens at 100 findings, sorted so the cap takes
-  the low end, and everything a tool raised stays in `build/tool-*.json`. Cap what a lens
-  reads; the findings themselves are kept whole.
+  the low end. `build/tool-<name>.json` is the lens's input and is capped with it, so past
+  the cap a run also writes `build/raised-<name>.json` holding every finding the tool
+  produced. The lens may drop a tool finding only because that file holds the whole list;
+  keep it, and keep its name outside the `tool-*.json` glob the lens reads.
 - Lenses must not modify the working tree. Every lens reads the same checkout at once,
   so one edit corrupts every other lens's review. `Edit`, `Write`, `NotebookEdit` and
   `Agent` are all kept off the tool list in `agents/`, and `run.sh` denies the first three
@@ -141,6 +155,24 @@ is in `review/README.md`.
   denied there: STEP 1 of the orchestrator prompt dispatches every lens with it. None of
   this is a guarantee, because a lens has `Bash`, so keep the instruction in
   `review/lens-brief.md` too.
+- Every `bun` a review starts takes `--config=/dev/null`. Bun runs the `preload` script
+  that the `bunfig.toml` in its working directory names, before the script on the command
+  line.
+  Moving the working directory out of the checkout only relocated that: the orchestrator has
+  `Bash` under `bypassPermissions` and its prompt names `$BUILD`, so it can write a
+  `bunfig.toml` into every directory a run has left to stand in. The flag replaces the lookup
+  wherever the process is, and `/dev/null` is the one path nothing short of root can fill.
+  Add the flag with the invocation, and `validate-repo.ts` will not have to find it missing.
+- The vetting reads an `existing.json` fetched after the orchestrator exits. `run.sh`
+  deletes the file the orchestrator was given and fetches it again, because the orchestrator
+  holds that path in the same prompt as the rule `vetSuppression` applies, and it could
+  write the file its own suppressions are then checked against. Fetching it again costs one
+  extra pair of API calls, and picks up whatever was said during the run.
+- An input that names what a review may do has to reach the code that does it.
+  `resolve-threads` reached the orchestrator's prompt and nothing else until
+  `post-review.ts` was given `RESOLVE_THREADS`, and `artifact-path` decided what was
+  uploaded while the body went on carrying a link to an artifact nobody kept. Prose is not
+  a boundary, and neither is a default.
 - The reviewed tree does not configure the session that reviews it. `run.sh` passes
   `--setting-sources user`. Without it the branch's own `CLAUDE.md` reaches the model, and a
   `SessionStart` hook declared in its `.claude/settings.json` runs under
@@ -189,7 +221,7 @@ is in `review/README.md`.
   chose. `fetch-previous.ts` requires the producing run's two repository ids to match,
   which no fork run can manage.
 - Resolving a thread is a judgement the orchestrator makes, weighing `isOutdated` against
-  the diff as one piece of evidence. `post-review.ts` then refuses any thread
+  the diff as one piece of evidence. `post-review.ts` then drops any thread
   `fetch-existing.ts` did not mark `mine`, and that mark takes both a login and a comment
   shape. Why neither counts alone is written beside `mine` in `fetch-existing.ts`. Loosen
   either half and anyone who can comment can hand this run a thread to close.
@@ -197,18 +229,28 @@ is in `review/README.md`.
   `orchestrator.md`, because "this is intentional" on a vulnerability would otherwise
   silence it for good. Keep it if you touch the decline rules.
 - Only an owner, a member or a collaborator can decline a finding, and `post-review.ts`
-  decides that again rather than trusting the orchestrator's answer. This was an accepted
-  risk until a lens read the code. The acceptance rested on there being no way to tell a
-  maintainer's reply from a stranger's, and `authorAssociation` had been sitting in
-  `existing.json` unread the whole time. The rule is in `orchestrator.md` for the
-  orchestrator and in `vetDeclines` for the run, because the orchestrator holds that rule
-  and the comments it judges as text in one context, and prose is not a boundary. A
-  decline names the comment it rests on, and one that cannot be traced to an entitled
-  commenter or a resolved thread goes back to `new`. So does one whose comment says nothing
-  about the finding's file, or the same maintainer's "LGTM" would settle every finding on
-  the pull request. Every decline is reopened when `existing.json` cannot be read: a
-  repeated comment costs less than a finding nobody sees.
-- The findings file a run uploads carries the statuses `vetDeclines` decided, not the
+  decides that again for itself. This was an accepted risk until a lens read the code.
+  The acceptance rested on there being no way to tell a maintainer's reply from a
+  stranger's, and `authorAssociation` had been sitting in `existing.json` unread the whole
+  time. The rule is in `orchestrator.md` for the orchestrator and in `vetSuppression` for
+  the run, because the orchestrator holds that rule and the comments it judges as text in
+  one context, so the run decides it a second time in code, where no comment is part of
+  the input. A decline names the comment it rests on, and one that cannot be traced to an
+  entitled commenter or a closed thread goes back to `new`. So does one whose comment says
+  nothing about the finding's file, or the same maintainer's "LGTM" would settle every
+  finding on the pull request. Every suppression is reopened when `existing.json` cannot be
+  read: a repeated comment costs less than a finding nobody sees.
+- A closed thread stands for its own file and no other. Closing one takes repository write,
+  which is why a comment on it may decline at all. Replying to one takes no more than
+  commenting and does not reopen it, so a reply there is bound to the file the thread is
+  anchored to and its words settle nothing. Widen that and a stranger's "working as
+  intended, `src/auth.ts` is fine" on any resolved thread silences any file it names.
+- `already-reported` is held to a lower bar than a decline, and to more than nothing.
+  Anyone's comment settles it, because a defect somebody wrote down is a defect somebody
+  wrote down, and the finding keeps its line in the review either way. What it still needs
+  is a comment that exists on this pull request and is about the finding's file, or an
+  "LGTM" would demote the lot.
+- The findings file a run uploads carries the statuses `vetSuppression` decided, not the
   orchestrator's. `post-review.ts` posted the reopened finding and wrote the decline back,
   so `fetch-previous.ts` handed it to the next run as `declined` and the gate held for one
   run. Whatever else anyone adds to `markPosted`, the array it writes is the vetted one.
@@ -251,10 +293,10 @@ acting on one.
 - The orchestrator runs under `bypassPermissions` with `Bash`, holding comments written by
   anyone who can comment. `--disallowed-tools` takes `Edit`, `Write`, `NotebookEdit`,
   `WebFetch` and `WebSearch`; `Bash` and `Agent` stay, because the run needs git and the
-  dispatch. `orchestrator.md` frames that text as input rather than instruction, and prose
-  is not a boundary. It stands because a runner is disposable and a classifier that refused
-  the orchestrator halfway would lose a review that cost $36. `/codeferret:review` runs
-  under `auto` instead, on a machine that is not disposable.
+  dispatch. `orchestrator.md` frames that text as input rather than instruction, and a
+  model can be talked out of that framing. It stands because a runner is disposable and a
+  classifier that refused the orchestrator halfway would lose a review that cost $36.
+  `/codeferret:review` runs under `auto` instead, on a machine that is not disposable.
 - Two lenses ship without the capability their skills describe.
   `copilot-web-design-reviewer` has no browser and `anthropic-accessibility-review` cannot
   render a page. Both stay in the default set: measured over two runs they produced five

@@ -56,6 +56,18 @@ describe("closeOpenDetails", () => {
     test("closes one for each open block", () => {
         expect(closeOpenDetails("<details>\na\n</details>\n<details>\nb")).toEndWith("b\n</details>");
     });
+
+    test("leaves an escaped tag alone, which GitHub renders as the text it is", () => {
+        const text = "a finding about \\<details> elements";
+
+        expect(closeOpenDetails(text)).toBe(text);
+    });
+
+    test("leaves a tag inside a fenced sample alone, which renders as code", () => {
+        const text = "```html\n<details>\n```";
+
+        expect(closeOpenDetails(text)).toBe(text);
+    });
 });
 
 describe("escapeInline", () => {

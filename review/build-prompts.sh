@@ -25,12 +25,11 @@ PLUGIN=${3:?missing plugin output dir}
 WORKSPACE=${4:?missing workspace}
 LENSES_FILE=${5:-}
 
-BUILD="$PLUGIN/build"
 RESOLVE_THREADS=${RESOLVE_THREADS:-1}
 
 # Absolute, because every `bun` below runs from the build directory rather than from the
-# tree under review, where this script is started. The comment on `cd "$BUILD"` in run.sh
-# has why.
+# tree under review, where this script is started. Each one takes `--config=/dev/null` as
+# well; the comment on `cd "$BUILD"` in run.sh has why both.
 ACTION=$(cd "$ACTION" && pwd)
 
 # For a containerised toolchain, where `command-prefix` is set and the action deliberately
@@ -39,6 +38,9 @@ PREFIX=${PREFIX:-}
 
 # shellcheck source=review/lib.sh
 . "$ACTION/review/lib.sh"
+
+run_dirs "$PLUGIN"
+BUILD=$BUILD_DIR
 
 if ! plain_ref "$BASE"; then
     echo "base ref '$BASE' is not a plain git ref" >&2
@@ -91,6 +93,11 @@ rm -rf "$PLUGIN"
 # Agents and skills must share one plugin to share a namespace.
 mkdir -p "$BUILD" "$PLUGIN/.claude-plugin" "$PLUGIN/agents" "$PLUGIN/skills"
 
+# Here rather than in run.sh, which is where the other two checks are: the directory does
+# not exist until the line above, and the first `$PREFIX bun` below would create it inside
+# the container and leave `test -d` answering yes about a path only the container has.
+prefix_reaches "$BUILD"
+
 # Written first, so a run that dies halfway leaves a directory the next run may clear.
 : >"$MARKER"
 
@@ -129,9 +136,10 @@ while IFS= read -r glob; do
     glob=$(printf '%s' "$glob" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
     [ -z "$glob" ] && continue
 
-    # The list reaches git as argv now, through the NUL-separated file written further
-    # down, so there is no shell left for a quote to break out of. The check stays for
-    # whatever consumes the list next.
+    # The list reaches git as argv, through the NUL-separated file written further down, so
+    # no shell reads it on the way. The check is what keeps that true: a glob refused here
+    # cannot be the one that turns up in a prompt or a command line the day somebody hands
+    # the pathspec to something other than `git diff`.
     if ! plain_path "$glob"; then
         echo "exclude path '$glob' contains a shell metacharacter" >&2
         exit 1
@@ -170,7 +178,11 @@ for lens in "${LENSES[@]}"; do
         echo "lens '$lens' is not bundled: its skill comes from $WORKSPACE/.claude/skills/$lens/," >&2
         echo "which is part of the tree under review." >&2
 
-        (cd "$BUILD" && $PREFIX bun "$ACTION/scripts/build-lens-agents.ts" --one "$lens" "$PLUGIN/agents/$lens.md")
+        (
+            cd "$BUILD" &&
+                $PREFIX bun --config=/dev/null "$ACTION/scripts/build-lens-agents.ts" \
+                    --one "$lens" "$PLUGIN/agents/$lens.md"
+        )
 
         # The skill is copied in beside the agent rather than loaded where it lives: run.sh
         # passes `--setting-sources user`, which on 2.1.220 takes a project's own
@@ -192,14 +204,14 @@ done
 # range names a commit rather than HEAD. In CI both resolve to the same checked-out commit.
 HEAD_SHA=$(git -C "$WORKSPACE" rev-parse HEAD 2>/dev/null || echo HEAD)
 
-# The value is composed by a model following commands/review.md, so `INCLUDE_WORKING_TREE=0`
-# is a spelling that turns up, and it must not be read as unset: that would drop the HEAD
-# pin above.
+# A model following commands/review.md composes this value, and writes `INCLUDE_WORKING_TREE=0`
+# rather than leaving it out. So the test is on the value: one that asked whether the
+# variable was set at all would read that `0` as on, and drop the HEAD pin above.
 case ${INCLUDE_WORKING_TREE:-0} in
 0) RANGE="$BASE...$HEAD_SHA" ;;
 1) RANGE="$BASE" ;;
 *)
-    echo "INCLUDE_WORKING_TREE is '$INCLUDE_WORKING_TREE'; it takes 0 or 1" >&2
+    echo "INCLUDE_WORKING_TREE is '$INCLUDE_WORKING_TREE'. It has to be 0 or 1." >&2
     exit 1
     ;;
 esac
@@ -225,7 +237,7 @@ DIFF_SCRIPT
 # The dispatch prompt is indented so that it sits as a block inside the orchestrator's.
 (
     cd "$BUILD" &&
-        $PREFIX bun "$ACTION/scripts/render-prompt.ts" \
+        $PREFIX bun --config=/dev/null "$ACTION/scripts/render-prompt.ts" \
             "$ACTION/review/lens-dispatch.md" "$BUILD/dispatch.txt" \
             --indent 4 \
             "__BASE__=$BASE" \
@@ -246,7 +258,7 @@ fi
 
 (
     cd "$BUILD" &&
-        $PREFIX bun "$ACTION/scripts/render-prompt.ts" \
+        $PREFIX bun --config=/dev/null "$ACTION/scripts/render-prompt.ts" \
             "$ACTION/review/orchestrator.md" "$BUILD/orchestrator.txt" \
             "__BASE__=$BASE" \
             "__HEAD__=$HEAD_SHA" \

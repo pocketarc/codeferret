@@ -22,10 +22,8 @@
  */
 
 import { existsSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
-import { readDiffArgs } from "../diff-args.ts";
-import { reason } from "../json.ts";
-import { changedFiles, MAX_FINDINGS, repoRoot, reporter, runner } from "./report.ts";
+import { relative, resolve } from "node:path";
+import { argvBatches, keepRaised, MAX_FINDINGS, repoRoot, reporter, reportPath, startTool } from "./report.ts";
 
 // One entry per file semgrep could only partly parse, so a diff in a language its parser
 // struggles with writes a longer list than the capped findings beside it, into a file the
@@ -35,12 +33,6 @@ const MAX_ERRORS = 50;
 // `-nonroot` so a bind mount does not come back owned by root.
 const IMAGE =
     "semgrep/semgrep:1.172.0-nonroot@sha256:d1012a3bf2acf47721216fbf7ff12d4c2971cc7f9c7b77cf6c6e9dcf006bd487";
-
-// Linux caps a single argument at 128 KiB and the whole argument list at around 2 MiB, so
-// a large refactor spread over enough paths fails the spawn outright with E2BIG. The scan
-// is split rather than lost, and the batches are sized well under the limit because the
-// environment shares that budget.
-const MAX_ARGV_CHARS = 100_000;
 
 // ERROR first, so the cap below takes the low end. Semgrep emits in scan order, which
 // would let a hundred INFO hits in the first files push every ERROR out of the report.
@@ -72,39 +64,12 @@ function severityRank(value: unknown): number {
     return i === -1 ? SEVERITY_ORDER.length : i;
 }
 
-/** Path lists sized so that one spawn cannot exceed the kernel's argument limit. */
-function batches(files: string[]): string[][] {
-    const out: string[][] = [];
-    let current: string[] = [];
-    let size = 0;
-
-    for (const file of files) {
-        if (current.length > 0 && size + file.length + 1 > MAX_ARGV_CHARS) {
-            out.push(current);
-            current = [];
-            size = 0;
-        }
-
-        current.push(file);
-        size += file.length + 1;
-    }
-
-    if (current.length > 0) out.push(current);
-
-    return out;
-}
-
 const [buildDir, workspace] = process.argv.slice(2);
 
 if (!buildDir || !workspace) {
     console.error("usage: bun review/tools/semgrep.ts <build-dir> <workspace>");
     process.exit(2);
 }
-
-// Every git and semgrep call below is given the repository root, because that is what git
-// prints paths relative to and what a finding has to anchor against. This process's own
-// working directory is somewhere else, for the reason `repoRoot` gives.
-const root = repoRoot(workspace);
 
 // `handed` is how many files were passed over, against `scanned`, which is how many
 // semgrep says it analysed. It filters its target set before scanning, and one filter is a
@@ -118,51 +83,37 @@ const extras: {
     errors_truncated: number;
 } = { handed: 0, skipped: 0, batches: 0, unreadable: 0, errors: [], errors_truncated: 0 };
 
-const write = reporter("semgrep", join(buildDir, "tool-semgrep.json"), extras);
+// Every git and semgrep call below is given the repository root, because that is what git
+// prints paths relative to and what a finding has to anchor against. This process's own
+// working directory is somewhere else, for the reason `repoRoot` gives.
+const root = repoRoot(workspace);
+const write = reporter("semgrep", reportPath("semgrep", buildDir), extras);
 
-const semgrep = runner("semgrep", IMAGE, root, "semgrep");
+const started = await startTool({
+    tool: "semgrep",
+    image: IMAGE,
+    command: "semgrep",
+    buildDir,
+    root,
+    usePathspec: true,
+    write,
+});
 
-if (!semgrep) {
-    await write({ ran: false, reason: "neither semgrep nor docker is on PATH" });
-    console.log("semgrep: no semgrep and no docker, skipped");
-    process.exit(0);
-}
+if (!started) process.exit(0);
 
-// The same arguments the lenses' own diff uses, so the tool and the review never
-// disagree about which files are under review.
-const argsFile = join(buildDir, "diff-args");
-let diffArgs: string[];
+const files = started.changed.present;
 
-try {
-    const { range, pathspec } = await readDiffArgs(argsFile);
-    diffArgs = [range, ...pathspec];
-} catch (error) {
-    await write({ ran: false, reason: reason(error) });
-    console.error(`semgrep: ${argsFile} could not be read, skipped`);
-    process.exit(0);
-}
-
-const changed = changedFiles(diffArgs, root);
-
-if ("failure" in changed) {
-    await write({ ran: false, reason: changed.failure });
-    console.error("semgrep: git diff failed, skipped");
-    process.exit(0);
-}
-
-const files = changed.present;
-
-if (changed.named.length > 0 && files.length === 0) {
+if (started.changed.named.length > 0 && files.length === 0) {
     await write({
         ran: false,
-        reason: `git named ${changed.named.length} changed file(s) and none of them exist under ${root}`,
+        reason: `git named ${started.changed.named.length} changed file(s) and none of them exist under ${root}`,
     });
     console.error("semgrep: none of the changed files are readable, skipped");
     process.exit(0);
 }
 
 if (files.length === 0) {
-    await write({ ran: true, how: semgrep.how, scanned: 0 });
+    await write({ ran: true, how: started.how, scanned: 0 });
     console.log("semgrep: the diff touches no readable file");
     process.exit(0);
 }
@@ -207,12 +158,12 @@ const allErrors: ScanError[] = [];
 let analysed = 0;
 let skipped = 0;
 
-const chunks = batches(files);
+const chunks = argvBatches(files);
 
 for (const chunk of chunks) {
     const proc = Bun.spawnSync(
         [
-            ...semgrep.argv,
+            ...started.argv,
             "--config",
             chosen.config,
             "--json",
@@ -259,7 +210,7 @@ for (const chunk of chunks) {
 if (results.length === 0 && allErrors.length > 0 && analysed === 0) {
     await write({
         ran: false,
-        how: semgrep.how,
+        how: started.how,
         reason: `no batch produced output: ${allErrors.map((e) => e.message).join("; ").slice(0, 500)}`,
         handed: files.length,
         batches: chunks.length,
@@ -280,7 +231,7 @@ const errors = allErrors.slice(0, MAX_ERRORS);
 // means the shape has moved, and this is what makes that visible to the lens.
 const unreadable = results.filter((r) => !r.check_id || !r.path).length;
 
-const findings = results.slice(0, MAX_FINDINGS).map((r) => ({
+const raised = results.map((r) => ({
     rule: r.check_id,
     file: r.path,
     line: r.start?.line,
@@ -289,9 +240,13 @@ const findings = results.slice(0, MAX_FINDINGS).map((r) => ({
     message: r.extra?.message,
 }));
 
+const findings = raised.slice(0, MAX_FINDINGS);
+
+await keepRaised("semgrep", buildDir, raised);
+
 await write({
     ran: true,
-    how: semgrep.how,
+    how: started.how,
     handed: files.length,
     batches: chunks.length,
     scanned: analysed,

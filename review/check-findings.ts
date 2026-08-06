@@ -8,10 +8,9 @@
  * between the orchestrator's output and a posted review: a finding with no `title` is a
  * bullet with no claim on it, and one with no `body` says nothing at all.
  *
- * The shape itself is read out of merged-schema.json rather than mirrored here, so the
- * contract has one home. Everything the schema cannot state is in `POLICY`, one entry per
- * field, and `--self-check` answers whether each of those entries still names a field the
- * schema has.
+ * The shape itself is read out of merged-schema.json, so the contract has one home.
+ * Everything the schema cannot state is in `POLICY`, one entry per field, and
+ * `--self-check` answers whether each of those entries still names a field the schema has.
  *
  * Three outcomes, in order of preference. A fault with one right answer is repaired and
  * written back. A fault post-review.ts survives is noted and the finding kept. Only a
@@ -24,14 +23,14 @@
  *
  * `--self-check` reads no findings. It answers whether the rules below still name fields
  * merged-schema.json has, which is a question about this repository rather than about a
- * review, so it runs from scripts/validate-manifests.ts, which lefthook and lint.yml
+ * review, so it runs from scripts/validate-repo.ts, which lefthook and lint.yml
  * both run.
  *
  * Exit: 0 nothing wrong, 3 something was dropped and the rest is worth posting,
  *       1 nothing usable is left, 2 nothing was given to check.
  */
 
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { reason, record } from "./json.ts";
 
 interface JsonSchema {
@@ -63,7 +62,6 @@ const schema = JSON.parse(await Bun.file(join(import.meta.dir, "merged-schema.js
 const statuses = new Set(schema.properties?.findings?.items?.properties?.status?.enum ?? []);
 const severities = new Set(schema.properties?.findings?.items?.properties?.severity?.enum ?? []);
 
-/** What a lens_health entry that does not name its lens is called in the review. */
 const UNNAMED_LENS = "(unnamed lens)";
 
 /** What a repair did, written after the field's own path in the FIXED line. */
@@ -92,7 +90,7 @@ interface Policy {
  * Everything this script does to a field, one entry per field, keyed by the path the walk
  * builds with an array index written as `[]`.
  *
- * One table rather than one per facet, so that the answer to "what happens to
+ * One table covering every facet, so that the answer to "what happens to
  * `findings[].severity`" is in one place, and so that `--self-check` covers every rule at
  * once.
  *
@@ -124,7 +122,8 @@ const POLICY: Record<string, Policy> = {
     "lens_health[]": { renderable: () => true },
     "lens_health[].lens": { repair: lensName },
     "lens_health[].findings_returned": { repair: count },
-    "lens_health[].detail": { repair: optionalProse },
+    // Optional, so one that is not prose is dropped and the lens keeps its line.
+    "lens_health[].detail": { repair: proseOrNothing },
 };
 
 const UNKNOWN_KEY = /^has an unknown key /;
@@ -145,11 +144,6 @@ function proseOrNothing(value: unknown): Repaired | null {
     if (value === undefined || typeof value === "string") return null;
 
     return { note: `${JSON.stringify(value)} is not prose, so it was removed` };
-}
-
-/** `detail` is optional, so one that is not prose costs the field and not the lens's line. */
-function optionalProse(value: unknown): Repaired | null {
-    return proseOrNothing(value);
 }
 
 /**
@@ -176,8 +170,7 @@ function knownStatus(value: unknown): Repaired | null {
  * Where a finding sorts, and whether the posted body prints it in full, both come from its
  * severity. `LISTED` is an exact-match lookup, so `Critical` or ` high ` misses it and a
  * critical finding drops out of the comment. A case or whitespace variant has one right
- * answer; a word nothing recognises does not, and review-body.ts lists that one rather than
- * leaving it out.
+ * answer; a word nothing recognises does not, and review-body.ts lists that one anyway.
  */
 function knownSeverity(value: unknown): Repaired | null {
     if (typeof value !== "string" || severities.size === 0 || severities.has(value)) return null;
@@ -196,9 +189,8 @@ function lensName(value: unknown): Repaired | null {
 }
 
 /**
- * `plural` puts this straight into the review, so a missing one prints the word "undefined"
- * where a reader expects a count. The findings array is the record of what the lens actually
- * returned; this field is only its own account of it.
+ * The count beside a lens's name in the review. The findings array is the record of what
+ * that lens returned; this field is only its own account of it.
  */
 function count(value: unknown): Repaired | null {
     if (Number.isInteger(value)) return null;
@@ -216,7 +208,7 @@ function tolerated(problem: Problem): boolean {
 
     // An unknown key is reported against the finding rather than against a field, so it
     // cannot be keyed above without tolerating "must be an object" with it. post-review.ts
-    // reads the fields it needs by name, so a `confidence` a model invented costs nothing.
+    // reads the fields it needs by name, so a `confidence` a model invented is ignored.
     return shape(problem.path) === "findings[]" && UNKNOWN_KEY.test(problem.message);
 }
 
@@ -238,8 +230,7 @@ function schemaPaths(node: JsonSchema, path: string, out: Set<string>): void {
  * Apply the repair `POLICY` names for one field of one object, and say what it did.
  *
  * Run from inside the walk, before anything reads the value, so what the walk goes on to
- * report is what will be written back. Ordering the two by hand is what let a repaired
- * field be reported as broken once.
+ * report is what will be written back.
  */
 function repairField(host: Record<string, unknown>, key: string, path: string, notes: string[]): void {
     const done = POLICY[shape(path)]?.repair?.(host[key]);
@@ -275,8 +266,7 @@ function walk(value: unknown, node: JsonSchema, path: string, out: Problem[], no
             return;
         }
 
-        // Every property, present or not: a `findings_returned` that is missing renders as
-        // the word "undefined" exactly as a string one does.
+        // Every property, present or not, for the reason `Policy.repair` gives.
         for (const key of Object.keys(node.properties ?? {})) {
             repairField(object, key, path ? `${path}.${key}` : key, notes);
         }
@@ -332,8 +322,8 @@ function walk(value: unknown, node: JsonSchema, path: string, out: Problem[], no
 
 // A key in POLICY that the schema has no field for is a rule that stopped running, and a
 // findings file that rule would have caught is still reported `shape valid`. A rename in the
-// schema, or a typo here, is a problem with this repository rather than with a review, and
-// it is answerable without running anything, so `--self-check` is what fails on it.
+// schema, or a typo here, is a problem with this repository, and it is answerable without
+// running anything, so `--self-check` is what fails on it.
 const known = new Set<string>();
 schemaPaths(schema, "", known);
 
@@ -454,18 +444,63 @@ const keepEntries = (key: "resolve" | "lens_health"): number => {
 
 const droppedEntries = keepEntries("resolve") + keepEntries("lens_health");
 
+/**
+ * The lenses this run dispatched, from the list build-prompts.sh wrote beside the findings.
+ *
+ * Read out of the run directory, because it is already there and a second argument is a
+ * second thing to keep in step. Absent for a by-hand check of an old file, and then only
+ * the count below is answerable.
+ */
+async function dispatched(): Promise<string[]> {
+    const file = Bun.file(join(dirname(path ?? ""), "lens-list.txt"));
+
+    if (!(await file.exists())) return [];
+
+    return (await file.text()).split("\n").flatMap((line) => line.match(/`([^`]+)`/)?.[1] ?? []);
+}
+
+/**
+ * Whether every lens that ran has an account of itself in the review.
+ *
+ * `lens_health` is optional to the model and `composeReview` guards the whole block on the
+ * array being non-empty, so one omitted array takes the lens list, the coverage alert and
+ * every standing caveat out of the review at once, for every lens, with nothing saying so.
+ * A dropped entry does the same for one lens. Neither is fatal, because the findings are
+ * still worth posting; both are loud, because nothing downstream can tell an absent entry
+ * from a lens that did not run.
+ */
+const coverage: string[] = [];
+const health = Array.isArray(merged.lens_health) ? merged.lens_health : [];
+const named = new Set(health.map((entry) => record(entry)?.lens).filter((lens) => typeof lens === "string"));
+const silent = (await dispatched()).filter((lens) => !named.has(lens));
+
+if (health.length === 0) {
+    coverage.push("lens_health: no entry, so the review says nothing about which lenses ran or what they missed");
+} else if (silent.length > 0) {
+    coverage.push(`lens_health: ${silent.join(", ")} ran and reported no health, so the review leaves each one out`);
+}
+
 const problems: Problem[] = [];
 
-// The repairs happen inside this walk, so nothing has to keep two passes in the right
-// order, and every rule the file applies is keyed the same way.
 walk(merged, schema, "", problems, repairs);
 
-const label = (problem: Problem): string => {
+/**
+ * Which finding a problem belongs to, or null for one about the file as a whole.
+ *
+ * The walk builds a string path, so ownership is only recoverable by reading it back.
+ */
+const findingIndex = (problem: Problem): number | null => {
     const owner = problem.path.match(/^findings\[(\d+)\]/)?.[1];
-    if (owner === undefined) return problem.path || "findings.json";
+
+    return owner === undefined ? null : Number(owner);
+};
+
+const label = (problem: Problem): string => {
+    const owner = findingIndex(problem);
+    if (owner === null) return problem.path || "findings.json";
 
     const raw = merged.findings;
-    const title = Array.isArray(raw) ? record(raw[Number(owner)])?.title : undefined;
+    const title = Array.isArray(raw) ? record(raw[owner])?.title : undefined;
 
     return typeof title === "string" ? `${problem.path} (${title})` : problem.path;
 };
@@ -477,8 +512,8 @@ const warnings = problems.filter(tolerated);
 const doomed = new Set<number>();
 
 for (const p of fatal) {
-    const owner = p.path.match(/^findings\[(\d+)\]/)?.[1];
-    if (owner !== undefined) doomed.add(Number(owner));
+    const owner = findingIndex(p);
+    if (owner !== null) doomed.add(owner);
 }
 
 // A fault outside `findings` costs a line of the review rather than a finding: post-review.ts
@@ -486,12 +521,13 @@ for (const p of fatal) {
 // findings_returned that is not a number renders as the word it is. What it does not
 // survive is a field it calls a string method on, which is why the entries below are
 // checked rather than warned about.
-const elsewhere = fatal.filter((p) => !/^findings\[/.test(p.path));
+const elsewhere = fatal.filter((p) => findingIndex(p) === null);
 
 for (const r of repairs) console.warn(`FIXED ${r}`);
+for (const c of coverage) console.warn(`WARN ${c}`);
 for (const w of warnings) console.warn(`WARN ${label(w)}: ${w.message}`);
 for (const p of elsewhere) console.warn(`WARN ${label(p)}: ${p.message}`);
-for (const p of fatal.filter((x) => /^findings\[/.test(x.path))) {
+for (const p of fatal.filter((x) => findingIndex(x) !== null)) {
     console.error(`DROP ${label(p)}: ${p.message}`);
 }
 
@@ -515,5 +551,5 @@ if (doomed.size > 0 || droppedEntries > 0) {
     process.exit(3);
 }
 
-const noted = warnings.length + elsewhere.length + repairs.length;
+const noted = warnings.length + elsewhere.length + repairs.length + coverage.length;
 console.log(`OK ${path}: ${kept} finding(s), shape valid${noted > 0 ? `, ${noted} worth a look` : ""}`);

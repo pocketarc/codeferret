@@ -23,6 +23,12 @@ no tables, no headings. Some skills grade with a red circle or a tick in their o
 template, and that template is for the prose it describes, not for these fields. Severity
 has a field of its own, and a reader is shown neither it nor anything standing in for it.
 
+Wrap every code fragment in a `body` in a code span or a fenced block. A body renders as
+markdown, and a fragment left bare is read as markup: two `COUNT(*)` in one paragraph
+render as emphasis, taking both asterisks off the page and italicising the sentence between
+them, so the finding loses the thing it is about. A wrapped fragment reaches the reader as
+written.
+
 Be exhaustive. Read every changed file end to end and follow the data. Nothing
 downstream catches what you miss.
 

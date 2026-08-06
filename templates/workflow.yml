@@ -4,7 +4,6 @@ on:
     pull_request:
         types: [opened, synchronize, ready_for_review, reopened]
 
-# Without this, three pushes in a row cost three full reviews and only the last is read.
 concurrency:
     group: codeferret-${{ github.event.pull_request.number }}
     cancel-in-progress: true
@@ -17,11 +16,7 @@ jobs:
         # collaborator working from their own fork gets no secret either.
         #
         # A draft is work its author has marked unfinished, and without the draft test
-        # every push to one costs a full review. The review runs when the author marks
-        # it ready, on the `ready_for_review` event above.
-        #
-        # The association list is the one that limits who may spend the budget. A bot
-        # pushing a branch here is not on it, and would get no secret anyway.
+        # every push to one costs a full review.
         if: >-
             github.event.pull_request.draft == false &&
             github.event.pull_request.head.repo.full_name == github.repository &&
@@ -34,7 +29,7 @@ jobs:
             # token that can push. `contents: write` plus `resolve-threads: 'true'` is what
             # it takes to have CodeFerret close the inline threads its older versions left
             # behind, and `contents: write` is worth granting only while an open pull
-            # request still carries one of those threads.
+            # request still has one of those threads on it.
             contents: read
             pull-requests: write
             # What lets a run read the findings the previous run kept, so a finding is

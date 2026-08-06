@@ -170,7 +170,7 @@ export function dropConnectorsSection(label: string, lines: string[]): Pass {
         if (heading && CONNECTORS_HEADING.test(line)) {
             depth = hashes.length;
             dropped.add(i);
-            notes.push(`  ${label}: dropped the 'If Connectors Available' section; a lens session has none`);
+            notes.push(`  ${label}: dropped the 'If Connectors Available' section. A lens session has none`);
         }
     });
 

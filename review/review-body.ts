@@ -8,7 +8,7 @@
  * `markdown.ts`.
  */
 
-import { brokenLenses, isListed, lenses, LISTED, plural } from "./findings.ts";
+import { brokenLenses, isListed, LISTED } from "./findings.ts";
 import type { Finding, LensHealth, Merged, Partitioned } from "./findings.ts";
 import {
     clamp,
@@ -24,8 +24,23 @@ import {
     prose,
 } from "./markdown.ts";
 
-/** GitHub refuses a review body over 65536 characters. The difference is headroom. */
+/** GitHub's limit on a review body is 65536 characters. The difference is headroom. */
 export const MAX_BODY = 60000;
+
+/**
+ * A count and its noun.
+ *
+ * Only the noun is inflected, so the phrase around it has to read at either count: "1
+ * finding were raised" is what a hard-coded plural verb next to one of these produces.
+ */
+export function plural(n: number, word: string): string {
+    return `${n} ${word}${n === 1 ? "" : "s"}`;
+}
+
+/** The one noun in the review that does not take an `s`. */
+export function lenses(n: number): string {
+    return n === 1 ? "1 lens" : `${n} lenses`;
+}
 
 // The orchestrator writes both the summary and the notes, and nothing bounds what a model
 // produces. Left unbounded, a runaway summary eats the length the findings need.
@@ -34,7 +49,7 @@ export const MAX_PROSE = 4000;
 /**
  * One lens's account of what it could not check. Every lens is asked for one.
  *
- * Wide enough for the honest answer to an interface change, which is a dozen WCAG criteria
+ * Wide enough for a full answer to an interface change, which is a dozen WCAG criteria
  * with a clause each. The budget does not need it back: fourteen of these is a fraction of
  * `MAX_BODY`, the listing is the elastic section, and a listed finding cut for length is
  * still in the findings file where a clipped caveat is nowhere.
@@ -54,14 +69,18 @@ export const MAX_FINDING_BODY = 4000;
 export const MAX_TITLE = 200;
 
 /** Where this review is being posted. `listedIn` reads it to bound what the body carries. */
-export type Destination = { kind: "run"; url: string } | { kind: "session" };
+export type Destination = { kind: "run"; url: string; artifact: boolean } | { kind: "session" };
 
 /**
- * Which of the two this run is.
+ * Which of the two this run is, and whether it kept the findings file.
  *
- * Answered once, at the boundary, rather than re-derived from the environment wherever the
- * question comes up: five branches over the same three variables is five chances for the
- * body and the log beside it to describe different reviews.
+ * Answered once, at the boundary: five branches over the same three environment variables
+ * is five chances for the body and the log beside it to describe different reviews.
+ *
+ * `ARTIFACT_HAS_FINDINGS` is the action's own answer, decided in the step that resolves
+ * `artifact-path` and passed through to the step that posts. Without it, a caller who set
+ * `artifact-path` to `''` or to one tool report gets a body that drops every finding below
+ * high and sends the reader to a file nobody uploaded.
  */
 export function destinationOf(env: Record<string, string | undefined>): Destination {
     const server = env.GITHUB_SERVER_URL;
@@ -70,24 +89,32 @@ export function destinationOf(env: Record<string, string | undefined>): Destinat
 
     if (!server || !repo || !id) return { kind: "session" };
 
-    return { kind: "run", url: `${server}/${repo}/actions/runs/${id}` };
+    return {
+        kind: "run",
+        url: `${server}/${repo}/actions/runs/${id}`,
+        artifact: env.ARTIFACT_HAS_FINDINGS === "true",
+    };
+}
+
+/** The run whose artifact holds the findings this body leaves out, where there is one. */
+function deferredTo(to: Destination): string | null {
+    return to.kind === "run" && to.artifact ? to.url : null;
 }
 
 /**
  * The findings the body prints in full.
  *
- * With a run behind it the body prints the severities a reader should stop for and names
- * the artifact for the rest, because that artifact is one download away for
- * everybody reading the pull request. Posted from a session there is no artifact and no
- * run, and the findings file is a path under `.git/` on one person's machine, so every
- * finding goes in the body instead.
+ * With an artifact behind it the body prints the severities a reader should stop for and
+ * names that artifact for the rest, because it is one download away for everybody reading
+ * the pull request. With nothing behind it (a session, whose findings file is a path under
+ * `.git/` on one person's machine, or a run that kept no artifact) every finding goes in the
+ * body instead, since there is nowhere else to read it.
  *
  * Exported because post-review.ts logs this count beside the ones `partition` gives it,
- * and a log line that contradicts the body it describes is worse than no log line: a
- * 97-finding session run once logged `listed=6` beside a body carrying all 97.
+ * and a log line that contradicts the body it describes is worse than no log line.
  */
 export function listedIn(fresh: Finding[], to: Destination): Finding[] {
-    return to.kind === "run" ? fresh.filter(isListed) : fresh;
+    return deferredTo(to) ? fresh.filter(isListed) : fresh;
 }
 
 /**
@@ -109,7 +136,7 @@ export function bullet(f: Finding): string {
     const body = escapeBlocks(closeOpenFence(clamp(f.body, MAX_FINDING_BODY)).split("\n")).join("\n  ");
 
     // check-findings.ts keeps a finding whose category is missing rather than dropping it,
-    // so the line goes rather than rendering the word "undefined" under the body.
+    // so this line is omitted. Rendering it anyway puts the word "undefined" under the body.
     const category = f.category ? `\n\n  _${escapeInline(f.category)}_` : "";
 
     return `- ${code(where(f))}: **${title(f)}**\n\n  ${body}${category}`;
@@ -167,10 +194,10 @@ export function mention(f: Finding, link: string, linkable: ReadonlySet<string>)
  * lens could not cover buried in the middle of that line. Four spaces would be an indented
  * code block.
  *
- * Escaped before the cut rather than after, so the marker `clamp` appends is not itself
- * escaped and shown to the reader as underscores. Flattened again after it, because that
- * marker carries newlines of its own, and one of those into column zero ends the item and
- * drops the rest of the list out of the block.
+ * Escaped before the cut, so the marker `clamp` appends is not itself escaped and shown to
+ * the reader as underscores. Flattened again after it, because that marker carries newlines
+ * of its own, and one of those into column zero ends the item and drops the rest of the list
+ * out of the block.
  *
  * The line starts at the item's own content column, where a `#` or a `>` opens a block of
  * its own, and `escapeInline` leaves both alone.
@@ -191,15 +218,31 @@ function lensDetail(detail: string): string {
  * which is the failure `review/lens-extras/anthropic-accessibility-review.md` exists to
  * prevent. A standing sentence is worse than the lens's own words and cannot be forgotten.
  */
-const STANDING_DETAIL: Readonly<Record<string, string>> = {
-    "anthropic-accessibility-review":
+export const STANDING_DETAIL: ReadonlyMap<string, string> = new Map([
+    [
+        "anthropic-accessibility-review",
         "No page was rendered, so contrast, focus order, target size, reflow, text spacing," +
-        " timing and motion were not evaluated.",
-    "copilot-web-design-reviewer": "No browser was available, so nothing was judged from a rendered page.",
-};
+            " timing and motion were not evaluated.",
+    ],
+    ["copilot-web-design-reviewer", "No browser was available, so nothing was judged from a rendered page."],
+]);
 
-function caveatOf(h: LensHealth): string | undefined {
-    return h.detail ?? STANDING_DETAIL[lensLabel(h.lens)];
+/**
+ * The standing sentence and the lens's own words together, or nothing where there is
+ * neither.
+ *
+ * Both, rather than whichever is there. A lens told to report what it could not check
+ * usually answers about the diff ("no markup or styles in it"), and that is a different fact
+ * from having had no browser to look at one. Shown the first alone, a reader takes the
+ * interface for looked at and unremarkable.
+ *
+ * A `Map` rather than an object literal: a lens named `constructor` or `toString` gets
+ * nothing back, where a literal would hand over an inherited function for `flatten` to call.
+ */
+export function caveatOf(h: LensHealth): string | undefined {
+    const both = [STANDING_DETAIL.get(lensLabel(h.lens)), h.detail].filter((s) => s);
+
+    return both.length > 0 ? both.join(" ") : undefined;
 }
 
 /** A heading, a reason, and findings listed under it. The one section that can run long. */
@@ -221,9 +264,9 @@ export interface Listing {
  * findings rather than being cut at a character offset. An offset lands inside a
  * `<details>`, a fenced block, or a finding's own markup, and GitHub renders the wreckage.
  *
- * A finding too long for what is left costs only itself. `partition` orders by severity
- * rather than by length, so stopping at the first one that does not fit would let a verbose
- * critical finding at the top empty the whole section.
+ * A finding too long for what is left costs only itself. `partition` orders by severity, so
+ * stopping at the first one that does not fit would let a verbose critical finding at the
+ * top empty the whole section.
  */
 export function assemble(head: string[], listing: Listing | null, tail: string[]): string {
     let budget = MAX_BODY - [...head, ...tail].reduce((total, s) => total + s.length + 2, 0);
@@ -270,7 +313,7 @@ export function assemble(head: string[], listing: Listing | null, tail: string[]
  * inside a collapsed disclosure.
  *
  * The reserve is for the two closers, and overrunning it costs nothing: `MAX_BODY` is
- * already 5536 characters under what GitHub refuses.
+ * already 5536 characters under GitHub's limit.
  */
 function fit(body: string): string {
     const notice = "\n\n_(this review was cut for length)_";
@@ -295,16 +338,29 @@ export interface Posting {
     linkable: ReadonlySet<string>;
 }
 
+/** A body and the two views of the run it was built from, for the log line beside it. */
+export interface Composed {
+    body: string;
+    /** The findings the body printed in full. */
+    listed: Finding[];
+    /** The lenses it flagged as needing attention. */
+    broken: LensHealth[];
+}
+
 /**
  * The whole review body: which sections appear, in what order, and under what headings.
  *
- * The partition is a parameter rather than taken here so that a caller counting the same
- * findings for its log counts them once. It is required for the same reason: a default
- * would let a caller that has already filtered or re-ordered pass nothing and get a second
- * partition of a different list, and the body and the log would then describe different
- * reviews with nothing saying so.
+ * The partition is a parameter so that a caller counting the same findings for its log
+ * counts them once. It is required for the same reason: a default would let a caller that
+ * has already filtered or re-ordered pass nothing and get a second partition of a different
+ * list, and the body and the log would then describe different reviews with nothing saying
+ * so.
+ *
+ * The two views this function derives for itself come back out for the same reason. Both
+ * decide something the caller acts on (one is the count it logs, the other is what makes a
+ * run with no findings worth posting anyway), and a second derivation is a second answer.
  */
-export function composeReview(merged: Merged, posting: Posting, parts: Partitioned): string {
+export function composeReview(merged: Merged, posting: Posting, parts: Partitioned): Composed {
     const { fresh, suppressed, declined } = parts;
     const { resolved, resolveDenied, leftOpen, to, linkable } = posting;
 
@@ -408,41 +464,45 @@ export function composeReview(merged: Merged, posting: Posting, parts: Partition
     // `assemble` bounds the listing whichever branch this takes, and says how many findings
     // did not fit.
     const listed = listedIn(fresh, to);
+    const artifact = deferredTo(to);
 
     let listing: Listing | null = null;
 
     if (listed.length > 0) {
         listing = {
-            heading: to.kind === "run" ? listingHeading(listed) : "Findings",
-            lead:
-                to.kind === "run"
-                    ? `${listed.length} of ${plural(fresh.length, "finding")}.` +
-                      ` \`findings.json\` in the \`codeferret-run\` artifact of [this run](${to.url}) holds every one.`
-                    : "",
-            omission:
-                to.kind === "run"
-                    ? "Every one of them is in the findings file."
-                    : "This review was posted from a session, so ask whoever ran it for the rest.",
+            heading: artifact ? listingHeading(listed) : "Findings",
+            lead: artifact
+                ? `${listed.length} of ${plural(fresh.length, "finding")}.` +
+                  ` \`findings.json\` in the \`codeferret-run\` artifact of [this run](${artifact}) holds every one.`
+                : "",
+            omission: omissionFor(to),
             items: listed,
         };
-    } else if (fresh.length > 0 && to.kind === "run") {
+    } else if (fresh.length > 0 && artifact) {
         // A heading is a promise of something under it, and the count is already above.
         tail.unshift(
             `No finding is critical or high.` +
-                ` \`findings.json\` in the \`codeferret-run\` artifact of [this run](${to.url}) holds every one.`,
+                ` \`findings.json\` in the \`codeferret-run\` artifact of [this run](${artifact}) holds every one.`,
         );
     }
 
-    return assemble(head, listing, tail);
+    return { body: assemble(head, listing, tail), listed, broken };
+}
+
+/** Where to read a finding the listing had no room for. */
+function omissionFor(to: Destination): string {
+    if (deferredTo(to)) return "Every one of them is in the findings file.";
+    if (to.kind === "run") return "This run kept no artifact, so the rest are in its log and nowhere else.";
+
+    return "This review was posted from a session, so ask whoever ran it for the rest.";
 }
 
 /**
  * What to call the section, which depends on what `isListed` let through.
  *
- * A severity nothing recognises is listed on purpose, because leaving a critical defect out
- * of the comment on the strength of a label nobody chose is the wrong way to be wrong. The
- * heading has to follow: `bullet` prints no severity, so under the narrower title a reader
- * has no way to tell that a finding graded neither critical nor high is in the list.
+ * The heading has to follow the same policy as `isListed`: `bullet` prints no severity, so
+ * under the narrower title a reader has no way to tell that a finding graded neither
+ * critical nor high is in the list.
  */
 function listingHeading(listed: Finding[]): string {
     return listed.every((f) => LISTED.has(f.severity)) ? "Critical and high findings" : "Findings worth stopping for";

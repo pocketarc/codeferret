@@ -15,11 +15,41 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { readDiffArgs } from "../diff-args.ts";
+import { reason } from "../json.ts";
 
 // The lens reads every finding it is handed and checks it against the code, so a
 // pathological run would make one lens the most expensive thing in the review. Each tool
 // sorts before it cuts, so the cap takes the low end.
 export const MAX_FINDINGS = 100;
+
+// Linux caps a single argument at 128 KiB and the whole argument list at around 2 MiB, so a
+// large refactor spread over enough paths fails a spawn outright with E2BIG. A scan is split
+// into batches to survive that, and they are sized well under the limit because the
+// environment shares that budget.
+export const MAX_ARGV_CHARS = 100_000;
+
+/** Path lists sized so that one spawn cannot exceed the kernel's argument limit. */
+export function argvBatches(files: string[]): string[][] {
+    const out: string[][] = [];
+    let current: string[] = [];
+    let size = 0;
+
+    for (const file of files) {
+        if (current.length > 0 && size + file.length + 1 > MAX_ARGV_CHARS) {
+            out.push(current);
+            current = [];
+            size = 0;
+        }
+
+        current.push(file);
+        size += file.length + 1;
+    }
+
+    if (current.length > 0) out.push(current);
+
+    return out;
+}
 
 export interface ToolReport {
     tool: string;
@@ -34,6 +64,14 @@ export interface ToolReport {
     /** The report is sorted so that what did not fit is the low end. */
     truncated: number;
     findings: Array<Record<string, unknown>>;
+}
+
+/**
+ * Where a tool's report goes. Named once, because review/lens-extras/static-analysis.md
+ * points the lens at this glob and `keepRaised` has to stay outside it.
+ */
+export function reportPath(tool: string, buildDir: string): string {
+    return join(buildDir, `tool-${tool}.json`);
 }
 
 /**
@@ -65,9 +103,8 @@ export function reporter<Extra extends Record<string, unknown>>(
 /**
  * The repository root, because git prints paths relative to it and a finding anchors on one.
  *
- * The workspace is handed in rather than taken from the working directory, because no `bun`
- * a run starts may have the reviewed tree as its own. The comment on `cd "$BUILD"` in
- * run.sh has why.
+ * The workspace is handed in, because no `bun` a run starts may have the reviewed tree as
+ * its own. The comment on `cd "$BUILD"` in run.sh has why.
  *
  * Under a command prefix the tool runs inside a container where the host's workspace path
  * does not exist, and that prefix is required to start in the repository root, so there git
@@ -135,4 +172,77 @@ export function changedFiles(args: string[], root: string): Changed | { failure:
     const named = new TextDecoder().decode(proc.stdout).split("\0").filter(Boolean);
 
     return { named, present: named.filter((f) => existsSync(join(root, f))) };
+}
+
+/**
+ * Everything a tool needs before it can scan, and every way that can end in a skip.
+ *
+ * `usePathspec` is the one difference between the two tools that ship: semgrep reads the
+ * same files the lenses do, and osv-scanner drops the pathspec because the `exclude-paths`
+ * default names every lockfile. Every exit from here writes a report. An exit that wrote
+ * none would leave the lens with silence it cannot tell from a clean scan.
+ *
+ * Null means the refusal is already written and the caller has nothing left to do but
+ * `process.exit(0)`. The tool and the binary share a name, because both that ship do.
+ */
+export async function startTool(spec: {
+    tool: string;
+    image: string;
+    /** The word after the image, for an image whose entrypoint is not already the tool. */
+    command?: string;
+    buildDir: string;
+    root: string;
+    usePathspec: boolean;
+    write: (report: Partial<ToolReport>) => Promise<void>;
+}): Promise<{ how: string; argv: string[]; changed: Changed } | null> {
+    const { root, write } = spec;
+    const how = runner(spec.tool, spec.image, root, spec.command);
+
+    if (!how) {
+        await write({ ran: false, reason: `neither ${spec.tool} nor docker is on PATH` });
+        console.log(`${spec.tool}: no ${spec.tool} and no docker, skipped`);
+        return null;
+    }
+
+    // The same arguments the lenses' own diff uses, so a tool and the review never disagree
+    // about which files are under review.
+    const argsFile = join(spec.buildDir, "diff-args");
+    let args: string[];
+
+    try {
+        const { range, pathspec } = await readDiffArgs(argsFile);
+        args = spec.usePathspec ? [range, ...pathspec] : [range];
+    } catch (error) {
+        await write({ ran: false, reason: reason(error) });
+        console.error(`${spec.tool}: ${argsFile} could not be read, skipped`);
+        return null;
+    }
+
+    const changed = changedFiles(args, root);
+
+    // Left unchecked, a tool would report itself as having run and found nothing.
+    if ("failure" in changed) {
+        await write({ ran: false, reason: changed.failure });
+        console.error(`${spec.tool}: git diff failed, skipped`);
+        return null;
+    }
+
+    return { how: how.how, argv: how.argv, changed };
+}
+
+/**
+ * The whole list a tool raised, beside the capped report the lens reads.
+ *
+ * `tool-<name>.json` is the lens's input and is capped, so past `MAX_FINDINGS` it is not
+ * also the record. The record is what makes the lens auditable: it may drop a tool finding
+ * only because both the capped list it was handed and the full list it was not survive here.
+ *
+ * Named outside `tool-*.json` deliberately. That glob is what
+ * review/lens-extras/static-analysis.md tells the lens to read, so a file matching it would
+ * hand back the whole list the cap exists to keep out.
+ */
+export async function keepRaised(tool: string, buildDir: string, raised: unknown[]): Promise<void> {
+    if (raised.length <= MAX_FINDINGS) return;
+
+    await Bun.write(join(buildDir, `raised-${tool}.json`), `${JSON.stringify({ tool, raised }, null, 2)}\n`);
 }

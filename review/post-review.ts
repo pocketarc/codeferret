@@ -16,14 +16,16 @@
  * Usage: bun post-review.ts <findings.json> <head-sha> <pr-number>
  * Env:   GITHUB_TOKEN (or the token on stdin), GITHUB_REPOSITORY
  *        GITHUB_SERVER_URL and GITHUB_RUN_ID link the run, when a runner sets them.
+ *        ARTIFACT_HAS_FINDINGS=true where the run keeps findings.json for a reader.
+ *        RESOLVE_THREADS=1 to close the threads the orchestrator judged finished.
  */
 
-import { dirname, join } from "node:path";
-import { brokenLenses, commentUrls, partition, plural, vetDeclines } from "./findings.ts";
+import { dirname } from "node:path";
+import { commentUrls, isMerged, partition, vetAgainstExisting } from "./findings.ts";
 import type { Merged } from "./findings.ts";
 import { graphql, graphqlFailure, requirePullNumber, requireRepository, rest, tokenFromStdinOrEnv } from "./github.ts";
 import { reason } from "./json.ts";
-import { composeReview, destinationOf, listedIn } from "./review-body.ts";
+import { composeReview, destinationOf, plural } from "./review-body.ts";
 
 const [findingsPath, headSha, prNumber] = process.argv.slice(2);
 const repo = process.env.GITHUB_REPOSITORY;
@@ -40,26 +42,6 @@ requirePullNumber(prNumber);
 
 const findingsFile: string = findingsPath;
 const buildDir = dirname(findingsFile);
-
-/**
- * What was already on the pull request when the run started, or nothing when the file is
- * missing or cannot be read.
- *
- * Read once. Two decisions rest on this file and both fail closed, so reading it twice
- * could resolve threads against one answer and reopen declines against another.
- */
-async function readExisting(): Promise<unknown> {
-    const file = Bun.file(join(buildDir, "existing.json"));
-
-    if (!(await file.exists())) return {};
-
-    try {
-        return JSON.parse(await file.text());
-    } catch {
-        console.error("existing.json could not be read, so no thread is resolved and every decline is reopened.");
-        return {};
-    }
-}
 
 /** Threads this run posted itself, which are the only ones it may resolve. */
 function ownThreads(existing: unknown): Set<string> {
@@ -88,17 +70,16 @@ try {
     process.exit(1);
 }
 
-if (typeof merged !== "object" || merged === null || !Array.isArray(merged.findings)) {
+if (!isMerged(merged)) {
     console.error(`${findingsFile}: has no \`findings\` array`);
     console.error(`check it with: bun check-findings.ts ${findingsFile}`);
     process.exit(1);
 }
 
-const existing = await readExisting();
-
-// The decision is taken again here rather than trusted: the orchestrator held the decline
-// rule and the comments it judged as text in one context.
-const vetted = vetDeclines(merged.findings, existing);
+// The decision is taken again here: the orchestrator held the suppression rules and the
+// comments it judged as text in one context.
+const vetted = await vetAgainstExisting(merged.findings, buildDir);
+const existing = vetted.existing;
 
 if (vetted.untraceable > 0) {
     console.error(
@@ -116,6 +97,13 @@ if (vetted.unrelated > 0) {
     );
 }
 
+if (vetted.unreported > 0) {
+    console.error(
+        `${plural(vetted.unreported, "finding")} came back as already raised, citing a comment that is` +
+            ` not on this pull request or says nothing about the file. Reporting them as new.`,
+    );
+}
+
 // Partitioned once and handed to composeReview, so the counts in this log line and the
 // counts in the body cannot come from two different derivations of the same findings.
 const parts = partition(vetted.findings);
@@ -129,18 +117,17 @@ const { all: allFindings, fresh: findings, suppressed, declined } = parts;
  * pushes put the last posted artifact past the point that script stops looking, and the
  * eleventh run raises the whole review again on a pull request that was already clean.
  *
- * The number is here because artifacts are found by head branch, and a branch name is
- * reused as soon as a merged branch is recreated and can head two open pull requests at
- * once. Without it, a review of one pull request silences findings on another.
+ * The pull request number goes in because `postedFor` in previous.ts requires it, and that
+ * function has why.
  *
- * The findings written back are the vetted ones, not the orchestrator's. A decline
- * `vetDeclines` overturned was posted as new, and `fetch-previous.ts` reads this file into
- * the next run's `previous.json`, where a `declined` entry stays declined. Writing the
+ * The findings written back are the vetted ones, not the orchestrator's. A suppression
+ * `vetSuppression` overturned was posted as new, and `fetch-previous.ts` reads this file
+ * into the next run's `previous.json`, where a `declined` entry stays declined. Writing the
  * original array back would leave the artifact contradicting the review beside it and
  * re-suppress the finding the vetting exists to rescue.
  *
  * A failure to write it costs a repeated comment on the next run and nothing worse, so it
- * is logged rather than allowed to fail a job whose review has already landed.
+ * is only logged: the review that job posted has already landed.
  */
 async function markPosted(url: string | null): Promise<void> {
     try {
@@ -160,16 +147,26 @@ async function markPosted(url: string | null): Promise<void> {
     }
 }
 
-// Resolving is a write, so a dry run reports the decision without making it.
 const mine = ownThreads(existing);
 const asked = merged.resolve ?? [];
+
+// build-prompts.sh renders a different orchestrator prompt when `resolve-threads` is off,
+// and a model can be talked out of a prompt. Unset means off, so a caller who forgets to
+// pass it closes no thread rather than closing one nobody sanctioned.
+const mayResolve = process.env.RESOLVE_THREADS === "1";
+
+if (!mayResolve && asked.length > 0) {
+    console.error(
+        `resolve-threads is off: not closing ${plural(asked.length, "thread")} the orchestrator judged finished.`,
+    );
+}
 
 // `mine` is the non-model signal beside the orchestrator's judgement. fetch-existing.ts
 // computes it, and has what a thread must carry to be marked. Resolving somebody else's
 // thread takes their words off the page, and the next run reads a resolved thread back as
 // a declined finding, so one wrong call suppresses a finding for good.
-const foreign = asked.filter((entry) => !mine.has(entry.thread_id));
-const toResolve = asked.filter((entry) => mine.has(entry.thread_id));
+const foreign = mayResolve ? asked.filter((entry) => !mine.has(entry.thread_id)) : [];
+const toResolve = mayResolve ? asked.filter((entry) => mine.has(entry.thread_id)) : [];
 
 if (foreign.length > 0) {
     console.error(
@@ -181,8 +178,9 @@ if (foreign.length > 0) {
 const resolved: Array<{ reason: string }> = [];
 let resolveDenied = false;
 
+// Resolving is a write, so a dry run reports the decision without making it.
 if (toResolve.length > 0 && !process.env.DRY_RUN) {
-    for (const { thread_id, reason } of toResolve) {
+    for (const { thread_id, reason: why } of toResolve) {
         if (resolveDenied) break;
 
         const result = await graphql(
@@ -199,7 +197,7 @@ if (toResolve.length > 0 && !process.env.DRY_RUN) {
             resolveDenied = true;
             console.error(
                 `cannot resolve threads: the token lacks contents: write.` +
-                    ` ${plural(toResolve.length - resolved.length, "thread")} were judged finished and left open.`,
+                    ` ${plural(toResolve.length - resolved.length, "thread")} judged finished could not be resolved.`,
             );
             continue;
         }
@@ -209,20 +207,18 @@ if (toResolve.length > 0 && !process.env.DRY_RUN) {
             continue;
         }
 
-        resolved.push({ reason });
+        resolved.push({ reason: why });
     }
 }
 
 const leftOpen = toResolve.length - resolved.length;
-const broken = brokenLenses(merged.lens_health ?? []);
 const to = destinationOf(process.env);
-const listed = listedIn(findings, to);
 
-const reviewBody = composeReview(
-    merged,
-    { resolved, resolveDenied, leftOpen, to, linkable: commentUrls(existing) },
-    parts,
-);
+const {
+    body: reviewBody,
+    listed,
+    broken,
+} = composeReview(merged, { resolved, resolveDenied, leftOpen, to, linkable: commentUrls(existing) }, parts);
 
 console.log(
     `total=${allFindings.length} new=${findings.length} suppressed=${suppressed.length}` +

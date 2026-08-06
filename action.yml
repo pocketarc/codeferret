@@ -34,25 +34,26 @@ inputs:
     tools:
         description: |
             Newline-separated static analysis tools to run before the review, one per
-            line, naming files in the action's review/tools/. Their reports go to the
-            `static-analysis` lens, which reads each finding against the code and decides
-            which hold, so name that lens in `lenses` as well. Set it to an empty string
-            to run none.
+            line, naming files in the action's review/tools/. Set it to an empty string to
+            run none.
 
-            A tool runs from the runner's own binary if there is one and from a pinned
-            container otherwise. With neither, it records that and is skipped. A runner
-            with neither docker nor the binaries gets two skipped reports. A runner with
-            docker pulls two images. The semgrep image is about 420MB.
+            Their reports go to the `static-analysis` lens, which reads each finding
+            against the code and decides which hold. Name that lens in `lenses` as well.
 
-            Both tools reach the network. semgrep fetches its `p/default` ruleset from
-            semgrep's registry unless SEMGREP_CONFIG names a repository-relative one, and
-            osv-scanner sends the package names and versions from each changed lockfile to
-            osv.dev. Run neither if a private repository's dependency list should not
-            leave the runner.
+            A tool runs from the runner's own binary if there is one, and from a pinned
+            container otherwise. With neither it records that and is skipped. So a runner
+            with neither docker nor the binaries gets two skipped reports, and a runner
+            with docker pulls two images. The semgrep image is about 420MB.
 
-            The tools run under `command-prefix` when one is set, and they need git and
-            docker rather than the repository's own toolchain. Set this to an empty string
-            and drop `static-analysis` from `lenses` if that prefix has neither.
+            Both tools reach the network, and the job summary says which one did what.
+            semgrep fetches its `p/default` ruleset from semgrep's registry, unless
+            SEMGREP_CONFIG names a repository-relative one. osv-scanner sends the package
+            names and versions from each changed lockfile to osv.dev. Run neither if a
+            private repository's dependency list should not leave the runner.
+
+            The tools run under `command-prefix` when one is set, and what they need there
+            is git and docker. Set this to an empty string and drop `static-analysis` from
+            `lenses` if that prefix has neither.
         required: false
         default: |
             semgrep
@@ -61,24 +62,30 @@ inputs:
         description: |
             Newline-separated globs to keep out of the review, one per line. These become
             a git pathspec on the diff every lens reads, so an excluded file is not in the
-            diff at all. A glob matches the whole path from the repository root, so
-            `build/**` covers a top-level build directory and `**/build/**` covers one at
-            any depth, the top-level one included. Set to an empty string to review
-            everything.
+            diff at all. Set to an empty string to review everything.
 
-            The defaults below are split by depth, because `out` and `build` are also
-            source directory names. `.next`, `dist`, the lockfiles and the minified and
-            snapshot files are matched at any depth, which takes naming three lockfiles one
-            by one, because `*.lock` and `*.lockb` miss them: pnpm writes YAML, Gradle
-            writes `.lockfile`, and npm writes JSON. `out` and `build` are matched at the
-            repository root and one level inside `apps/` and `packages/`, because both are
-            legal App Router route segments and the any-depth form hides `app/build/` from
-            every lens. `dist`, `.next` and `.vercel` stay at any depth: a packaging
-            convention and two dot-prefixed directories, and the App Router's scan skips a
-            dot-prefixed entry, so none of the three is a name anybody routes on. In a
-            monorepo `vercel build` writes to `apps/<app>/.vercel/output/` beside that app's
-            `.next/`. `next-env.d.ts` is a fixed filename that is never a route segment.
-            Add your own workspace directory here if it is neither `apps/` nor `packages/`.
+            A glob matches the whole path from the repository root. So `build/**` covers a
+            top-level build directory, and `**/build/**` covers one at any depth, the
+            top-level one included.
+
+            Three lockfiles are named one by one because `*.lock` and `*.lockb` miss them.
+            pnpm writes YAML, Gradle writes `.lockfile`, and npm writes JSON.
+
+            `out` and `build` are matched at the repository root and one level inside
+            `apps/` and `packages/`. Both are legal App Router route segments, and the
+            any-depth form would hide `app/build/` from every lens. Add your own workspace
+            directory here if it is neither `apps/` nor `packages/`.
+
+            `dist` is matched at any depth, and that is a trade rather than a rule. A
+            package's `dist/` turns up at depths no anchored glob can name, and `app/dist/`
+            is as legal a route segment as `app/build/`, so a repository that routes on
+            `/dist` loses that route from every lens.
+
+            `.next` and `.vercel` are matched at any depth with nothing given up. The App
+            Router's scan skips a dot-prefixed entry, so neither is a name anybody routes
+            on. In a monorepo `vercel build` writes to `apps/<app>/.vercel/output/` beside
+            that app's `.next/`. `next-env.d.ts` is a fixed filename that is never a route
+            segment.
         required: false
         default: |
             **/*.lock
@@ -108,8 +115,8 @@ inputs:
     model:
         description: |
             Model for the orchestrator and every lens. No lens agent names a model of its
-            own, so each takes the session's: a fourteen-lens run's `modelUsage` records
-            430k output tokens against the one model named here.
+            own, so each takes the session's: an earlier fourteen-lens run's `modelUsage`
+            recorded 430k output tokens against the one model named here.
         required: false
         default: opus
     effort:
@@ -118,31 +125,28 @@ inputs:
             max. Empty leaves the model's own default.
 
             Whether it reaches a dispatched lens is unmeasured, and nothing in what a run
-            writes down would answer that. Most of the bill is the lenses rather than the
-            orchestrator, so turning it down may save less than you expect. Measure a run
-            before you settle on a level: the findings file records what each lens
-            returned, and the job summary what the run cost.
+            writes down would answer that. Most of the bill is the lenses, so turning it
+            down may save less than you expect. Measure a run before you settle on a level:
+            the findings file records what each lens returned, and the job summary what the
+            run cost.
         required: false
         default: ''
     command-prefix:
         description: |
-            Prefix for the `claude` and `bun` invocations, for repositories that run their
-            toolchain in a container rather than on the runner. For example
-            `docker compose exec -T -w /app devtools`. Leave empty to run on the runner.
+            Prefix for the `claude` and `bun` invocations, for repositories whose toolchain
+            runs in a container. For example `docker compose exec -T -w /app devtools`.
+            Leave empty to run on the runner.
 
             The prefix must put both binaries on PATH and start in the repository root,
-            because the review reads the working tree and runs `git diff`. It must also
-            mount three paths at the same absolute location they have on the runner: the
-            checkout, `$GITHUB_ACTION_PATH`, which holds every script the prefix runs, and
-            `$RUNNER_TEMP/codeferret`, which holds the run's plugin, the diff command each
-            lens is given and the static analysis reports. `run.sh` checks the last two and
-            stops with the path named, because a lens that cannot reach the build directory
-            reads no diff and returns a review that is empty for no stated reason.
+            because the review reads the working tree and runs `git diff`.
 
-            Everything the review runs itself stays out of the checkout's own directory,
-            because bun runs the `preload` script a `bunfig.toml` there names. A prefix
-            sets its own working directory, so on this path bun runs that script, with
-            whatever the container gives it. Point the prefix at a checkout you trust.
+            It must also mount three paths at the same absolute location they have on the
+            runner. The checkout. `$GITHUB_ACTION_PATH`, which holds every script the
+            prefix runs. And `$RUNNER_TEMP/codeferret`, which holds the run's plugin, the
+            diff command each lens is given, and the static analysis reports. The run
+            checks the last two and stops with the path named, because a lens that cannot
+            reach the build directory reads no diff and returns a review that is empty for
+            no stated reason.
         required: false
         default: ''
     github-token:
@@ -162,12 +166,16 @@ inputs:
         description: |
             Whether the review may close its own threads once their defect is gone.
 
-            Off by default, and a migration aid rather than a general setting. A review is
-            one body and opens no thread of its own, so the only threads a run can still
-            close are the inline ones that `@v1.0.0` and earlier left on pull requests that
-            are open now. Turning it on also needs `contents: write`, which the shipped
-            workflow does not grant: `resolveReviewThread` is refused without it, and the
-            orchestrator spends a step of the run reaching decisions nothing can act on.
+            Off by default, and a migration aid. A review is one body and opens no thread
+            of its own, so the only threads a run can still close are the inline ones that
+            `@v1.0.0` and earlier left on pull requests that are open now. Turning it on
+            also needs `contents: write`, which the shipped workflow does not grant: the
+            `resolveReviewThread` mutation fails without it, and the orchestrator spends a
+            step of the run reaching decisions nothing can act on.
+
+            The value reaches both halves of a run. It picks the prompt the orchestrator
+            reads, and it decides whether the code calls `resolveReviewThread` at all, so a
+            run left off closes nothing whatever the orchestrator decides.
         required: false
         default: 'false'
     pr-number:
@@ -203,8 +211,8 @@ inputs:
         description: |
             What to keep as the `codeferret-run` artifact, relative to the run's build
             directory. The next run reads the findings file back out of it to know what
-            this one already said. On the default a finding is raised once rather than on
-            every push, and that read needs `actions: read`.
+            this one already said. On the default a finding is raised once across a branch's
+            pushes, and that read needs `actions: read`.
 
             The name is not configurable. A later run looks for `codeferret-run` and
             nothing else.
@@ -215,12 +223,16 @@ inputs:
             Anyone can download an artifact from a public repository.
 
             Keeping the whole directory is also what it takes to audit the
-            `static-analysis` lens, which is allowed to drop a tool finding on the promise
-            that the raw report survives in `tool-*.json`. On the default those reports die
-            with the runner.
+            `static-analysis` lens, which may drop a tool finding only because the raw
+            report survives in `tool-*.json`. On the default path nothing uploads those
+            reports, so they are gone when the runner is torn down.
 
             Set it to an empty string to upload nothing. Every finding is then raised
             again on every push.
+
+            Anything but the default or `.` keeps no findings file, and then the review
+            body prints every finding itself rather than the critical and high ones with
+            a link to the rest. That is a longer comment, and it is the only copy.
         required: false
         default: findings.json
 
@@ -248,9 +260,9 @@ runs:
     steps:
         # First, so an `artifact-path` that cannot be uploaded fails the job in the first
         # ten seconds instead of after a review that took twenty minutes and cost real
-        # money. Resolved here rather than in the upload step below, because
-        # upload-artifact refuses a pattern holding `.` or `..` as a segment, and the
-        # natural way to ask for the whole directory is `.`.
+        # money. Resolved in this step, because upload-artifact does not accept a pattern
+        # with a `.` or `..` segment, and the natural way to ask for the whole directory
+        # is `.`.
         - name: Resolve what to keep
           id: artifact
           if: inputs.artifact-path != ''
@@ -258,7 +270,11 @@ runs:
           env:
               ARTIFACT_PATH: ${{ inputs.artifact-path }}
           run: |
-              build="$RUNNER_TEMP/codeferret/build"
+              # shellcheck source=review/lib.sh
+              . "$GITHUB_ACTION_PATH/review/lib.sh"
+
+              run_dirs "$(runner_run_dir)"
+              build="$BUILD_DIR"
 
               newline='
               '
@@ -271,9 +287,8 @@ runs:
                       ;;
                   *"$newline"*)
                       # In the single-line `name=value` form, GitHub reads a value's second
-                      # line onward as more outputs to set. `artifact-path` is one path
-                      # rather than a list, so a second line is a mistake worth refusing
-                      # rather than writing down.
+                      # line onward as more outputs to set. `artifact-path` is a single
+                      # path, so a second line is a mistake worth refusing.
                       echo "artifact-path must be a single path" >&2
                       exit 1
                       ;;
@@ -285,7 +300,18 @@ runs:
                       ;;
               esac
 
+              # The review body prints only the critical and high findings, because
+              # `findings.json` in this artifact holds every one. A path that keeps
+              # something else, or nothing, has to reach post-review.ts, or a consumer gets
+              # a review that leaves most of its findings out and links a file nobody
+              # uploaded.
+              case "$ARTIFACT_PATH" in
+                  . | ./ | findings.json | ./findings.json) keeps_findings=true ;;
+                  *) keeps_findings=false ;;
+              esac
+
               printf 'path=%s\n' "$path" >>"$GITHUB_OUTPUT"
+              printf 'keeps-findings=%s\n' "$keeps_findings" >>"$GITHUB_OUTPUT"
 
         # actions/checkout cleans by default, deleting whatever an earlier step in the
         # caller's job wrote.
@@ -341,9 +367,8 @@ runs:
               DEFAULT_HEAD: ${{ github.event.pull_request.head.sha }}
               RESOLVE_THREADS_IN: ${{ inputs.resolve-threads }}
           run: |
-              # Refused rather than read as off, because somebody who wrote 'no' meant off
-              # and somebody who wrote 'ture' meant on, and neither should find out from the
-              # review.
+              # An invalid value fails here, because both later steps turn this input into
+              # RESOLVE_THREADS, where anything that is not 'true' becomes '0'.
               case "$RESOLVE_THREADS_IN" in
                   true | false) ;;
                   *)
@@ -375,8 +400,7 @@ runs:
               # the same thing, that `$base` comes from the `base-ref` input and
               # build-prompts.sh's `plain_ref` has not run on it yet, but `--` means
               # something else here: rev-parse reads it as the rev/path separator, so the
-              # ref lands on the path side and `--verify` finds no revision at all. That
-              # shipped once and every run failed at this line.
+              # ref lands on the path side and `--verify` finds no revision at all.
               if ! git rev-parse --verify --quiet --end-of-options "$base" >/dev/null; then
                   echo "base ref '$base' does not resolve in this checkout" >&2
                   exit 1
@@ -393,9 +417,8 @@ runs:
           id: review
           shell: bash
           # Not the workspace, which a composite `run:` step would otherwise default to, and
-          # which is the tree under review in a step holding both tokens. run.sh's
-          # `cd "$BUILD"` has why. Nothing here needs the checkout: run.sh takes it as an
-          # argument.
+          # which is the tree under review in a step holding both tokens. Nothing here needs
+          # the checkout: run.sh takes it as an argument.
           working-directory: ${{ runner.temp }}
           env:
               CLAUDE_CODE_OAUTH_TOKEN: ${{ inputs.claude-code-oauth-token }}
@@ -410,23 +433,21 @@ runs:
               BASE: ${{ steps.target.outputs.base }}
               PR: ${{ steps.target.outputs.pr }}
               OWN_LOGIN: ${{ inputs.own-login }}
-              # Tested for the on value, not the off one. Resolving takes somebody's words
-              # off the page and the next run reads a resolved thread back as a declined
-              # finding, so `no`, `off`, `0` and a typo all have to mean off.
               RESOLVE_THREADS: ${{ inputs.resolve-threads == 'true' && '1' || '0' }}
               PERMISSION_MODE: bypassPermissions
           run: |
-              out="$RUNNER_TEMP/codeferret/build"
+              # shellcheck source=review/lib.sh
+              . "$GITHUB_ACTION_PATH/review/lib.sh"
+
+              run_dirs "$(runner_run_dir)"
+              out="$BUILD_DIR"
 
               status=0
               bash "$GITHUB_ACTION_PATH/review/run.sh" \
                   "$BASE" \
                   "$GITHUB_ACTION_PATH" \
-                  "$RUNNER_TEMP/codeferret" \
+                  "$RUN_DIR" \
                   "$GITHUB_WORKSPACE" || status=$?
-
-              # shellcheck source=review/lib.sh
-              . "$GITHUB_ACTION_PATH/review/lib.sh"
 
               if [ -f "$out/findings.json" ]; then
                   emit_output findings-file "$out/findings.json"
@@ -437,7 +458,8 @@ runs:
               emit_output_file output-tokens "$out/output-tokens"
               emit_output_file findings-checked "$out/findings-checked"
 
-              if ! $PREFIX bun "$GITHUB_ACTION_PATH/review/summary.ts" "$out" "$status" >>"$GITHUB_STEP_SUMMARY"; then
+              if ! $PREFIX bun --config=/dev/null "$GITHUB_ACTION_PATH/review/summary.ts" \
+                  "$out" "$status" >>"$GITHUB_STEP_SUMMARY"; then
                   printf '### CodeFerret\n\nThe review failed before it could report what it had spent.\n' >>"$GITHUB_STEP_SUMMARY"
               fi
 
@@ -455,27 +477,38 @@ runs:
           # token that posts.
           working-directory: ${{ runner.temp }}
           env:
-              # Not GITHUB_TOKEN. post-review.ts prefers the variable over its stdin, and
-              # the value has to reach it over stdin for the command-prefix case below.
+              # Not GITHUB_TOKEN. post-review.ts reads GITHUB_TOKEN when it is set and falls
+              # back to stdin, and the value has to reach it over stdin for the
+              # command-prefix case below.
               POST_TOKEN: ${{ inputs.github-token }}
               GITHUB_REPOSITORY: ${{ github.repository }}
               PREFIX: ${{ inputs.command-prefix }}
               PR: ${{ steps.target.outputs.pr }}
               HEAD: ${{ steps.target.outputs.head }}
+              # Whether a finding may be left out of the body with a pointer to the
+              # artifact, and whether a thread may be closed. An input that names what a
+              # review may do has to reach the code that does it.
+              ARTIFACT_HAS_FINDINGS: ${{ steps.artifact.outputs.keeps-findings }}
+              RESOLVE_THREADS: ${{ inputs.resolve-threads == 'true' && '1' || '0' }}
           run: |
               if [ -z "$PR" ] || [ -z "$HEAD" ]; then
                   echo "pr-number and head-sha are required outside a pull_request event" >&2
                   exit 1
               fi
 
+              # shellcheck source=review/lib.sh
+              . "$GITHUB_ACTION_PATH/review/lib.sh"
+
+              run_dirs "$(runner_run_dir)"
+
               # The mismatch is reported and not corrected. The review is one body with no
               # anchored comments, so the commit it is recorded against is a record rather
               # than a position, and the obvious fix costs more than the defect: a caller
-              # who checks out for themselves usually gets `refs/pull/N/merge`, a commit
-              # the reviews API refuses because it is not on the pull request, and the
-              # review would be lost rather than misfiled.
-              reviewed=$($PREFIX bun "$GITHUB_ACTION_PATH/review/reviewed-commit.ts" \
-                  "$RUNNER_TEMP/codeferret/build/diff-args" 2>/dev/null || true)
+              # who checks out for themselves usually gets `refs/pull/N/merge`, which the
+              # reviews API answers with a 422 because it is not on the pull request, and
+              # the review would be lost rather than misfiled.
+              reviewed=$($PREFIX bun --config=/dev/null "$GITHUB_ACTION_PATH/review/reviewed-commit.ts" \
+                  "$BUILD_DIR/diff-args" 2>/dev/null || true)
 
               if [ -n "$reviewed" ] && [ "$reviewed" != "$HEAD" ]; then
                   echo "the lenses read $reviewed and this review is recorded against $HEAD." >&2
@@ -495,14 +528,16 @@ runs:
                       "GITHUB_REPOSITORY=$GITHUB_REPOSITORY" \
                       "GITHUB_SERVER_URL=$GITHUB_SERVER_URL" \
                       "GITHUB_RUN_ID=$GITHUB_RUN_ID" \
-                      bun "$GITHUB_ACTION_PATH/review/post-review.ts" \
-                      "$RUNNER_TEMP/codeferret/build/findings.json" \
+                      "ARTIFACT_HAS_FINDINGS=$ARTIFACT_HAS_FINDINGS" \
+                      "RESOLVE_THREADS=$RESOLVE_THREADS" \
+                      bun --config=/dev/null "$GITHUB_ACTION_PATH/review/post-review.ts" \
+                      "$BUILD_DIR/findings.json" \
                       "$HEAD" "$PR"
 
-        # Last, and after the posting step rather than before it. `post-review.ts` writes
-        # the `posted` record into the findings file once GitHub has accepted the review,
-        # and a later run steps over any artifact with no such record, because nothing
-        # proves that review reached the pull request.
+        # Last, and after the posting step. `post-review.ts` writes the `posted` record
+        # into the findings file once GitHub has accepted the review, and a later run steps
+        # over any artifact with no such record, because nothing proves that review reached
+        # the pull request.
         #
         # Uploaded from here rather than from the caller's workflow because the name is
         # protocol between this step and the run that reads it. A consumer who holds the

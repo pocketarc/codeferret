@@ -62,16 +62,25 @@ interface Written {
 async function post(
     findings: Array<Record<string, unknown>>,
     existing: Record<string, unknown>,
+    over: Record<string, unknown> = {},
+    env: Record<string, string> = {},
 ): Promise<{ written: Written; stderr: string }> {
     const findingsPath = join(dir, "findings.json");
     const preloadPath = join(dir, "stub-fetch.js");
 
-    await Bun.write(findingsPath, `${JSON.stringify({ summary: "a run", findings }, null, 2)}\n`);
+    await Bun.write(findingsPath, `${JSON.stringify({ summary: "a run", findings, ...over }, null, 2)}\n`);
     await Bun.write(join(dir, "existing.json"), `${JSON.stringify(existing, null, 2)}\n`);
     await Bun.write(preloadPath, PRELOAD);
 
     const run = Bun.spawnSync(["bun", "--preload", preloadPath, SCRIPT, findingsPath, "deadbeef", "1"], {
-        env: { ...process.env, GITHUB_TOKEN: "stub", GITHUB_REPOSITORY: "o/r", DRY_RUN: "" },
+        env: {
+            ...process.env,
+            GITHUB_TOKEN: "stub",
+            GITHUB_REPOSITORY: "o/r",
+            DRY_RUN: "",
+            RESOLVE_THREADS: "",
+            ...env,
+        },
         stdin: "ignore",
     });
 
@@ -93,7 +102,7 @@ const strangerSaidSo = {
 };
 
 describe("post-review: the statuses written back to the findings file", () => {
-    test("writes back the status vetDeclines reopened, not the one the orchestrator sent", async () => {
+    test("writes back the status vetSuppression reopened, not the one the orchestrator sent", async () => {
         const { written, stderr } = await post([strangerDeclined], strangerSaidSo);
 
         expect(stderr).toContain("Reporting them as new");
@@ -116,5 +125,22 @@ describe("post-review: the statuses written back to the findings file", () => {
 
         expect(written.posted?.url).toBe(REVIEW_URL);
         expect(written.posted?.pr).toBe("1");
+    });
+});
+
+describe("post-review: what resolve-threads gates", () => {
+    const asked = { resolve: [{ thread_id: "T_1", reason: "the defect is gone" }] };
+    const ours = { threads: [{ thread_id: "T_1", mine: true }], conversation: [] };
+
+    test("closes nothing when the input is off, whatever the orchestrator decided", async () => {
+        const { stderr } = await post([finding({})], ours, asked);
+
+        expect(stderr).toContain("resolve-threads is off");
+    });
+
+    test("closes what it opened when the input is on", async () => {
+        const { stderr } = await post([finding({})], ours, asked, { RESOLVE_THREADS: "1" });
+
+        expect(stderr).not.toContain("resolve-threads is off");
     });
 });

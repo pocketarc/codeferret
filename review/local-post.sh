@@ -24,8 +24,8 @@ if ! plain_number "$PR"; then
     exit 1
 fi
 
-GIT_DIR=$(git rev-parse --absolute-git-dir)
-BUILD="$GIT_DIR/codeferret/run/build"
+run_dirs "$(session_run_dir)"
+BUILD=$BUILD_DIR
 FINDINGS="$BUILD/findings.json"
 
 if [ ! -f "$FINDINGS" ]; then
@@ -33,8 +33,8 @@ if [ ! -f "$FINDINGS" ]; then
     exit 1
 fi
 
-# run.sh writes this marker only when check-findings.ts passed, and the action refuses to
-# post without it. A findings file that failed the check outright holds nothing worth
+# run.sh writes this marker only when check-findings.ts passed, and the action posts
+# nothing without it. A findings file that failed the check outright holds nothing worth
 # posting, and one that passed has had whatever post-review.ts cannot render taken out.
 if [ ! -f "$BUILD/findings-checked" ]; then
     echo "$FINDINGS did not pass check-findings.ts, so it is not safe to post." >&2
@@ -46,8 +46,8 @@ fi
 # than resolved again here. Every line the review names is a line of that commit, so a
 # review taken at one commit and posted against another sends the reader to code nobody
 # reviewed. reviewed-commit.ts owns how the file is read, beside the code that writes it.
-# Run from the build directory, not from the checkout: run.sh's `cd "$BUILD"` has why.
-if ! REVIEWED_HEAD=$(cd "$BUILD" && bun "$PLUGIN/review/reviewed-commit.ts" "$BUILD/diff-args"); then
+# Out of the checkout and past the bunfig lookup: run.sh's `cd "$BUILD"` has why both.
+if ! REVIEWED_HEAD=$(cd "$BUILD" && bun --config=/dev/null "$PLUGIN/review/reviewed-commit.ts" "$BUILD/diff-args"); then
     exit 1
 fi
 
@@ -84,4 +84,9 @@ fi
 
 cd "$BUILD"
 
-exec bun "$PLUGIN/review/post-review.ts" "$FINDINGS" "$REVIEWED_HEAD" "$PR"
+# A local review posts as whoever is at the keyboard, so `mine` cannot tell this run's
+# threads from that person's own. local-run.sh sets the same value for the prompt the
+# orchestrator gets; this is the half that the code answers to.
+export RESOLVE_THREADS=0
+
+exec bun --config=/dev/null "$PLUGIN/review/post-review.ts" "$FINDINGS" "$REVIEWED_HEAD" "$PR"

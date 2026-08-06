@@ -160,10 +160,9 @@ export function previousOf(parsed: unknown, pull: string, label: string): Previo
  * The newest artifact whose review reached this pull request, and what it reported.
  *
  * A run whose review never landed left nothing on the pull request, so the run before it is
- * still the last word and the walk steps over it. `open` is a parameter because every other
- * decision here is cheap and this one is a download apiece, which is also why the walk gives
- * up after `limit` of them: past that, nothing has been posted in a long while and treating
- * every finding as new is the right answer anyway.
+ * still the last word and the walk steps over it. `open` is a parameter because it is the
+ * one expensive decision here, a download apiece, and a test has to stand in for it.
+ * `MAX_CANDIDATES` in fetch-previous.ts has why the caller's `limit` is where it is.
  */
 export async function firstPosted(
     list: Artifact[],

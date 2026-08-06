@@ -21,11 +21,6 @@
 import { dirname, join } from "node:path";
 import { record } from "./json.ts";
 
-interface Denial {
-    tool_name?: string;
-    tool_input?: { command?: string };
-}
-
 interface LensHealth {
     lens?: unknown;
     findings_returned?: unknown;
@@ -74,9 +69,22 @@ try {
 
 const results = messages.map(record).filter((m) => m !== null && m.type === "result");
 const last = results[results.length - 1];
+const dir = dirname(outPath);
 
 if (!last) {
     console.error("no result message in the run log. The session produced no terminal output.");
+
+    // All five files are still written. action.yml reads three of them as step outputs and
+    // summary.ts reads the other two back off disk, and for every one of those readers an
+    // absent file is indistinguishable from a zero. A killed session is exactly the run
+    // whose numbers somebody wants, so each file is written with what is known rather than
+    // left out to read as none.
+    await Bun.write(join(dir, "findings-count"), "none reported");
+    await Bun.write(join(dir, "cost-usd"), "unknown");
+    await Bun.write(join(dir, "output-tokens"), "unknown");
+    await Bun.write(join(dir, "duration-ms"), "unknown");
+    await Bun.write(join(dir, "permission-denials"), "unknown");
+
     process.exit(1);
 }
 
@@ -86,8 +94,6 @@ if (!last) {
 if (last.is_error === true) {
     console.error(`the run reported an error: ${string(last.subtype) ?? "unknown"}`);
 }
-
-const dir = dirname(outPath);
 
 // The result's `usage` counts the orchestrator's last turn and nothing else. Only
 // `modelUsage` covers the subagents, which is where a lens run spends everything: over a
@@ -100,18 +106,34 @@ const outputTokens = perModel.reduce((total, [, usage]) => total + (number(usage
 const summed = perModel.reduce((total, [, usage]) => total + (number(usage?.costUSD) ?? 0), 0);
 const reported = number(last.total_cost_usd);
 
-// A subscription-billed run has been seen to report `total_cost_usd` as zero while the
-// modelUsage figures said otherwise, and zero is the number a reader takes for a free $36
-// review on every surface this reaches. So a reported zero falls through to the sum, and
-// only an empty `modelUsage` falls back to it: `record({})` is not null, so testing for
-// the object rather than for its entries produces the confident 0.00 this exists to avoid.
-//
-// Null when the log carried neither, which is what a shape that has moved looks like.
-const costUsd: number | null = reported || (perModel.length > 0 ? summed : reported);
+/**
+ * What the run cost, across the three answers a log can give.
+ *
+ * A subscription-billed run has been seen to report `total_cost_usd` as zero while the
+ * modelUsage figures said otherwise, and zero is the number a reader takes for a free $36
+ * review on every surface this reaches. So a reported zero falls through to the sum, and
+ * only an empty `modelUsage` falls back to it: `record({})` is not null, so testing for the
+ * object rather than for its entries produces the confident 0.00 this exists to avoid.
+ */
+function totalCost(reported: number | null, summed: number, models: number): number | null {
+    if (reported) return reported;
+    if (models > 0) return summed;
+
+    // Null where the log carried neither, which is what a shape that has moved looks like.
+    // A reported zero with nothing to sum stays zero.
+    return reported;
+}
+
+const costUsd = totalCost(reported, summed, perModel.length);
 const durationMs = number(last.duration_ms) ?? 0;
 const money = costUsd === null ? "unknown" : `$${costUsd.toFixed(2)}`;
 
-const denials: Denial[] = Array.isArray(last.permission_denials) ? last.permission_denials : [];
+// Narrowed element by element, not just as a container. This list is read in the reporting
+// loop at the end, after the findings file is on disk, and a null or a string in it would
+// turn a complete run into a stack trace over the one report saying what a lens was refused.
+const denials = (Array.isArray(last.permission_denials) ? last.permission_denials : [])
+    .map(record)
+    .filter((d) => d !== null);
 
 await Bun.write(join(dir, "cost-usd"), costUsd === null ? "unknown" : costUsd.toFixed(2));
 await Bun.write(join(dir, "output-tokens"), String(outputTokens));
@@ -159,14 +181,15 @@ for (const h of health) {
 }
 
 if (broken.length > 0) {
-    console.log(`\n${broken.length} lens(es) did not report normally; the review is less complete than it looks.`);
+    console.log(`\n${broken.length} lens(es) did not report normally. The review is less complete than it looks.`);
 }
 
 if (denials.length > 0) {
     console.log(`\n${denials.length} tool call(s) were refused by the permission mode:`);
     for (const d of denials) {
-        const what = d.tool_input?.command ?? JSON.stringify(d.tool_input ?? {});
-        console.log(`  ${d.tool_name ?? "?"}: ${String(what).slice(0, 120)}`);
+        const input = record(d.tool_input);
+        const what = string(input?.command) ?? JSON.stringify(input ?? {});
+        console.log(`  ${string(d.tool_name) ?? "?"}: ${what.slice(0, 120)}`);
     }
     console.log("A lens that could not run what it needed covered less than its report suggests.");
 }

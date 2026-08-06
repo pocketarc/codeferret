@@ -22,13 +22,13 @@ Read `<plugin>/templates/workflow.yml` and show it before writing anything. It g
 `contents: read` is what the template ships, and everything works under it. The one thing
 `contents: write` adds is closing the inline threads CodeFerret left on this repository
 before `v1.1.0`: a review is one body now and opens no thread of its own, so
-`contents: write` is worth granting only while an open pull request still carries one of
-those threads. Offer that rather than assuming it, and say what it costs: the review agent
+`contents: write` is worth granting only while an open pull request still has one of
+those threads on it. Offer that rather than assuming it, and say what it costs: the review agent
 runs with Bash, so a token that can write contents is a token that can push. Taking it
 means setting `resolve-threads: 'true'` in the same edit.
 
 The template grants a second permission the user should know about rather than decide on:
-`actions: read`. Say what it buys. A run reads the previous run's `findings.json` out of
+`actions: read`. Say what it is for. A run reads the previous run's `findings.json` out of
 the `codeferret-run` artifact to know what has already been said; without it every finding
 is posted again on every push. It grants read access to the repository's workflow runs and
 their artifacts, and nothing more.

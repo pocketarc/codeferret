@@ -19,10 +19,8 @@
  * Usage: bun review/tools/osv-scanner.ts <build-dir> <workspace>
  */
 
-import { basename, join } from "node:path";
-import { readDiffArgs } from "../diff-args.ts";
-import { reason } from "../json.ts";
-import { changedFiles, MAX_FINDINGS, repoRoot, reporter, runner } from "./report.ts";
+import { basename } from "node:path";
+import { keepRaised, MAX_FINDINGS, repoRoot, reporter, reportPath, startTool } from "./report.ts";
 
 const IMAGE =
     "ghcr.io/google/osv-scanner:v2.2.4@sha256:f7ba4be68bac8086b1f88fd598fdca1ca67239c79ad2c2b5c78e03a82e5187c4";
@@ -89,44 +87,25 @@ const extras: { manifests: Attempt[]; caveat: string } = {
         " this pull request.",
 };
 
-const write = reporter("osv-scanner", join(buildDir, "tool-osv-scanner.json"), extras);
+const write = reporter("osv-scanner", reportPath("osv-scanner", buildDir), extras);
 
-// The image's entrypoint is the scanner itself, so it takes arguments and no command.
-const osv = runner("osv-scanner", IMAGE, root);
+// `usePathspec: false` drops the pathspec beside the range, for the reason at the top of
+// this file. The image's entrypoint is the scanner itself, so it takes no command.
+const started = await startTool({
+    tool: "osv-scanner",
+    image: IMAGE,
+    buildDir,
+    root,
+    usePathspec: false,
+    write,
+});
 
-if (!osv) {
-    await write({ ran: false, reason: "neither osv-scanner nor docker is on PATH" });
-    console.log("osv-scanner: no osv-scanner and no docker, skipped");
-    process.exit(0);
-}
+if (!started) process.exit(0);
 
-const argsFile = join(buildDir, "diff-args");
-let range: string;
-
-try {
-    // The range only. This tool drops the pathspec beside it, for the reason at the top
-    // of this file.
-    ({ range } = await readDiffArgs(argsFile));
-} catch (error) {
-    await write({ ran: false, reason: reason(error) });
-    console.error(`osv-scanner: ${argsFile} could not be read, skipped`);
-    process.exit(0);
-}
-
-const changed = changedFiles([range], root);
-
-// Left unchecked, the only check on dependency advisories would report itself as having
-// run and found nothing.
-if ("failure" in changed) {
-    await write({ ran: false, reason: changed.failure });
-    console.error("osv-scanner: git diff failed, skipped");
-    process.exit(0);
-}
-
-const manifests = changed.present.filter((f) => MANIFESTS.has(basename(f)));
+const manifests = started.changed.present.filter((f) => MANIFESTS.has(basename(f)));
 
 if (manifests.length === 0) {
-    await write({ ran: true, how: osv.how, scanned: 0 });
+    await write({ ran: true, how: started.how, scanned: 0 });
     console.log("osv-scanner: the diff changes no dependency manifest");
     process.exit(0);
 }
@@ -143,7 +122,7 @@ const attempts: Attempt[] = [];
 for (const manifest of manifests) {
     // `--lockfile=` rather than a separate argument, so that a later edit cannot separate
     // the flag from its value and leave a repository-controlled path being read as one.
-    const proc = Bun.spawnSync([...osv.argv, "scan", "source", "--format", "json", `--lockfile=${manifest}`], {
+    const proc = Bun.spawnSync([...started.argv, "scan", "source", "--format", "json", `--lockfile=${manifest}`], {
         cwd: root,
     });
 
@@ -166,15 +145,14 @@ for (const manifest of manifests) {
     }
 
     // The image is pinned by digest but the shape it emits is upstream's, and a renamed
-    // field empties every finding while the report still carries the right count. This is
-    // what makes that visible to the lens.
+    // field empties every finding while the report still carries the right count. Both of
+    // the fields below are always present in v2.2.4's output, so an absence means the shape
+    // has moved, and this counter is what makes that visible to the lens.
     let unreadable = 0;
 
     for (const result of parsed.results ?? []) {
         for (const pkg of result.packages ?? []) {
             for (const vuln of pkg.vulnerabilities ?? []) {
-                // Both are always present in v2.2.4's output, so an absence means the shape
-                // has moved.
                 if (!vuln.id || !pkg.package?.name) unreadable += 1;
 
                 findings.push({
@@ -216,7 +194,7 @@ const failed = attempts.filter((a) => !a.ok);
 if (succeeded.length === 0) {
     await write({
         ran: false,
-        how: osv.how,
+        how: started.how,
         reason: `no manifest could be scanned: ${failed.map((f) => `${f.manifest} (${f.detail})`).join("; ")}`,
         manifests: attempts,
     });
@@ -227,13 +205,14 @@ if (succeeded.length === 0) {
 // Highest severity first, so the cap takes the low end rather than whatever the scanner
 // happened to emit last. `max_severity` is a CVSS score as a string, and an entry without
 // one sorts to the back.
-const kept = [...findings]
-    .sort((a, b) => (Number(b.severity) || -1) - (Number(a.severity) || -1))
-    .slice(0, MAX_FINDINGS);
+const raised = [...findings].sort((a, b) => (Number(b.severity) || -1) - (Number(a.severity) || -1));
+const kept = raised.slice(0, MAX_FINDINGS);
+
+await keepRaised("osv-scanner", buildDir, raised);
 
 await write({
     ran: true,
-    how: osv.how,
+    how: started.how,
     scanned: succeeded.length,
     manifests: attempts,
     raised: findings.length,

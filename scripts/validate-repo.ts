@@ -1,19 +1,25 @@
 #!/usr/bin/env bun
 /**
- * Parse every manifest the action and the plugin depend on, check its shape, and check the
- * values two files have to agree on: the plugin namespace, the shipped version, the
- * defaults, the tools lens, the artifact retention window, and everything generated.
+ * Every check on this repository that needs no findings file to run.
+ *
+ * Each manifest the action and the plugin depend on is parsed and its shape checked, along
+ * with the values two files have to agree on: the plugin namespace, the shipped version,
+ * the defaults, the tools lens, the standing caveats, the artifact retention window, and
+ * everything generated. Both generators are re-run with `--check`, and action.yml's `run:`
+ * blocks go through shellcheck, being the only shell in the repository that lives as a
+ * string inside YAML.
  *
  * Nothing upstream catches any of this before somebody feels it. "Before you push" in
  * CLAUDE.md has what a broken manifest costs and what to do about it.
  *
- * Usage: bun scripts/validate-manifests.ts [<check-name>...]
+ * Usage: bun scripts/validate-repo.ts [<check-name>...]
  */
 
 import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { reason } from "../review/json.ts";
+import { STANDING_DETAIL } from "../review/review-body.ts";
 
 process.chdir(join(import.meta.dir, ".."));
 
@@ -46,8 +52,7 @@ async function parseJson(list: Failures, file: string): Promise<unknown | null> 
  *
  * Parsed rather than matched. Claude Code's frontmatter parser is lenient enough that an
  * unquoted `: ` in a description loads fine and only breaks wherever something stricter
- * reads it, which is how a cosmetic rewrite of every bundled description turned each one
- * into invalid YAML without a word.
+ * reads it, with nothing said in between.
  */
 async function frontmatter(
     list: Failures,
@@ -272,9 +277,8 @@ async function checkMarketplace(): Promise<Failures> {
 /**
  * The lenses this repository bundles: a directory under lenses/skills holding a SKILL.md.
  *
- * Read from the tree rather than filled in as a side effect of another check. Any check
- * can be named on its own, and `provenance` alone once reported all fourteen bundled
- * lenses as missing because the check that populated the set had not run.
+ * Read from the tree rather than filled in as a side effect of another check, because any
+ * check here can be named on its own and run alone.
  */
 function bundledLenses(): Set<string> {
     return new Set(
@@ -304,15 +308,14 @@ async function checkBundledSkills(): Promise<Failures> {
         const skill = await frontmatter(list, skillFile);
         if (!skill) continue;
 
-        // The flag hides the skill from the slash menu, which costs `/codeferret:<lens>`
-        // and buys nothing: on 2.1.220 the skill still registers and the model still sees
-        // it.
+        // On 2.1.220 the flag only hides the skill from the slash menu: Claude Code still
+        // registers it and the model still sees it.
         if (skill["user-invocable"] === false) {
             fail(list, skillFile, `has \`user-invocable: false\`, which only hides \`/codeferret:${entry.name}\``);
         }
 
         // A lens agent loads its skill through the Skill tool, which counts as model
-        // invocation. Left in, this flag costs one lens with nothing to say about it.
+        // invocation. Left in, the lens loads no skill and returns nothing.
         if (skill["disable-model-invocation"] === true) {
             fail(list, skillFile, "has `disable-model-invocation: true`, so no lens agent could load it");
         }
@@ -444,6 +447,40 @@ async function checkFindingRules(): Promise<Failures> {
 }
 
 /**
+ * The standing caveats in review-body.ts, against the lenses they name.
+ *
+ * A key that names no lens fails in the dangerous direction and in silence: `caveatOf`
+ * gives nothing back, the lens drops out of `limited`, the `[!NOTE]` above the health list
+ * stops counting it, and the review renders as though the interface had been checked from a
+ * rendered page. No error, no warning, and every other check here still passes.
+ *
+ * The same class as a misnamed `review/lens-extras/<lens>.md`, which build-lens-agents.ts
+ * guards for the same reason. Lens names here do get added, renamed and removed.
+ */
+async function checkStandingDetail(): Promise<Failures> {
+    const list: Failures = [];
+    const file = "review/review-body.ts";
+    const bundled = bundledLenses();
+
+    if (STANDING_DETAIL.size === 0) {
+        fail(list, file, "declares no STANDING_DETAIL, so no lens carries a caveat it did not write itself");
+        return list;
+    }
+
+    for (const lens of STANDING_DETAIL.keys()) {
+        if (!bundled.has(lens)) {
+            fail(list, file, `STANDING_DETAIL names '${lens}', which is not a lens under lenses/skills/`);
+        }
+    }
+
+    if (list.length === 0) {
+        console.log(`OK standing-detail: ${STANDING_DETAIL.size} caveat(s) name a bundled lens`);
+    }
+
+    return list;
+}
+
+/**
  * The retention window fetch-previous.ts pages back to, against the one the action asks for.
  *
  * Drift here is quiet in the direction that matters: raise the action's retention and the
@@ -480,60 +517,6 @@ async function checkRetention(): Promise<Failures> {
     }
 
     console.log(`OK retention: action.yml and fetch-previous.ts both say ${paged} days`);
-    return list;
-}
-
-/** Number words for the README's headline, up to more lenses than anyone will bundle. */
-const NUMBER_WORDS = [
-    "zero",
-    "one",
-    "two",
-    "three",
-    "four",
-    "five",
-    "six",
-    "seven",
-    "eight",
-    "nine",
-    "ten",
-    "eleven",
-    "twelve",
-    "thirteen",
-    "fourteen",
-    "fifteen",
-    "sixteen",
-    "seventeen",
-    "eighteen",
-    "nineteen",
-    "twenty",
-];
-
-/**
- * The lens count the README leads with, against the lenses actually bundled.
- *
- * The first sentence a reader meets is the one claim about the shipped set that no test
- * touches, and it has been wrong: a release that added two lenses and dropped one left the
- * README saying fourteen for a set of thirteen. Every other prose count was rewritten to
- * name the set rather than its size, so this is the only numeral left to check.
- */
-async function checkHeadlineCount(): Promise<Failures> {
-    const list: Failures = [];
-    const bundled = bundledLenses().size;
-    const word = NUMBER_WORDS[bundled];
-
-    if (!word) {
-        fail(list, "README.md", `${bundled} bundled lenses is past the number words listed here`);
-        return list;
-    }
-
-    const expected = `through ${word} independent code review skills`;
-
-    if (!(await Bun.file("README.md").text()).includes(expected)) {
-        fail(list, "README.md", `does not say "${expected}", and ${bundled} lenses are bundled`);
-        return list;
-    }
-
-    console.log(`OK README.md: leads with ${word} lenses, which is what lenses/skills holds`);
     return list;
 }
 
@@ -620,11 +603,10 @@ async function checkShippedVersions(): Promise<Failures> {
         fail(list, TEMPLATE, "does not use pocketarc/codeferret@<ref>, so it would not run anywhere else");
     }
 
-    // Each of these tells a consumer which version tag to pin instead of the mutable
-    // `@v1`, and two of them named a tag that never existed. Following that advice fails
-    // the job at load with "unable to find version", which is the one escape hatch from a
-    // mutable tag. The release procedure moves the tag and `version` together, so the
-    // manifest is what they have to agree with.
+    // Each of these tells a consumer which version tag to pin instead of the mutable `@v1`,
+    // which is the one escape hatch from that tag. Advice naming a tag nobody cut fails the
+    // job at load with "unable to find version". The release procedure moves the tag and
+    // `version` together, so the manifest is what they have to agree with.
     const manifest = await pluginManifest(list);
     const released = manifest?.version;
 
@@ -652,7 +634,7 @@ const CHECKS: Array<[string, () => Promise<Failures>]> = [
     ["generated", checkGenerated],
     ["finding-rules", checkFindingRules],
     ["retention", checkRetention],
-    ["lens-count", checkHeadlineCount],
+    ["standing-detail", checkStandingDetail],
     ["prompts", checkPrompts],
     ["workflows", checkWorkflows],
     ["versions", checkShippedVersions],
@@ -680,4 +662,4 @@ if (failures.length > 0) {
     process.exit(1);
 }
 
-console.log("\nall manifests valid");
+console.log("\nevery check passes");

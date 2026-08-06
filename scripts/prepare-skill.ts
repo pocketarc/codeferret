@@ -25,7 +25,7 @@
  * PROVENANCE.tsv is only worth pinning while the vendored copy still matches it.
  *
  * Frontmatter is edited a line at a time rather than parsed and re-emitted, unlike
- * validate-manifests.ts, which parses it. A YAML round-trip reformats every key this
+ * validate-repo.ts, which parses it. A YAML round-trip reformats every key this
  * script does not touch and drops the comments some skills carry.
  *
  * Usage: bun prepare-skill.ts <SKILL.md> <name>

@@ -25,17 +25,19 @@
 set -euo pipefail
 
 PLUGIN=${1:?usage: local-run.sh PLUGIN_ROOT BASE_REF [LENS...]}
-# No parentheses in the message: semgrep's bash parser fails on one inside a parameter
-# expansion and then produces no results for the whole file, so a script that drives a
-# review goes unscanned and nothing says so.
-BASE=${2?missing base ref; pass an empty string to work it out here}
+# No parentheses and no semicolon in the message: semgrep's bash parser gives up on either
+# inside a parameter expansion, produces no results for the whole file, and still reports
+# the file as scanned. The script that drives a review then goes unscanned with nothing
+# saying so.
+BASE=${2?missing base ref -- pass an empty string to work it out here}
 shift 2
 
 TOPLEVEL=$(git rev-parse --show-toplevel)
-GIT_DIR=$(git rev-parse --absolute-git-dir)
 
 # shellcheck source=review/lib.sh
 . "$PLUGIN/review/lib.sh"
+
+run_dirs "$(session_run_dir)"
 
 open_pr
 BASE=$(resolve_base "$BASE")
@@ -81,4 +83,4 @@ if [ -n "$PR" ]; then
     gh_credentials
 fi
 
-exec bash "$PLUGIN/review/run.sh" "$BASE" "$PLUGIN" "$GIT_DIR/codeferret/run" "$TOPLEVEL"
+exec bash "$PLUGIN/review/run.sh" "$BASE" "$PLUGIN" "$RUN_DIR" "$TOPLEVEL"
