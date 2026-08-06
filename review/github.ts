@@ -28,6 +28,40 @@ export function splitRepository(repo: string | undefined): { owner: string; name
     return { owner, name };
 }
 
+/**
+ * `GITHUB_REPOSITORY` split, or the script ends.
+ *
+ * Every script that talks to GitHub takes this check, so it is made once here rather than
+ * copied: a fourth caller written without the copy is a silent hole, and a tightening
+ * applied to one copy leaves the others behind.
+ */
+export function requireRepository(repo: string | undefined): { owner: string; name: string } {
+    const split = splitRepository(repo);
+
+    if (!split) {
+        console.error(`GITHUB_REPOSITORY is '${repo}'. It has to be owner/name.`);
+        process.exit(2);
+    }
+
+    return split;
+}
+
+/**
+ * A pull request number, or the script ends.
+ *
+ * The value reaches a REST path and a GraphQL variable, and it arrives from a workflow
+ * input or from a model pasting the preflight's `pr=` line. A `/` or a `..` re-points the
+ * request at another resource, and a `?` hangs a query string off it.
+ */
+export function requirePullNumber(value: string | undefined): string {
+    if (!value || !/^[0-9]+$/.test(value)) {
+        console.error(`pr-number is '${value}'. It has to be a number.`);
+        process.exit(2);
+    }
+
+    return value;
+}
+
 const API = "https://api.github.com";
 
 export function rest(token: string, path: string, init: RequestInit = {}): Promise<Response> {

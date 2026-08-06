@@ -71,8 +71,8 @@ fi
 say repo "$GIT_DIR"
 
 # The git dir is not the working tree, and it is the working tree that holds
-# .claude/skills/ and REVIEW.md. In a linked worktree the two are nowhere near
-# each other.
+# .claude/skills/, where a workspace lens comes from. In a linked worktree the two are
+# nowhere near each other.
 TOPLEVEL=$(git rev-parse --show-toplevel)
 
 if plain_path "$TOPLEVEL"; then
@@ -123,19 +123,7 @@ fi
 say dirty "$(git status --porcelain --untracked-files=no | wc -l | tr -d '[:space:]')"
 say untracked "$(git ls-files --others --exclude-standard | wc -l | tr -d '[:space:]')"
 
-PR=""
-PR_BASE=""
-PR_HEAD=""
-
-if command -v gh >/dev/null 2>&1; then
-    # `gh pr view` answers with the closed or merged pull request a branch used to have,
-    # which would offer to post a review onto something nobody is reading any more.
-    PR_LINE=$(gh pr view --json number,baseRefName,headRefOid,state \
-        --jq 'select(.state == "OPEN") | [.number, .baseRefName, .headRefOid] | @tsv' 2>/dev/null || true)
-    PR=$(printf '%s' "$PR_LINE" | cut -f1)
-    PR_BASE=$(printf '%s' "$PR_LINE" | cut -f2)
-    PR_HEAD=$(printf '%s' "$PR_LINE" | cut -f3)
-fi
+open_pr
 
 say pr "${PR:-none}"
 
@@ -160,24 +148,11 @@ else
     say pushed no
 fi
 
-DEFAULT=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
-DEFAULT=${DEFAULT#origin/}
-
-if [ -z "$DEFAULT" ] && command -v gh >/dev/null 2>&1; then
-    DEFAULT=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null || true)
-fi
+DEFAULT=$(default_branch)
 
 say default_branch "${DEFAULT:-unknown}"
 
-if [ -n "$WANTED_BASE" ]; then
-    BASE="$WANTED_BASE"
-elif [ -n "$PR_BASE" ]; then
-    BASE="origin/$PR_BASE"
-elif [ -n "$DEFAULT" ]; then
-    BASE="origin/$DEFAULT"
-else
-    BASE=""
-fi
+BASE=$(resolve_base "$WANTED_BASE")
 
 if [ -z "$BASE" ]; then
     say base none

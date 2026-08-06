@@ -28,11 +28,10 @@ export interface ToolReport {
     /** How the tool was run: a binary on PATH, or a digest-pinned container. */
     how: string | null;
     reason: string | null;
-    /** What the tool analysed. Each tool decides its own scope. */
+    /** Each tool decides its own scope. */
     scanned: number;
-    /** Everything the tool raised, before the cap above. */
     raised: number;
-    /** How many of those did not fit. The report is sorted so these are the low end. */
+    /** The report is sorted so that what did not fit is the low end. */
     truncated: number;
     findings: Array<Record<string, unknown>>;
 }
@@ -63,16 +62,23 @@ export function reporter<Extra extends Record<string, unknown>>(
     };
 }
 
-let root: string | null = null;
+/**
+ * The repository root, because git prints paths relative to it and a finding anchors on one.
+ *
+ * The workspace is handed in rather than taken from the working directory, because no `bun`
+ * a run starts may have the reviewed tree as its own: a `bunfig.toml` there names a
+ * `preload`, and bun runs it before the script in the job holding the tokens.
+ *
+ * Under a command prefix the tool runs inside a container where the host's workspace path
+ * does not exist, and that prefix is required to start in the repository root, so there git
+ * is asked from wherever the prefix put it.
+ */
+export function repoRoot(workspace: string): string {
+    const proc = Bun.spawnSync(["git", "rev-parse", "--show-toplevel"], {
+        ...(existsSync(workspace) ? { cwd: workspace } : {}),
+    });
 
-/** The repository root, because git prints paths relative to it and a finding anchors on one. */
-export function repoRoot(): string {
-    if (root === null) {
-        const proc = Bun.spawnSync(["git", "rev-parse", "--show-toplevel"]);
-        root = new TextDecoder().decode(proc.stdout).trim() || process.cwd();
-    }
-
-    return root;
+    return new TextDecoder().decode(proc.stdout).trim() || workspace;
 }
 
 /**
@@ -86,12 +92,13 @@ export function repoRoot(): string {
 export function runner(
     binary: string,
     image: string,
+    root: string,
     command?: string,
 ): { argv: string[]; how: string } | null {
     if (Bun.which(binary)) return { argv: [binary], how: "binary" };
 
     if (Bun.which("docker")) {
-        const argv = ["docker", "run", "--rm", "--volume", `${repoRoot()}:/src:ro`, "--workdir", "/src", image];
+        const argv = ["docker", "run", "--rm", "--volume", `${root}:/src:ro`, "--workdir", "/src", image];
         if (command) argv.push(command);
 
         return { argv, how: `docker ${image}` };
@@ -115,9 +122,9 @@ export interface Changed {
  * word. A failing `git diff` writes nothing to stdout, which is the same shape as a diff
  * touching no file, so the failure comes back rather than reading as a clean zero.
  */
-export function changedFiles(args: string[]): Changed | { failure: string } {
+export function changedFiles(args: string[], root: string): Changed | { failure: string } {
     const proc = Bun.spawnSync(["git", "diff", "--name-only", "-z", "--diff-filter=d", ...args], {
-        cwd: repoRoot(),
+        cwd: root,
     });
 
     if (proc.exitCode !== 0) {
@@ -127,5 +134,5 @@ export function changedFiles(args: string[]): Changed | { failure: string } {
 
     const named = new TextDecoder().decode(proc.stdout).split("\0").filter(Boolean);
 
-    return { named, present: named.filter((f) => existsSync(join(repoRoot(), f))) };
+    return { named, present: named.filter((f) => existsSync(join(root, f))) };
 }

@@ -10,7 +10,7 @@
  * Exit: 1 when the run reviewed the working tree, which is no commit to post against.
  */
 
-import { readDiffArgs, reviewedCommit } from "./lib.ts";
+import { readDiffArgs, reviewedCommit } from "./diff-args.ts";
 
 const [argsFile] = process.argv.slice(2);
 

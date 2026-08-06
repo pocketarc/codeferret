@@ -13,8 +13,6 @@
 import { join } from "node:path";
 import { writeOrCheck } from "./generated.ts";
 
-// Every path below is repository-relative, and whoever has just edited this script is
-// standing in scripts/.
 process.chdir(join(import.meta.dir, ".."));
 
 const FILES: Array<[string, string]> = [

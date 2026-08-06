@@ -14,40 +14,18 @@
  * findings, and the orchestrator reads that the same way it reads a first run: every
  * finding is new.
  *
- * An artifact has to prove three things before what it holds silences anything, and
- * `previous.ts` is where each is decided:
- *
- * Its review has to have been posted. post-review.ts writes `posted` into findings.json
- * once GitHub has accepted the review, and the action uploads after that, so the record
- * travels inside the one file every consumer keeps. Four ordinary paths reach an uploaded
- * artifact with no review on the pull request at all: `post: 'false'`, a 502 from the
- * reviews endpoint, a token without `pull-requests: write`, and a run that
- * `cancel-in-progress` kills while the upload step still runs `if: always()`. A run that
- * believes one of those marks every finding `already-reported` against comments nobody
- * ever saw, and writes that status into its own findings file, so the suppression lasts as
- * long as the pull request. A run that ends red is a different thing and still counts:
- * check-findings.ts drops what it cannot use, the review lands, and the job goes red over
- * what was dropped. So is a run with nothing new to post: it records itself with a null
- * url, because it suppressed everything on the strength of a review that did land.
- *
- * That review has to have been of this pull request. The `posted` record carries the pull
- * request number, because the branch name is no evidence of which one: it is reused as soon
- * as a merged branch is recreated, and one branch can head two open pull requests at once.
- *
- * It has to have come from a run of a branch pushed here. For a `pull_request` event GitHub
- * runs the workflow files as the pull request has them, so a fork's copy of the workflow
- * runs, and whatever it uploads is stored against this repository and listed here.
- * `head_branch` is a name whoever opened the pull request chose, so matching on it is no
- * evidence at all. The two repository ids on the producing run differ for every fork run
- * and match for every run of a branch pushed here. What that leaves is anyone with push
- * access, who can change this file instead.
+ * An artifact has to prove three things before what it holds silences anything: that its
+ * review was posted, that the review was of this pull request, and that it came from a run
+ * of a branch pushed here. `previous.ts` decides each of them, on the function that makes
+ * it, and "The previous run's findings come out of its artifact" in `review/README.md` has
+ * the argument for all three.
  *
  * Usage: bun fetch-previous.ts <pr-number> <out.json>
  * Env:   GITHUB_TOKEN (or the token on stdin), GITHUB_REPOSITORY, GITHUB_RUN_ID
  */
 
-import { rest, restJson, splitRepository, tokenFromStdinOrEnv } from "./github.ts";
-import { reason } from "./lib.ts";
+import { requirePullNumber, requireRepository, rest, restJson, tokenFromStdinOrEnv } from "./github.ts";
+import { reason } from "./json.ts";
 import { candidates, firstPosted } from "./previous.ts";
 import type { Artifact, Previous } from "./previous.ts";
 import { MAX_ENTRY_BYTES, readFromZip } from "./unzip.ts";
@@ -59,7 +37,12 @@ const ARTIFACT = "codeferret-run";
 const MAX_PAGES = 5;
 const PER_PAGE = 100;
 
-/** What action.yml keeps an artifact for. Nothing older is still downloadable. */
+/**
+ * What action.yml keeps an artifact for. Nothing older is still downloadable.
+ *
+ * validate-manifests.ts checks the two against each other, because raising one without the
+ * other stops this paging at an artifact that is still there.
+ */
 const RETENTION_DAYS = 14;
 
 /**
@@ -85,22 +68,14 @@ if (!prNumber || !outPath || !token || !repo) {
     process.exit(2);
 }
 
-if (!splitRepository(repo)) {
-    console.error(`GITHUB_REPOSITORY is '${repo}'. It has to be owner/name.`);
-    process.exit(2);
-}
+requireRepository(repo);
 
-// The pull request number goes into a REST path, and it arrives from a workflow input or
-// from a model pasting the preflight's `pr=` line. A `/` or a `..` in it re-points the
-// request at another resource, and a `?` hangs a query string off it.
-if (!/^[0-9]+$/.test(prNumber)) {
-    console.error(`pr-number is '${prNumber}'. It has to be a number.`);
-    process.exit(2);
-}
+// Bound here rather than read inside a function, because the check narrows it only at this
+// level.
+const pull: string = requirePullNumber(prNumber);
 
-// Bound here rather than read inside a function, because the checks above narrow it only
-// at this level.
-const pull: string = prNumber;
+/** How many redirects the artifact download follows before giving up. */
+const MAX_REDIRECTS = 5;
 
 /**
  * The redirect target, refused unless it is one this will fetch.
@@ -120,21 +95,39 @@ function storageUrl(location: string): string {
 }
 
 /**
+ * Follow the chain by hand, checking every hop rather than only the first.
+ *
+ * The API answers with a redirect to storage, which authenticates through the signed URL
+ * itself and rejects a request that also carries a bearer token. Following it by hand is
+ * what keeps the two apart, and it is also what puts every `Location` through the check
+ * above: a guard that stops at hop one reads as covering a chain it does not bound.
+ */
+async function followRedirects(response: Response): Promise<Response> {
+    let current = response;
+
+    for (let hop = 0; hop < MAX_REDIRECTS; hop += 1) {
+        const location = current.headers.get("location");
+
+        // The status decides, not the header: `Location` is legal on a response that is not
+        // a redirect, and following one of those would throw the artifact away.
+        if (current.status < 300 || current.status >= 400 || !location) return current;
+
+        current = await fetch(storageUrl(location), { redirect: "manual" });
+    }
+
+    throw new Error(`the artifact download did not settle in ${MAX_REDIRECTS} redirects`);
+}
+
+/**
  * The artifact's zip, refused past the size this reads rather than buffered whole.
  *
  * `size_in_bytes` describes the archive GitHub recorded when the upload finished, not the
  * bytes that arrive now, so the running total is the only figure worth checking.
  */
 async function download(id: number): Promise<Uint8Array> {
-    // The API answers with a redirect to storage, which authenticates through the signed
-    // URL itself and rejects a request that also carries a bearer token. Following it by
-    // hand is what keeps the two apart.
-    const redirect = await rest(token, `/repos/${repo}/actions/artifacts/${id}/zip`, {
-        redirect: "manual",
-    });
-
-    const location = redirect.headers.get("location");
-    const response = location ? await fetch(storageUrl(location)) : redirect;
+    const response = await followRedirects(
+        await rest(token, `/repos/${repo}/actions/artifacts/${id}/zip`, { redirect: "manual" }),
+    );
 
     if (!response.ok) throw new Error(`HTTP ${response.status} downloading artifact ${id}`);
 

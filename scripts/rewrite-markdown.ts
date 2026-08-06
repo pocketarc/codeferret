@@ -1,9 +1,9 @@
 /**
  * The body rewrites a vendored skill needs, as three passes over its lines.
  *
- * Separated from prepare-skill.ts so that `bun test` can reach them. One of these deletes
- * whole lines on a heuristic, which was otherwise checkable only by vendoring a skill and
- * reading the diff.
+ * One of these deletes whole lines on a heuristic, which is why they sit apart from
+ * prepare-skill.ts: otherwise the only way to check one is to vendor a skill and read the
+ * diff.
  *
  * Every pass leaves what is inside a fenced block alone. A placeholder in a fence is being
  * shown rather than obeyed: upstream's Usage block documents
@@ -25,8 +25,8 @@ const HEADING = /^(#{1,6})\s/;
  * A link out of the skill's own directory. Only that directory is vendored, so
  * `../../CONNECTORS.md` resolves to nothing once the skill is here.
  *
- * The leading `!` is part of the match so that an image goes whole. Without it
- * `![Diagram](../img/d.png)` became `!Diagram`, a stray sigil in front of the alt text.
+ * The leading `!` is part of the match so that an image goes whole, sigil and all, rather
+ * than leaving one in front of the alt text.
  */
 const ABOVE_SKILL_LINK = /!?\[([^\]]*)\]\((?:\.\.\/)+[^)]*\)/g;
 
@@ -54,8 +54,8 @@ const CONNECTORS_HEADING = /^#{1,6}\s+If Connectors Available\s*$/i;
  * instruction naming nothing. The dispatch names the diff, so the replacement does too.
  *
  * `${selection}` and its siblings are the same thing from GitHub Copilot's prompt files,
- * which two vendored skills came from. Missed once, the SQL lens's first instruction after
- * loading its skill was to review `${selection}` verbatim.
+ * which two vendored skills came from. Left in, they are the first instruction a lens
+ * follows after loading its skill.
  *
  * `@` is required in front of a digit. The bare `$1` through `$9` are PostgreSQL and
  * node-postgres bind placeholders, and they turn up in exactly the prose a SQL or a
@@ -85,8 +85,8 @@ const NO_SELECTION_FALLBACK = /\s*\(\s*or\s+[^)]*\bif\s+no\s+selection\s*\)/gi;
  * file that is not here.
  *
  * Keeping the text of every stripped link leaves instructions to read files that were
- * never vendored. Two lenses opened their review by hunting for CONNECTORS.md, and one
- * reported the hunt as the first finding of the review it was dispatched for.
+ * never vendored, and a lens follows them: hunting for a file that is not there, and
+ * reporting the hunt as a finding.
  *
  * The directive has to be the whole of the line around the pointer, so that a line whose
  * pointer is incidental to it survives.
@@ -94,9 +94,8 @@ const NO_SELECTION_FALLBACK = /\s*\(\s*or\s+[^)]*\bif\s+no\s+selection\s*\)/gi;
 export function isPointerOnly(line: string, linkTexts: string[]): boolean {
     const bare = line.replace(/^\s*(?:>\s*)?(?:[-*+]\s+)?/, "").trim();
 
-    // A link with no text at all names nothing, and every string starts with the empty
-    // one, so leaving it in the list made `startsWith` true for any line it appeared on:
-    // a list item holding `[](../x.md)` was deleted, caption and all.
+    // A link with no text at all names nothing, and every string starts with the empty one,
+    // so leaving it in would make the `startsWith` below true for every line.
     const named = linkTexts.filter((text) => text !== "");
 
     if (named.some((text) => bare === text || bare === `${text}.`)) return true;

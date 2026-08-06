@@ -62,14 +62,21 @@ PERMISSION_MODE=${PERMISSION_MODE:-bypassPermissions}
 printf '%s\n' "$LENSES" |
     PREFIX="$PREFIX" bash "$ACTION/review/build-prompts.sh" "$BASE" "$ACTION" "$OUT" "$WORKSPACE"
 
-# Everything after this finds the repository from the working directory rather than from
-# an argument: each tool asks git for a top level, and the orchestrator and its lenses
-# read whatever tree their session started in. The action's step already starts in the
-# workspace. A session, a linked worktree or a command prefix need not, and a tool that
-# scanned a different tree from the one the lenses read would anchor its findings to
-# paths the review does not contain.
+# No `bun` this script starts may have the reviewed tree as its working directory. Bun
+# reads `bunfig.toml` from there, `preload` in that file names a script, and bun runs it
+# before the one on the command line. A branch that adds the file therefore runs code
+# inside the job holding the tokens, before a lens is dispatched and with no model in the
+# loop. Only the working directory decides this: `-c` pointed at another file does not
+# suppress it, and the lookup does not walk up, so the build directory is out of reach.
+#
+# Only the orchestrator starts in the workspace, and it does so in a subshell below,
+# because its lenses read whatever tree their session started in. The tools take the
+# workspace as an argument.
+#
+# Under `command-prefix` the working directory inside the container is the prefix's own,
+# which the action asks to be the repository root, so this closes nothing there.
 ACTION=$(cd "$ACTION" && pwd)
-cd "$WORKSPACE"
+cd "$BUILD"
 
 # fetch-existing.ts needs the GitHub token. The orchestrator must not have it: every lens
 # it dispatches carries Bash, and `printenv GITHUB_TOKEN` is the whole attack. Hold the
@@ -80,15 +87,30 @@ cd "$WORKSPACE"
 # under the holding name.
 #
 # The rest of the list is every other credential a runner or a shell puts in scope that
-# nothing below needs. This is a denylist and a denylist is the weaker shape: an allowlist
-# would need the full set of variables the Claude Code CLI reads to start, and a missing
-# one fails the run twenty minutes in. So a variable the orchestrator should not see has
-# to be named here.
+# nothing below needs, and the files a job step writes its own results to. Those files are
+# not read-only: a line appended to GITHUB_PATH or GITHUB_ENV lands in every later step of
+# the job, and the next one runs post-review.ts with the token this block just removed. The
+# action's own `emit` helper and summary.ts both run in the parent shell after this script
+# has returned, which keeps its own copy of the environment, so removing them here costs
+# nothing.
+#
+# This is a denylist and a denylist is the weaker shape: an allowlist would need the full
+# set of variables the Claude Code CLI reads to start, and a missing one fails the run
+# twenty minutes in. So a variable the orchestrator should not see has to be named here.
 unset -v token
 token=${GITHUB_TOKEN:-}
 unset -v GITHUB_TOKEN GH_TOKEN \
     ACTIONS_RUNTIME_TOKEN ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL \
-    NPM_TOKEN NODE_AUTH_TOKEN
+    NPM_TOKEN NODE_AUTH_TOKEN \
+    GITHUB_ENV GITHUB_PATH GITHUB_OUTPUT GITHUB_STATE GITHUB_STEP_SUMMARY
+
+# Whether a composite action's inputs reach its `run:` steps as INPUT_<NAME> is undocumented
+# and has changed before. Where they do, both tokens are in scope a second time under names
+# the list above does not mention. Nothing below reads one: every value this script needs
+# arrives as an argument or under its own name.
+for name in $(compgen -e | grep '^INPUT_' || true); do
+    unset -v "$name"
+done
 
 # An empty file costs duplicate comments, so the failure is written down here: nothing
 # downstream can tell a pull request nobody has commented on from one whose comments
@@ -98,9 +120,17 @@ unset -v GITHUB_TOKEN GH_TOKEN \
 # process, which every other process on the machine can read, and under
 # /codeferret:review this is the developer's own `gh` credential. `docker compose exec -T`
 # passes stdin through, so a containerised toolchain is handed it the same way.
+#
+# Nothing else crosses that boundary: `docker compose exec` starts a process with the
+# container's environment and not this shell's. Both scripts exit 2 without
+# GITHUB_REPOSITORY, and the `||` below would report that as a pull request nobody had
+# commented on, so the two values they read go across as arguments to `env`. Neither is
+# secret; the token is the one that stays off an argument list.
 if [ -n "${PR:-}" ]; then
+    across=(env "GITHUB_REPOSITORY=${GITHUB_REPOSITORY:-}" "GITHUB_RUN_ID=${GITHUB_RUN_ID:-}")
+
     printf '%s' "$token" |
-        $PREFIX bun "$ACTION/review/fetch-existing.ts" \
+        $PREFIX "${across[@]}" bun "$ACTION/review/fetch-existing.ts" \
             "$PR" "$BUILD/existing.json" ${OWN_LOGIN:+"$OWN_LOGIN"} ||
         echo "could not read this pull request's comments. Every finding will count as new." >&2
 
@@ -109,7 +139,7 @@ if [ -n "${PR:-}" ]; then
     # allowed to come back empty. fetch-previous.ts reports its own failures, so the `||`
     # is for a failure before it can.
     printf '%s' "$token" |
-        $PREFIX bun "$ACTION/review/fetch-previous.ts" "$PR" "$BUILD/previous.json" ||
+        $PREFIX "${across[@]}" bun "$ACTION/review/fetch-previous.ts" "$PR" "$BUILD/previous.json" ||
         echo "could not read the previous run's findings. Every finding will count as new." >&2
 fi
 
@@ -145,24 +175,16 @@ for tool in ${TOOLS:-}; do
         exit 1
     fi
 
-    # A review that stops for want of a linter is worth less than one that runs without
-    # it, and the tools already write down the failures they expect.
-    #
-    # A tool that dies before reaching its own reporter writes no file at all, and a file
-    # that is not there is invisible to the lens: it accounts for what it was handed, so a
-    # tool that never ran leaves no trace in the review. The stub is what gives the lens
-    # something to report.
-    #
     # The exit code is taken from a plain run and not from inside `if ! cmd`, where `$?` is
-    # the status of the negation and always 0. The report then said the tool had exited 0
-    # without writing a report, which is a sentence that contradicts itself and loses the
-    # one number telling an out-of-memory kill from a missing binary.
+    # the status of the negation and always 0. It is the one number telling an
+    # out-of-memory kill from a missing binary, and the stub below reports it.
     code=0
-    $PREFIX bun "$ACTION/review/tools/$tool.ts" "$BUILD" || code=$?
+    $PREFIX bun "$ACTION/review/tools/$tool.ts" "$BUILD" "$WORKSPACE" || code=$?
 
     if [ "$code" -ne 0 ]; then
         echo "tool '$tool' failed. The review carries on without its report." >&2
 
+        # Only where the tool left no file. tool-stub.ts has why one is written at all.
         if [ ! -f "$BUILD/tool-$tool.json" ]; then
             $PREFIX bun "$ACTION/review/tool-stub.ts" "$tool" "$BUILD" "$code" ||
                 echo "could not write a stub report for '$tool'; the lens will not know it ran." >&2
@@ -185,18 +207,20 @@ status=0
 # bypassPermissions. Plugins passed with --plugin-dir still load, so the lens agents are
 # unaffected. "The reviewed tree does not configure the session" in review/README.md has
 # what was measured and how.
-$PREFIX claude -p "$(cat "$BUILD/orchestrator.txt")" \
-    --model "$MODEL" \
-    ${EFFORT:+--effort "$EFFORT"} \
-    --output-format json \
-    --json-schema "$(cat "$ACTION/review/merged-schema.json")" \
-    --permission-mode "$PERMISSION_MODE" \
-    --strict-mcp-config \
-    --setting-sources user \
-    --no-session-persistence \
-    --disallowed-tools Edit Write NotebookEdit WebFetch WebSearch \
-    --plugin-dir "$OUT" \
-    >"$BUILD/run.json" || status=$?
+(
+    cd "$WORKSPACE" &&
+        $PREFIX claude -p "$(cat "$BUILD/orchestrator.txt")" \
+            --model "$MODEL" \
+            ${EFFORT:+--effort "$EFFORT"} \
+            --output-format json \
+            --json-schema "$(cat "$ACTION/review/merged-schema.json")" \
+            --permission-mode "$PERMISSION_MODE" \
+            --strict-mcp-config \
+            --setting-sources user \
+            --no-session-persistence \
+            --disallowed-tools Edit Write NotebookEdit WebFetch WebSearch \
+            --plugin-dir "$OUT"
+) >"$BUILD/run.json" || status=$?
 
 if [ -s "$BUILD/run.json" ]; then
     extracted=0

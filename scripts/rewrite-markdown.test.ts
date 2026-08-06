@@ -143,11 +143,7 @@ describe("substitutePlaceholders", () => {
 });
 
 describe("rewriteMarkdown", () => {
-    // The single stateful loop this replaced toggled on any fence line, so a ``` block
-    // holding a ~~~ line read as closed halfway through: it rewrote a placeholder inside
-    // the block and then treated the whole rest of the file as code, which left the
-    // connectors section in place and the dead pointers with it.
-    test("keeps a fence of the other kind inside a block as content", () => {
+    test("keeps a fence of the other kind inside a block as content, so the block does not read as closed", () => {
         const source = [
             "```sh",
             "~~~",

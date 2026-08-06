@@ -23,9 +23,6 @@ import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { writeOrCheck } from "./generated.ts";
 
-// Every path below is repository-relative, and whoever has just edited this script is
-// standing in scripts/. Without this the run dies on a raw ENOENT or writes an agents/
-// tree wherever the caller happened to be.
 process.chdir(join(import.meta.dir, ".."));
 
 // This list is the boundary. A skill's own `allowed-tools` cannot widen it, so
@@ -48,14 +45,18 @@ process.chdir(join(import.meta.dir, ".."));
 // it at the CLI; a session has only this list. Some skills fan out into subagents and
 // will do their passes one after another instead.
 //
-// `WebFetch` and `WebSearch` are absent for the matching reason on the way out. A lens
-// reads a diff written by whoever opened the pull request, and a lens with `Bash` can read
-// CLAUDE_CODE_OAUTH_TOKEN out of the environment it inherits and the git credential out
-// of the checkout. Egress is what turns reading those into losing them. A lens that
-// wants a CVE looked up says so in its finding instead.
+// `WebFetch` and `WebSearch` are absent, but that is a cost rather than a control. A lens
+// reads a diff written by whoever opened the pull request, and it has `Bash`, which on a
+// runner means `curl`, `wget`, `git push` and DNS. So a lens that is talked into reading
+// CLAUDE_CODE_OAUTH_TOKEN out of its environment can also send it. What limits that in CI
+// is the shipped workflow's gate — a branch pushed here by an owner, member or
+// collaborator — and not this list. `/codeferret:review` runs under `auto`, where a
+// classifier sits in front of Bash. A lens that wants a CVE looked up says so in its
+// finding instead.
 const TOOLS = "Read, Bash, Skill";
 
 const AGENTS_DIR = "agents";
+const EXTRAS_DIR = "review/lens-extras";
 
 const check = process.argv.includes("--check");
 
@@ -71,11 +72,11 @@ const brief = await Bun.file("review/lens-brief.md").text();
 const schema = (await Bun.file("review/lens-schema.json").text()).trim();
 
 // Text meant for one lens and no other belongs in that lens's own system prompt. Routed
-// through the orchestrator instead (as the `REVIEW.md` instruction was), it becomes a
-// line the orchestrator has to hand to the right lens and no one else, every run, and
-// nothing downstream can tell when it gets that wrong.
+// through the orchestrator instead, it becomes a line the orchestrator has to hand to the
+// right lens and no one else, every run, and nothing downstream can tell when it gets that
+// wrong. One such instruction travelled that way once and was moved here.
 async function extrasFor(lens: string): Promise<string> {
-    const path = `review/lens-extras/${lens}.md`;
+    const path = `${EXTRAS_DIR}/${lens}.md`;
     return existsSync(path) ? `\n${(await Bun.file(path).text()).trim()}\n` : "";
 }
 
@@ -154,6 +155,26 @@ for (const entry of existsSync(AGENTS_DIR) ? readdirSync(AGENTS_DIR) : []) {
     const lens = entry.replace(/\.md$/, "");
     console.error(
         `FAIL ${AGENTS_DIR}/${entry} has no lens behind it. Delete it, or add lenses/skills/${lens}/SKILL.md.`,
+    );
+    problems += 1;
+}
+
+// The same check for the other direction. `extrasFor` answers the empty string for a file
+// that is not there, so a misnamed one is discarded without a word: rename a lens and its
+// extras file keeps the old name, the lens loses its whole domain configuration, and every
+// check here still passes because the generated agent matches what this would now write.
+//
+// Against the skills directory rather than against `wanted`, so an extras file for a lens
+// rendered through `--one` still passes.
+for (const entry of existsSync(EXTRAS_DIR) ? readdirSync(EXTRAS_DIR) : []) {
+    if (!entry.endsWith(".md")) continue;
+
+    const lens = entry.replace(/\.md$/, "");
+    if (existsSync(`lenses/skills/${lens}/SKILL.md`)) continue;
+
+    console.error(
+        `FAIL ${EXTRAS_DIR}/${entry} names no lens, so nothing loads it.` +
+            ` Rename it to match a lens, or delete it.`,
     );
     problems += 1;
 }

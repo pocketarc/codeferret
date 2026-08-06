@@ -9,9 +9,6 @@
 # Both classes are deliberately narrower than git allows. `git check-ref-format` accepts
 # `$`, `(`, `)`, a backtick, `;`, `&` and `|`, so a ref name can run on substitution. A
 # legal ref this turns away is a refusal the caller can see and rename around.
-#
-# One copy, because four hand-copied allowlists is four chances for one of them to drift
-# into a hole.
 
 # The lens the static analysis tools report to, and the only one that reads their reports.
 # Declared once, because two scripts decide what to run by matching this name against a
@@ -28,6 +25,76 @@ gh_credentials() {
     GITHUB_TOKEN=$(gh auth token 2>/dev/null || true)
     GITHUB_REPOSITORY=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)
     export GITHUB_TOKEN GITHUB_REPOSITORY
+}
+
+# The open pull request this branch has, as PR, PR_BASE and PR_HEAD. Each is empty where
+# there is none, or where gh cannot answer.
+#
+# One `gh pr view` for all three, and only an open pull request counts: gh answers with the
+# closed or merged one a branch used to have, which would name a base nobody is working
+# from now and offer to post a review onto something nobody is reading.
+#
+# Exported because run.sh reads `PR` out of its environment, and the three travel together.
+open_pr() {
+    local line
+
+    PR=""
+    PR_BASE=""
+    PR_HEAD=""
+    export PR PR_BASE PR_HEAD
+
+    command -v gh >/dev/null 2>&1 || return 0
+
+    line=$(gh pr view --json number,baseRefName,headRefOid,state \
+        --jq 'select(.state == "OPEN") | [.number, .baseRefName, .headRefOid] | @tsv' 2>/dev/null || true)
+
+    PR=$(printf '%s' "$line" | cut -f1)
+    PR_BASE=$(printf '%s' "$line" | cut -f2)
+    PR_HEAD=$(printf '%s' "$line" | cut -f3)
+}
+
+# Origin's default branch name, or nothing. Answered once per shell, because the fallback
+# is a network call and two callers here want it.
+default_branch() {
+    if [ -z "${CF_DEFAULT_BRANCH+set}" ]; then
+        CF_DEFAULT_BRANCH=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
+        CF_DEFAULT_BRANCH=${CF_DEFAULT_BRANCH#origin/}
+
+        if [ -z "$CF_DEFAULT_BRANCH" ] && command -v gh >/dev/null 2>&1; then
+            CF_DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null || true)
+        fi
+    fi
+
+    printf '%s' "$CF_DEFAULT_BRANCH"
+}
+
+
+# The ref a review diffs against: what the caller named, then the open pull request's base,
+# then origin's default branch. Empty when none of the three answers. Call `open_pr` first.
+#
+# One copy, because commands/review.md tells the model not to relay the base the preflight
+# printed to the run that reviews under it, on the grounds that both work it out the same
+# way. Written out twice that was a note; here it is the same function. The two disagreeing
+# costs fourteen lenses reading the wrong range for twenty minutes, and the preflight output
+# the user was shown says otherwise.
+resolve_base() {
+    local default
+
+    if [ -n "${1:-}" ]; then
+        printf '%s' "$1"
+        return 0
+    fi
+
+    if [ -n "${PR_BASE:-}" ]; then
+        printf 'origin/%s' "$PR_BASE"
+        return 0
+    fi
+
+    default=$(default_branch)
+
+    [ -n "$default" ] && printf 'origin/%s' "$default"
+
+    return 0
 }
 
 # A git ref: the plain-name set plus `/`. A leading `-` is barred separately, because it
@@ -61,12 +128,21 @@ plain_name() {
 # rather than allowing a set, because a path holds spaces and non-ASCII where a ref name
 # does not.
 #
+# The newline is barred for a second reason. local-preflight.sh runs every path it reports
+# through this and then prints it as one `key=value` line, which a model reads and acts on,
+# so a value carrying a newline forges the answers below it: `pushed=yes` and `dirty=0` are
+# what unlock posting. A newline is legal in a directory name on every platform this runs
+# on.
+#
 # An alternation of quoted patterns rather than one bracket expression: semgrep's bash
 # grammar cannot read a bracket expression in a case pattern and gives up on the whole
 # construct, while still reporting the file as scanned.
 plain_path() {
+    local newline='
+'
+
     case $1 in
-    "" | *"'"* | *'"'* | *';'* | *'$'* | *'`'* | *"\\"* | *'&'* | *'|'* | *'<'* | *'>'*) return 1 ;;
+    "" | *"'"* | *'"'* | *';'* | *'$'* | *'`'* | *"\\"* | *'&'* | *'|'* | *'<'* | *'>'* | *"$newline"*) return 1 ;;
     *) return 0 ;;
     esac
 }

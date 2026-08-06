@@ -1,7 +1,5 @@
-// Run the script rather than a function pulled out of it. The three exit codes are the
-// contract: run.sh writes the marker the action posts on for 0 and 3 and not for 1, and
-// both branch on nothing else. A pure function would leave that part untested, which is
-// the part a regression would be invisible in.
+// The exit codes are the contract: run.sh writes the marker the action posts on for 0 and
+// 3, and not for 1.
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -155,14 +153,32 @@ describe("check-findings", () => {
         expect(written).not.toHaveProperty("notes");
     });
 
-    test("drops a lens_health entry whose name post-review.ts would call replace on", async () => {
-        const { code, written } = await check({
+    test("names a lens_health entry that names no lens, rather than dropping its caveat", async () => {
+        const { code, out, written } = await check({
             findings: [finding()],
-            lens_health: [{ lens: 7, findings_returned: 1, ok: true }],
+            lens_health: [{ lens: 7, findings_returned: 1, ok: true, detail: "no rendered page" }],
         });
 
-        expect(code).toBe(3);
-        expect((written as { lens_health?: unknown[] }).lens_health).toEqual([]);
+        const health = (written as { lens_health?: Array<Record<string, unknown>> }).lens_health ?? [];
+
+        expect(code).toBe(0);
+        expect(out).toContain("FIXED");
+        expect(health).toHaveLength(1);
+        expect(health[0]?.lens).toBe("(unnamed lens)");
+        expect(health[0]?.detail).toBe("no rendered page");
+    });
+
+    test("repairs a lens_health count the review would otherwise print as 'undefined'", async () => {
+        const { code, out, written } = await check({
+            findings: [finding()],
+            lens_health: [{ lens: "codeferret:x", ok: true }],
+        });
+
+        const health = (written as { lens_health?: Array<Record<string, unknown>> }).lens_health ?? [];
+
+        expect(code).toBe(0);
+        expect(out).toContain("FIXED");
+        expect(health[0]?.findings_returned).toBe(0);
     });
 
     test("drops a resolve entry whose reason post-review.ts would flatten", async () => {

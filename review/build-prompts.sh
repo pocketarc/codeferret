@@ -28,6 +28,12 @@ LENSES_FILE=${5:-}
 BUILD="$PLUGIN/build"
 RESOLVE_THREADS=${RESOLVE_THREADS:-1}
 
+# Absolute, because every `bun` below runs from the build directory instead of from here.
+# Bun reads a `bunfig.toml` from its working directory and runs the `preload` it names
+# before the script it was given, and this script is started in the tree under review. The
+# comment on `cd "$BUILD"` in run.sh has the rest.
+ACTION=$(cd "$ACTION" && pwd)
+
 # For a containerised toolchain, where `command-prefix` is set and the action deliberately
 # installs nothing on the runner. run.sh passes it through.
 PREFIX=${PREFIX:-}
@@ -155,12 +161,6 @@ for lens in "${LENSES[@]}"; do
         cp "$ACTION/agents/$lens.md" "$PLUGIN/agents/$lens.md"
         cp -R "$ACTION/lenses/skills/$lens" "$PLUGIN/skills/$lens"
     elif [ -f "$WORKSPACE/.claude/skills/$lens/SKILL.md" ]; then
-        # A lens the action does not bundle gets an agent rendered for it here, naming
-        # its skill the way a bundled lens's agent names its own. The alternative was a
-        # generic agent plus a line of the orchestrator's prompt telling it which skill to
-        # pass on, and a lens that never received that line reviewed under its name with
-        # no skill loaded, which nothing downstream can tell from a real review.
-        #
         # The agent body comes from lens-brief.md and is ours. The skill it loads is not:
         # it sits in the tree the pull request modified. So naming a workspace lens puts
         # that repository's .claude/skills/ inside the CI trust boundary, where any branch
@@ -171,7 +171,7 @@ for lens in "${LENSES[@]}"; do
         echo "lens '$lens' is not bundled: its skill comes from $WORKSPACE/.claude/skills/$lens/," >&2
         echo "which is part of the tree under review." >&2
 
-        $PREFIX bun "$ACTION/scripts/build-lens-agents.ts" --one "$lens" "$PLUGIN/agents/$lens.md"
+        (cd "$BUILD" && $PREFIX bun "$ACTION/scripts/build-lens-agents.ts" --one "$lens" "$PLUGIN/agents/$lens.md")
 
         # The skill is copied in beside the agent rather than loaded where it lives: run.sh
         # passes `--setting-sources user`, which on 2.1.220 takes a project's own
@@ -189,9 +189,6 @@ for lens in "${LENSES[@]}"; do
     printf -- '- `%s:%s`\n' "$NAMESPACE" "$lens" >>"$BUILD/lens-list.txt"
 done
 
-# The action only ever reviews what is pushed. A session is usually on a branch still
-# being written, and INCLUDE_WORKING_TREE covers that.
-#
 # A review runs for twenty minutes and whoever started it is often still committing, so the
 # range names a commit rather than HEAD. In CI both resolve to the same checked-out commit.
 HEAD_SHA=$(git -C "$WORKSPACE" rev-parse HEAD 2>/dev/null || echo HEAD)
@@ -227,14 +224,17 @@ git diff "${args[@]}"
 DIFF_SCRIPT
 
 # The dispatch prompt is indented so that it sits as a block inside the orchestrator's.
-$PREFIX bun "$ACTION/scripts/render-prompt.ts" \
-    "$ACTION/review/lens-dispatch.md" "$BUILD/dispatch.txt" \
-    --indent 4 \
-    "__BASE__=$BASE" \
-    "__HEAD__=$HEAD_SHA" \
-    "__RANGE__=$RANGE" \
-    "__DIFF_SCRIPT__=$BUILD/diff.sh" \
-    "__DIFF_ARGS__=$BUILD/diff-args"
+(
+    cd "$BUILD" &&
+        $PREFIX bun "$ACTION/scripts/render-prompt.ts" \
+            "$ACTION/review/lens-dispatch.md" "$BUILD/dispatch.txt" \
+            --indent 4 \
+            "__BASE__=$BASE" \
+            "__HEAD__=$HEAD_SHA" \
+            "__RANGE__=$RANGE" \
+            "__DIFF_SCRIPT__=$BUILD/diff.sh" \
+            "__DIFF_ARGS__=$BUILD/diff-args"
+)
 
 # Only CodeFerret's own account can tell its threads from a person's. Anywhere else the
 # review posts as whoever ran it, and closing a thread would take their words off the
@@ -246,15 +246,18 @@ else
     RESOLVE_FILE="$ACTION/review/resolve-judge.md"
 fi
 
-$PREFIX bun "$ACTION/scripts/render-prompt.ts" \
-    "$ACTION/review/orchestrator.md" "$BUILD/orchestrator.txt" \
-    "__BASE__=$BASE" \
-    "__HEAD__=$HEAD_SHA" \
-    "__EXISTING__=$BUILD/existing.json" \
-    "__PREVIOUS__=$BUILD/previous.json" \
-    "__LENS_LIST__@$BUILD/lens-list.txt" \
-    "__DISPATCH__@$BUILD/dispatch.txt" \
-    "__RESOLVE__@$RESOLVE_FILE"
+(
+    cd "$BUILD" &&
+        $PREFIX bun "$ACTION/scripts/render-prompt.ts" \
+            "$ACTION/review/orchestrator.md" "$BUILD/orchestrator.txt" \
+            "__BASE__=$BASE" \
+            "__HEAD__=$HEAD_SHA" \
+            "__EXISTING__=$BUILD/existing.json" \
+            "__PREVIOUS__=$BUILD/previous.json" \
+            "__LENS_LIST__@$BUILD/lens-list.txt" \
+            "__DISPATCH__@$BUILD/dispatch.txt" \
+            "__RESOLVE__@$RESOLVE_FILE"
+)
 
 # The orchestrator reads both files whether or not there was a pull request to fetch
 # anything from, and fetch-existing.ts and fetch-previous.ts overwrite them when there was.

@@ -2,11 +2,6 @@
 /**
  * Render the GitHub Actions job summary from the numbers a run wrote.
  *
- * Job-summary markdown is the action's surface, so it lives here rather than inside
- * extract-findings.ts, which writes the numbers and knows nothing about where they are
- * shown. It stays out of the action's own shell for the reason it always did: nothing
- * there should have to reformat a duration or guard a missing file.
- *
  * Every value is read back off disk rather than passed in, so a run that died partway
  * still reports whatever it managed to write.
  *
@@ -44,9 +39,12 @@ const table = `### CodeFerret\n\n| Measure | Value |\n|---|---|\n${rows
     .map(([measure, reading]) => `| ${measure} | ${reading} |`)
     .join("\n")}\n`;
 
+// One refusal is the commonest case, and this is the headline warning on the run's page.
+const refused = denials === 1 ? "1 tool call was" : `${denials} tool calls were`;
+
 const refusals =
     denials > 0
-        ? `\n> [!WARNING]\n> ${denials} tool calls were refused. The review covers less than this summary suggests.\n`
+        ? `\n> [!WARNING]\n> ${refused} refused. The review covers less than this summary suggests.\n`
         : "";
 
 const failed =

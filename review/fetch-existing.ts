@@ -13,8 +13,29 @@
  * Env:   GITHUB_TOKEN (or the token on stdin), GITHUB_REPOSITORY
  */
 
-import { graphqlFailure, graphql as request, restJson, splitRepository, tokenFromStdinOrEnv } from "./github.ts";
-import { MARKER, reason, RELEASED_TRAILER } from "./lib.ts";
+import {
+    graphqlFailure,
+    graphql as request,
+    requirePullNumber,
+    requireRepository,
+    restJson,
+    tokenFromStdinOrEnv,
+} from "./github.ts";
+import { reason } from "./json.ts";
+
+/**
+ * The two shapes an inline comment of ours was ever written in, which is how a thread an
+ * earlier version left behind is recognised.
+ *
+ * Nothing writes either now: a review is one body and creates no threads at all. What is
+ * left to recognise is what is still open on pull requests reviewed before that change.
+ * Change either string and those threads become unrecognisable, nothing is resolved, and
+ * nothing reports a problem.
+ */
+const MARKER = "<!-- codeferret -->";
+
+/** The category trailer every released inline comment ended with. */
+const RELEASED_TRAILER = /<sub>[^<]*<\/sub>\s*$/;
 
 const [prNumber, outPath, ownArg] = process.argv.slice(2);
 const own = (ownArg || "github-actions").replace(/\[bot\]$/, "");
@@ -27,21 +48,9 @@ if (!prNumber || !outPath || !token || !repo) {
     process.exit(2);
 }
 
-const split = splitRepository(repo);
+const { owner, name } = requireRepository(repo);
 
-if (!split) {
-    console.error(`GITHUB_REPOSITORY is '${repo}'. It has to be owner/name.`);
-    process.exit(2);
-}
-
-// The pull request number goes into a REST path and into a GraphQL variable, and it
-// arrives from a workflow input or from a model pasting the preflight's `pr=` line.
-if (!/^[0-9]+$/.test(prNumber)) {
-    console.error(`pr-number is '${prNumber}'. It has to be a number.`);
-    process.exit(2);
-}
-
-const { owner, name } = split;
+requirePullNumber(prNumber);
 
 interface GqlComment {
     author: { login: string } | null;
@@ -148,11 +157,10 @@ interface IssueComment {
 /**
  * The comments not anchored to a line.
  *
- * A failure comes back rather than being logged and swallowed, for the reason the thread
- * fetch records one: an empty list and a clean exit is indistinguishable from a pull
- * request nobody has commented on, and a finding declined in a conversation comment would
- * then be reposted on every run with nothing saying the fetch had failed. A 502 on page
- * three is the same problem one step in.
+ * A failure comes back rather than being logged and swallowed. An empty list and a clean
+ * exit is indistinguishable from a pull request nobody has commented on, so a finding
+ * declined in a conversation comment would be reposted on every run with nothing saying
+ * the fetch had failed. A 502 on page three is the same problem one step in.
  */
 async function fetchConversation(): Promise<IssueComment[]> {
     const all: IssueComment[] = [];
@@ -185,8 +193,9 @@ try {
         }
     }
 } catch (error) {
-    // Throwing here would cost the review, so the run carries on with what it has. The
-    // failure goes into the file instead, and orchestrator.md reads it.
+    // Not thrown, unlike the conversation fetch above: threads are the larger half and
+    // throwing here would cost the review. The failure goes into the file instead, where
+    // orchestrator.md reads it and treats that half as unread rather than as quiet.
     threadError = reason(error);
     console.error(`could not list review threads: ${threadError}`);
 }
@@ -218,6 +227,10 @@ const threads = raw.map((t) => {
         comments: t.comments.nodes.map((c) => ({
             author: c.author?.login ?? "unknown",
             association: c.authorAssociation,
+            // The reply's own url, not the thread's. A decline cites one comment, and
+            // post-review.ts reads that comment's association back to decide whether
+            // whoever wrote it may settle anything.
+            url: c.url ?? "",
             body: c.body,
         })),
     };

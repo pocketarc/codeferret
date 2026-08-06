@@ -11,14 +11,15 @@
  * summary. The four numbers are written before the findings are looked at, because a run
  * that produced none is the one whose cost and refusals somebody most wants to see.
  *
- * The shape of a run log is upstream's. It is narrowed rather than read through `any`,
- * because a renamed field would otherwise report a $36 review as $0.00 with nothing
- * saying the number was not found.
+ * The shape of a run log is upstream's, and a renamed field would report a $36 review as
+ * $0.00 with nothing saying the number was not found, so each one is narrowed on the way
+ * out and the fallbacks below say what a missing one looks like.
  *
  * Usage: bun extract-findings.ts <run.json> <findings.json>
  */
 
 import { dirname, join } from "node:path";
+import { record } from "./json.ts";
 
 interface ModelUsage {
     outputTokens?: number;
@@ -46,11 +47,6 @@ const [runPath, outPath] = process.argv.slice(2);
 if (!runPath || !outPath) {
     console.error("usage: bun extract-findings.ts <run.json> <findings.json>");
     process.exit(2);
-}
-
-function record(value: unknown): Record<string, unknown> | null {
-    if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
-    return value as Record<string, unknown>;
 }
 
 function number(value: unknown): number | null {

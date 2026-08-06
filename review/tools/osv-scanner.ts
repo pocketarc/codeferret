@@ -12,15 +12,16 @@
  *
  * It scans a different set of files from every lens, on purpose: the range comes from the
  * run's own diff, the same commits the lenses read, and the pathspec beside it is dropped.
- * Every lockfile name is in the `exclude-paths` default, and a lockfile is the only thing
- * here that can carry an advisory. "Each tool has its own pathspec" in `review/README.md`
- * has the argument.
+ * The `exclude-paths` default names every lockfile, and a lockfile is where most of what
+ * this can find lives, so under the pathspec the tool would have almost nothing to read.
+ * "Each tool has its own pathspec" in `review/README.md` has the argument.
  *
- * Usage: bun review/tools/osv-scanner.ts <build-dir>
+ * Usage: bun review/tools/osv-scanner.ts <build-dir> <workspace>
  */
 
 import { basename, join } from "node:path";
-import { readDiffArgs, reason } from "../lib.ts";
+import { readDiffArgs } from "../diff-args.ts";
+import { reason } from "../json.ts";
 import { changedFiles, MAX_FINDINGS, repoRoot, reporter, runner } from "./report.ts";
 
 const IMAGE =
@@ -50,14 +51,7 @@ const MANIFESTS = new Set([
     "renv.lock",
 ]);
 
-/**
- * The part of the scanner's JSON this reads.
- *
- * Declared rather than left as `any`. The image is pinned by digest but the shape is
- * upstream's, and under `any` a renamed field empties every field of every finding while
- * the report still says the tool ran with the right count. The counter below turns that
- * into something the lens can see.
- */
+/** The part of the scanner's JSON this reads. */
 interface ScanPackage {
     package?: { name?: string; version?: string; ecosystem?: string };
     vulnerabilities?: Array<{ id?: string; aliases?: string[]; summary?: string }>;
@@ -68,14 +62,14 @@ interface ScanOutput {
     results?: Array<{ packages?: ScanPackage[] }>;
 }
 
-const [buildDir] = process.argv.slice(2);
+const [buildDir, workspace] = process.argv.slice(2);
 
-if (!buildDir) {
-    console.error("usage: bun review/tools/osv-scanner.ts <build-dir>");
+if (!buildDir || !workspace) {
+    console.error("usage: bun review/tools/osv-scanner.ts <build-dir> <workspace>");
     process.exit(2);
 }
 
-const root = repoRoot();
+const root = repoRoot(workspace);
 
 // One `manifests` entry per lockfile, so a scan that failed on one and succeeded on
 // another is legible rather than a single number.
@@ -90,7 +84,7 @@ const extras: { manifests: Array<Record<string, unknown>>; caveat: string } = {
 const write = reporter("osv-scanner", join(buildDir, "tool-osv-scanner.json"), extras);
 
 // The image's entrypoint is the scanner itself, so it takes arguments and no command.
-const osv = runner("osv-scanner", IMAGE);
+const osv = runner("osv-scanner", IMAGE, root);
 
 if (!osv) {
     await write({ ran: false, reason: "neither osv-scanner nor docker is on PATH" });
@@ -111,7 +105,7 @@ try {
     process.exit(0);
 }
 
-const changed = changedFiles([range]);
+const changed = changedFiles([range], root);
 
 // Left unchecked, the only check on dependency advisories would report itself as having
 // run and found nothing.
@@ -163,13 +157,16 @@ for (const manifest of manifests) {
         continue;
     }
 
+    // The image is pinned by digest but the shape it emits is upstream's, and a renamed
+    // field empties every finding while the report still carries the right count. This is
+    // what makes that visible to the lens.
     let unreadable = 0;
 
     for (const result of parsed.results ?? []) {
         for (const pkg of result.packages ?? []) {
             for (const vuln of pkg.vulnerabilities ?? []) {
-                // Both are always present in v2.2.4's output, so an absence here is the
-                // shape having moved rather than a vulnerability with no identity.
+                // Both are always present in v2.2.4's output, so an absence means the shape
+                // has moved.
                 if (!vuln.id || !pkg.package?.name) unreadable += 1;
 
                 findings.push({

@@ -3,10 +3,7 @@
  * The report a tool that died before reaching its own reporter never wrote.
  *
  * The `static-analysis` lens accounts for what it was handed, so a tool that left no file
- * leaves no trace in the review at all. This gives the lens something to read, and it
- * writes it through `reporter()` for the reason that module exists: the contract had been
- * held by hand at each end, and a misspelled key once produced a report the lens read as a
- * clean result.
+ * leaves no trace in the review at all. This gives the lens something to read.
  *
  * Not under `review/tools/`, because run.sh will run anything named there as a tool.
  *

@@ -59,10 +59,12 @@ Anchor it somewhere a reader can act on: the line in the manifest (`package.json
 the diff does not touch it, because a finding outside the diff is listed in the review body
 under its file, where the path and the line still tell the author where to go.
 
-Do not anchor to a lockfile. Every lockfile name is in the `exclude-paths` default, so the
-lockfile is not in the diff every lens read and cannot carry a comment. The scanner reads
-it because it was handed the range without that pathspec, which is why the file looks
-available to you and is not.
+Do not anchor to a lockfile. The scanner was handed the range without the pathspec that
+every lens read the diff under, so a file the scanner names may not be in that diff at all,
+which is why a lockfile can look available to you and not be. The `exclude-paths` default
+names every lockfile, so on the default a lockfile is never in that diff; a repository that
+narrowed the list may still have one there, and the manifest is the better anchor either
+way.
 
 ## When a finding may predate the change
 

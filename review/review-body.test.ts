@@ -1,16 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import {
-    assemble,
-    bullet,
-    clamp,
-    composeReview,
-    escapeInline,
-    MAX_BODY,
-    mention,
-    partition,
-    runUrl,
-} from "./review-body.ts";
-import type { Finding, Merged, Outcome } from "./review-body.ts";
+import type { Finding, Merged } from "./findings.ts";
+import { assemble, bullet, composeReview, MAX_BODY, MAX_LENS_DETAIL, mention, runUrl } from "./review-body.ts";
+import type { Outcome } from "./review-body.ts";
 
 function finding(over: Partial<Finding> = {}): Finding {
     return {
@@ -24,37 +15,11 @@ function finding(over: Partial<Finding> = {}): Finding {
     };
 }
 
-describe("escapeInline", () => {
-    test("leaves a code span alone", () => {
-        expect(escapeInline("`**/out/**` is a glob")).toBe("`**/out/**` is a glob");
-    });
-
-    test("escapes emphasis outside a code span", () => {
-        expect(escapeInline("**/out/** is a glob")).toBe("\\*\\*/out/\\*\\* is a glob");
-    });
-
-    test("escapes a link opener and raw html", () => {
-        expect(escapeInline("a [b] <c>")).toBe("a \\[b\\] \\<c>");
-    });
-
-    test("escapes a backtick that opens no span, so it cannot pair with one below", () => {
-        expect(escapeInline("the `foo parameter")).toBe("the \\`foo parameter");
-    });
-
-    test("escapes a backslash, which would otherwise cancel the escape after it", () => {
-        expect(escapeInline("a\\*b")).toBe("a\\\\\\*b");
-    });
-
-    test("escapes a trailing backslash, which would eat the closing emphasis", () => {
+describe("bullet", () => {
+    test("escapes a trailing backslash in a title, which would eat the closing emphasis", () => {
         expect(bullet(finding({ title: "windows\\path\\" }))).toContain("**windows\\\\path\\\\**");
     });
 
-    test("escapes a tilde pair, which renders as strikethrough", () => {
-        expect(escapeInline("~~draft~~")).toBe("\\~\\~draft\\~\\~");
-    });
-});
-
-describe("bullet", () => {
     test("opens with the position, so a reader can jump to it", () => {
         expect(bullet(finding({ line: 42 }))).toStartWith("- `a.ts:42`: **A title**");
     });
@@ -65,6 +30,18 @@ describe("bullet", () => {
 
     test("escapes a block-level tag a body line would otherwise open", () => {
         expect(bullet(finding({ body: "<details>\nswallowed" }))).toContain("\\<details>");
+    });
+
+    test("escapes a tag partway along a line, which GitHub opens wherever it sits", () => {
+        expect(bullet(finding({ body: "see the <details> element" }))).toContain("see the \\<details> element");
+    });
+
+    test("escapes a rule under a line of prose, which would make that line a heading", () => {
+        expect(bullet(finding({ body: "A claim\n---" }))).toContain("\\---");
+    });
+
+    test("clamps a runaway body, so one finding cannot fill the whole listing", () => {
+        expect(bullet(finding({ body: "x".repeat(20000) }))).toContain("(cut for length)");
     });
 
     test("keeps a multi-line title on one line, so the list item survives it", () => {
@@ -143,35 +120,15 @@ describe("runUrl", () => {
     });
 });
 
-describe("clamp", () => {
-    test("leaves prose under the limit alone", () => {
-        expect(clamp("short", 100)).toBe("short");
-    });
-
-    test("cuts on a paragraph boundary", () => {
-        expect(clamp("one\n\ntwo\n\nthree", 10)).toBe("one\n\ntwo\n\n_(cut for length)_");
-    });
-
-    test("closes a fence the cut left open", () => {
-        const cut = clamp("```\ncode line one\n\nmore\n\ntail", 22);
-
-        expect(cut.endsWith("```\n\n_(cut for length)_")).toBe(true);
-    });
-
-    test("falls back to a sentence when one paragraph is all there is", () => {
-        expect(clamp("One thing. Another thing. A third.", 20)).toBe("One thing.\n\n_(cut for length)_");
-    });
-
-    test("falls back to a word rather than cutting one in half", () => {
-        expect(clamp("alpha beta gamma delta", 14)).toBe("alpha beta\n\n_(cut for length)_");
-    });
-});
-
 describe("assemble", () => {
+    function listing(items: Finding[]) {
+        return { heading: "Findings", lead: "lead", omission: "They are in the findings file.", items };
+    }
+
     test("keeps the fixed sections and lists what fits", () => {
         const body = assemble(
             ["## CodeFerret"],
-            { heading: "Findings", lead: "lead", items: [finding(), finding({ title: "Second" })] },
+            listing([finding(), finding({ title: "Second" })]),
             ["### Caveats"],
         );
 
@@ -187,33 +144,25 @@ describe("assemble", () => {
 
     test("drops whole findings rather than cutting one, and says how many went", () => {
         const items = Array.from({ length: 200 }, (_, i) => finding({ title: `T${i}`, body: "x".repeat(2000) }));
-        const body = assemble(["## CodeFerret"], { heading: "Findings", lead: "lead", items }, []);
+        const body = assemble(["## CodeFerret"], listing(items), []);
 
         expect(body.length).toBeLessThanOrEqual(MAX_BODY);
         expect(body).toMatch(/further findings? left out for length/);
     });
 
+    test("a finding too long for what is left costs only itself", () => {
+        const items = [finding({ title: "Huge", body: "x".repeat(3900) }), finding({ title: "Small" })];
+        const body = assemble(["x".repeat(MAX_BODY - 3000)], listing(items), []);
+
+        expect(body).not.toContain("Huge");
+        expect(body).toContain("Small");
+    });
+
     test("the tail survives a listing that would fill the body", () => {
         const items = Array.from({ length: 200 }, (_, i) => finding({ title: `T${i}`, body: "x".repeat(2000) }));
-        const body = assemble(["## CodeFerret"], { heading: "Findings", lead: "lead", items }, ["### Caveats"]);
+        const body = assemble(["## CodeFerret"], listing(items), ["### Caveats"]);
 
         expect(body).toEndWith("### Caveats");
-    });
-});
-
-describe("partition", () => {
-    test("splits on status and orders by severity", () => {
-        const { all, fresh, suppressed, declined } = partition([
-            finding({ title: "low", severity: "low" }),
-            finding({ title: "seen", status: "already-reported" }),
-            finding({ title: "crit", severity: "critical" }),
-            finding({ title: "no", status: "declined" }),
-        ]);
-
-        expect(all.map((f) => f.title)).toEqual(["crit", "low", "seen", "no"]);
-        expect(fresh.map((f) => f.title)).toEqual(["crit", "low"]);
-        expect(suppressed.map((f) => f.title)).toEqual(["seen"]);
-        expect(declined.map((f) => f.title)).toEqual(["no"]);
     });
 });
 
@@ -273,19 +222,21 @@ describe("composeReview", () => {
 
     test("keeps a runaway lens detail on one line, inside its list item", () => {
         const body = review({
-            lens_health: [{ lens: "codeferret:x", findings_returned: 1, ok: true, detail: "x".repeat(2000) }],
+            lens_health: [{ lens: "codeferret:x", findings_returned: 1, ok: true, detail: "x".repeat(4000) }],
         });
 
         const item = body.split("\n").find((line) => line.includes("xxx"));
 
-        expect(item).toContain("(cut for length)");
-        expect(item?.length).toBeLessThan(800);
+        // The marker is what `clamp` appends, unescaped, so it renders as an italic aside
+        // rather than as underscores.
+        expect(item).toContain("_(cut for length)_");
+        expect(item?.length).toBeLessThan(MAX_LENS_DETAIL + 200);
     });
 
-    test("says nothing about attention when every lens reported", () => {
+    test("counts one lens as one lens", () => {
         const body = review({ lens_health: [{ lens: "codeferret:x", findings_returned: 1, ok: true }] });
 
-        expect(body).toContain("1 lenses ran, all reporting");
+        expect(body).toContain("1 lens ran, all reporting");
         expect(body).not.toContain("needs attention");
     });
 

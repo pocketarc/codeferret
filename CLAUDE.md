@@ -74,11 +74,11 @@ branch once over a fake `sk_live_...` Stripe key.
 ## Before you push
 
 `lefthook.yml` runs all of this, so a push that would go red in CI fails here first, and
-the first three fail at commit time. A fresh clone has no hooks until you install them:
+the first three fail at commit time. `bun install` puts the hooks in place: lefthook is a
+dev dependency and `prepare` runs `lefthook install`.
 
 ```sh
-brew install lefthook
-lefthook install
+bun install
 ```
 
 By hand, or to see one on its own:
@@ -97,8 +97,8 @@ input description shipped once. Quote any string that contains `: `.
 
 ## Things that will bite you
 
-Each of these is a rule and the one fact that makes it stick. `review/README.md` carries
-the arguments behind them.
+Each of these is a rule and the one fact that makes it stick. The argument behind each one
+is in `review/README.md`.
 
 - A lens's `in_diff` field is unreliable, and nothing reads it. On every run that used
   inline comments, a lens reported an out-of-diff finding as in-diff. Nothing anchors to a
@@ -120,7 +120,7 @@ the arguments behind them.
 - Text for one lens goes in that lens's own prompt, not the orchestrator's.
   `review/lens-extras/<lens>.md` is rendered into that agent's system prompt. Routed through
   the orchestrator instead, the routing is a judgement remade every run, and nothing
-  downstream can tell when it went wrong. `REVIEW.md` goes to `mattpocock-code-review` alone.
+  downstream can tell when it went wrong.
 - Do not put severity or lens agreement into a comment, and do not filter on either.
   Both are in `findings.json`, and severity orders the findings and decides which ones the
   comment prints in full. Every finding stays in the file whatever the comment prints.
@@ -135,10 +135,11 @@ the arguments behind them.
   this is a guarantee, because a lens has `Bash`, so keep the instruction in
   `review/lens-brief.md` too.
 - The reviewed tree does not configure the session that reviews it. `run.sh` passes
-  `--setting-sources user`. Without it the branch's own `CLAUDE.md` reaches the model and a
-  `SessionStart` hook in its `.claude/settings.json` runs under `bypassPermissions`, as the
-  branch wrote it. The flag takes the branch's `.claude/skills/` with it, which is why
-  `build-prompts.sh` copies a workspace lens's skill into the run's plugin.
+  `--setting-sources user`. Without it the branch's own `CLAUDE.md` reaches the model, and a
+  `SessionStart` hook declared in its `.claude/settings.json` runs under
+  `bypassPermissions`, as whoever pushed that branch wrote it. The flag takes the branch's
+  `.claude/skills/` with it, which is why `build-prompts.sh` copies a workspace lens's skill
+  into the run's plugin.
 - No lens is handed a way to reach the network. `WebFetch` and `WebSearch` are off the
   tool list on purpose: a lens reads an untrusted diff with `CLAUDE_CODE_OAUTH_TOKEN` in
   its environment. This raises the cost of exfiltration rather than preventing it, since
@@ -183,19 +184,39 @@ the arguments behind them.
 - Resolving a thread is a judgement the orchestrator makes, weighing `isOutdated` against
   the diff as one piece of evidence. `post-review.ts` then refuses any thread
   `fetch-existing.ts` did not mark `mine`, and that mark takes both a login and a comment
-  shape. `fetch-existing.ts` has why neither counts alone. Loosen either half and anyone
+  shape. `fetch-existing.ts` says why neither counts alone. Loosen either half and anyone
   who can comment can hand this run a thread to close.
 - A reply cannot make a security defect safe. The carve-out is written into
   `orchestrator.md`, because "this is intentional" on a vulnerability would otherwise
   silence it for good. Keep it if you touch the decline rules.
+- Only an owner, a member or a collaborator can decline a finding, and `post-review.ts`
+  decides that again rather than trusting the orchestrator's answer. This was an accepted
+  risk until a lens read the code. The acceptance rested on there being no way to tell a
+  maintainer's reply from a stranger's, and `authorAssociation` had been sitting in
+  `existing.json` unread the whole time. The rule is in `orchestrator.md` for the
+  orchestrator and in `vetDeclines` for the run, because the orchestrator holds that rule
+  and the comments it judges as text in one context, and prose is not a boundary. A
+  decline names the comment it rests on, and one that cannot be traced to an entitled
+  commenter or a resolved thread goes back to `new`. Every decline is reopened when
+  `existing.json` cannot be read: a repeated comment costs less than a finding nobody sees.
 - Whatever needs the range or the pathspec reads `build/diff-args`. `post-review.ts`
   built the pathspec itself once, the two drifted, and the anchor map then covered files no
-  lens had read. `review/lib.ts` holds the one reader and the one rule for getting the
+  lens had read. `review/diff-args.ts` holds the one reader and the one rule for getting the
   reviewed commit back out of the range. Do not reintroduce a second construction of either.
 - The action posts on `findings-checked`, not on the findings file existing.
   `check-findings.ts` repairs what has one right answer, keeps what `post-review.ts`
   survives, and drops only a finding with nothing left to render, so the run can end red and
   the review still land. A file that fails it outright holds nothing worth posting.
+
+## Nothing has shipped
+
+`v1` and `v1.0.0` are tags with no release behind them. There are no forks, no stars and no
+consumers, so nothing outside this repository reads the action, the template or an artifact
+a run wrote. A breaking change costs a maintainer one edit until that stops being true.
+
+So do not weigh backwards compatibility here, and do not write a migration for an old
+shape: there is no old shape anywhere but in this repository's own history. Change the
+thing, change what reads it, and say so. This section goes when the first consumer arrives.
 
 ## Accepted risks
 
@@ -205,9 +226,10 @@ acting on one.
 
 - Mutable version references, `@v1` above all. The template and the README point
   consumers at `pocketarc/codeferret@v1`, which this repository moves on every release. A
-  tag anyone can repoint is a supply-chain risk and the tooling is right to say so. It is
-  also the whole distribution mechanism: pinning by SHA would mean every consumer editing
-  a workflow to get a fix. Anyone who wants the guarantee can pin `@v1.1.0`.
+  tag anyone can repoint is a supply-chain risk, and a review raises it every run,
+  correctly. It is also the whole distribution mechanism: pinning by SHA would mean every
+  consumer editing a workflow to get a fix. Anyone who wants the guarantee can pin
+  `@v1.1.0`.
 - A lens can read `CLAUDE_CODE_OAUTH_TOKEN`. It runs with `Bash` and the token is in the
   environment it inherits. The shipped template uploads `findings.json` alone, so nothing
   the session wrote about itself leaves the runner by that route. This repository's own
@@ -220,16 +242,11 @@ acting on one.
   is not a boundary. It stands because a runner is disposable and a classifier that refused
   the orchestrator halfway would lose a review that cost $36. `/codeferret:review` runs
   under `auto` instead, on a machine that is not disposable.
-- Anyone who can comment can decline a finding. The orchestrator reads every comment
-  whoever wrote it, so on a public repository a stranger's "working as intended" suppresses
-  a finding on later runs. Deliberate: the alternative is ignoring a maintainer's reply
-  because it came from the wrong account. A reply still cannot make a security defect safe,
-  and resolving a thread takes more than commenting.
 - Two lenses ship without the capability their skills describe.
   `copilot-web-design-reviewer` has no browser and `anthropic-accessibility-review` cannot
   render a page. Both stay in the default set: measured over two runs they produced five
   unique findings, including the one that was rendering every finding body as a code
-  block. `review/lens-extras/` tells each what it cannot do.
+  block. Each has a file under `review/lens-extras/` saying what it cannot do.
 - semgrep fetches its ruleset at run time. `--config p/default` is not pinned, so what
   the tool looks for can change between two runs of the same commit. The rules are
   declarative YAML rather than code, and `SEMGREP_CONFIG` points at a local set for anyone

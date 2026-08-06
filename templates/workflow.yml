@@ -31,10 +31,10 @@ jobs:
         timeout-minutes: 60
         permissions:
             # The review runs an agent with Bash, so a token that can write contents is a
-            # token that can push. Swap this for `contents: write` to have CodeFerret
-            # resolve finished threads: GitHub rejects `resolveReviewThread` from a token
-            # that cannot write contents, and `pull-requests: write` cannot. Set
-            # `resolve-threads` to 'true' in the same edit.
+            # token that can push. `contents: write` plus `resolve-threads: 'true'` is what
+            # it takes to have CodeFerret close the inline threads its older versions left
+            # behind, and `contents: write` is worth granting only while an open pull
+            # request still carries one of those threads.
             contents: read
             pull-requests: write
             # What lets a run read the findings the previous run kept, so a finding is
@@ -52,7 +52,3 @@ jobs:
               uses: pocketarc/codeferret@v1
               with:
                   claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-                  # Nothing here can resolve a thread on `contents: read`. Left on, the
-                  # orchestrator spends part of the run judging which threads are finished
-                  # and every one of those decisions is refused.
-                  resolve-threads: 'false'

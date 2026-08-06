@@ -36,6 +36,10 @@ jobs:
                   claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
                   # The fixture runs are what a maintainer reads when a review goes wrong,
                   # and the rest of the build directory is where the answer usually is.
+                  # This is a public repository, so for 14 days the upload publishes
+                  # `run.json` (the orchestrator's own transcript, which quotes the diff
+                  # and is not secret-masked), both prompts, `existing.json`,
+                  # `previous.json` and every `tool-*.json`. Nothing under here carries a
+                  # credential today; the standing cost is that anything that ever does
+                  # will be published.
                   artifact-path: '.'
-                  # `contents: read` above, so nothing here could close a thread anyway.
-                  resolve-threads: 'false'

@@ -3,13 +3,6 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-/**
- * What a run cost, over the four shapes of run log that have been seen.
- *
- * A subscription-billed run reported `total_cost_usd` as zero while `modelUsage` said
- * otherwise, and zero is the number a reader takes for a free $36 review on every surface
- * it reaches. That fall-through is the behaviour pinned here.
- */
 const SCRIPT = join(import.meta.dir, "extract-findings.ts");
 
 let dir: string;
@@ -31,7 +24,7 @@ async function costOf(result: Record<string, unknown>): Promise<string> {
     return Bun.file(join(dir, "cost-usd")).text();
 }
 
-describe("extract-findings cost", () => {
+describe("extract-findings: what a run cost, over the four shapes of run log seen so far", () => {
     test("takes the reported total when the log carries one", async () => {
         expect(await costOf({ total_cost_usd: 12.5 })).toBe("12.50");
     });

@@ -19,10 +19,12 @@ take from it.
 Read `<plugin>/templates/workflow.yml` and show it before writing anything. It grants
 `pull-requests: write` and `contents: read`, and the user should see that first.
 
-`contents: read` is what the template ships, and everything works under it except closing
-a finished thread. The template turns thread resolution off to match. Offer the upgrade to
-`contents: write` rather than assuming it, and say what it costs: the review agent runs
-with Bash, so a token that can write contents is a token that can push. Taking the upgrade
+`contents: read` is what the template ships, and everything works under it. The one thing
+`contents: write` adds is closing the inline threads CodeFerret left on this repository
+before `v1.1.0`: a review is one body now and opens no thread of its own, so
+`contents: write` is worth granting only while an open pull request still carries one of
+those threads. Offer that rather than assuming it, and say what it costs: the review agent
+runs with Bash, so a token that can write contents is a token that can push. Taking it
 means setting `resolve-threads: 'true'` in the same edit.
 
 The template grants a second permission the user should know about rather than decide on:

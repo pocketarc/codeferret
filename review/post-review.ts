@@ -14,63 +14,66 @@
  * `fetch-previous.ts` will not suppress a finding without it.
  *
  * Usage: bun post-review.ts <findings.json> <head-sha> <pr-number>
- * Env:   GITHUB_TOKEN, GITHUB_REPOSITORY
+ * Env:   GITHUB_TOKEN (or the token on stdin), GITHUB_REPOSITORY
  *        GITHUB_SERVER_URL and GITHUB_RUN_ID link the run, when a runner sets them.
  */
 
 import { dirname, join } from "node:path";
-import { graphql, graphqlFailure, rest, splitRepository } from "./github.ts";
-import { brokenLenses, composeReview, isListed, partition, plural } from "./review-body.ts";
-import type { Merged } from "./review-body.ts";
+import { brokenLenses, partition, plural, vetDeclines } from "./findings.ts";
+import type { Merged } from "./findings.ts";
+import { graphql, graphqlFailure, requirePullNumber, requireRepository, rest, tokenFromStdinOrEnv } from "./github.ts";
+import { reason } from "./json.ts";
+import { composeReview, listedIn } from "./review-body.ts";
 
 const [findingsPath, headSha, prNumber] = process.argv.slice(2);
-const token = process.env.GITHUB_TOKEN;
 const repo = process.env.GITHUB_REPOSITORY;
+const token = await tokenFromStdinOrEnv();
 
 if (!findingsPath || !headSha || !prNumber || !token || !repo) {
     console.error("usage: bun post-review.ts <findings.json> <head-sha> <pr-number>");
-    console.error("env: GITHUB_TOKEN, GITHUB_REPOSITORY");
+    console.error("env: GITHUB_TOKEN (or the token on stdin), GITHUB_REPOSITORY");
     process.exit(2);
 }
 
-// Both go into a REST path. The number arrives from a workflow input or from a model
-// pasting the preflight's `pr=` line, and a `/` or a `?` in it re-points the request at
-// another resource or hangs a query string off it.
-if (!/^[0-9]+$/.test(prNumber)) {
-    console.error(`pr-number is '${prNumber}'. It has to be a number.`);
-    process.exit(2);
-}
-
-if (!splitRepository(repo)) {
-    console.error(`GITHUB_REPOSITORY is '${repo}'. It has to be owner/name.`);
-    process.exit(2);
-}
+requireRepository(repo);
+requirePullNumber(prNumber);
 
 // Bound here rather than inside a function, because the check above narrows these only at
 // this level: a function body could be called before it ran.
 const findingsFile: string = findingsPath;
 const buildDir = dirname(findingsFile);
 
-/** Threads this run posted itself, which are the only ones it may resolve. */
-async function ownThreads(): Promise<Set<string>> {
+/**
+ * What was already on the pull request when the run started, or nothing when the file is
+ * missing or cannot be read.
+ *
+ * Read once. Two decisions rest on this file and both fail closed, so reading it twice
+ * could resolve threads against one answer and reopen declines against another.
+ */
+async function readExisting(): Promise<unknown> {
     const file = Bun.file(join(buildDir, "existing.json"));
 
-    if (!(await file.exists())) return new Set();
+    if (!(await file.exists())) return {};
 
     try {
-        const parsed = JSON.parse(await file.text()) as {
-            threads?: Array<{ thread_id?: unknown; mine?: unknown }>;
-        };
-
-        return new Set(
-            (parsed.threads ?? [])
-                .filter((t) => t.mine === true && typeof t.thread_id === "string")
-                .map((t) => String(t.thread_id)),
-        );
+        return JSON.parse(await file.text());
     } catch {
-        console.error("existing.json could not be read, so no thread will be resolved.");
-        return new Set();
+        console.error("existing.json could not be read, so no thread is resolved and every decline is reopened.");
+        return {};
     }
+}
+
+/** Threads this run posted itself, which are the only ones it may resolve. */
+function ownThreads(existing: unknown): Set<string> {
+    const parsed = (typeof existing === "object" && existing !== null ? existing : {}) as {
+        threads?: Array<{ thread_id?: unknown; mine?: unknown }>;
+    };
+
+    return new Set(
+        (parsed.threads ?? [])
+            .filter((t) => t.mine === true && typeof t.thread_id === "string")
+            .map((t) => String(t.thread_id)),
+    );
 }
 
 let merged: Merged;
@@ -82,7 +85,7 @@ try {
     // is a worse answer than a sentence naming the file.
     merged = JSON.parse(await Bun.file(findingsFile).text()) as Merged;
 } catch (error) {
-    console.error(`${findingsFile}: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(`${findingsFile}: ${reason(error)}`);
     console.error(`check it with: bun check-findings.ts ${findingsFile}`);
     process.exit(1);
 }
@@ -93,9 +96,22 @@ if (typeof merged !== "object" || merged === null || !Array.isArray(merged.findi
     process.exit(1);
 }
 
+const existing = await readExisting();
+
+// The decision is taken again here rather than trusted: the orchestrator held the decline
+// rule and the comments it judged as text in one context.
+const vetted = vetDeclines(merged.findings, existing);
+
+if (vetted.reopened > 0) {
+    console.error(
+        `${plural(vetted.reopened, "decline")} cited no comment from an owner, member or` +
+            ` collaborator, and no resolved thread. Reporting them as new.`,
+    );
+}
+
 // Partitioned once and handed to composeReview, so the counts in this log line and the
 // counts in the body cannot come from two different derivations of the same findings.
-const parts = partition(merged.findings);
+const parts = partition(vetted.findings);
 const { all: allFindings, fresh: findings, suppressed, declined } = parts;
 
 /**
@@ -121,15 +137,14 @@ async function markPosted(url: string | null): Promise<void> {
         );
     } catch (error) {
         console.error(
-            `${findingsFile} could not be marked as posted:` +
-                ` ${error instanceof Error ? error.message : String(error)}.` +
+            `${findingsFile} could not be marked as posted: ${reason(error)}.` +
                 " The next run will raise these findings again.",
         );
     }
 }
 
 // Resolving is a write, so a dry run reports the decision without making it.
-const mine = await ownThreads();
+const mine = ownThreads(existing);
 const asked = merged.resolve ?? [];
 
 // `mine` is the non-model signal beside the orchestrator's judgement. fetch-existing.ts
@@ -183,7 +198,7 @@ if (toResolve.length > 0 && !process.env.DRY_RUN) {
 
 const leftOpen = toResolve.length - resolved.length;
 const broken = brokenLenses(merged.lens_health ?? []);
-const listed = findings.filter(isListed);
+const listed = listedIn(findings, process.env);
 
 const reviewBody = composeReview(merged, { resolved, resolveDenied, leftOpen, env: process.env }, parts);
 

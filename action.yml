@@ -20,7 +20,6 @@ inputs:
         default: |
             static-analysis
             caveman-review
-            mattpocock-code-review
             anthropic-code-review
             wshobson-code-review-excellence
             cursor-thermo-nuclear-review
@@ -69,7 +68,9 @@ inputs:
 
             The defaults below are split by depth, because `out` and `build` are also
             source directory names. `.next`, `dist`, the lockfiles and the minified and
-            snapshot files are matched at any depth. `out` and `build` are matched at the
+            snapshot files are matched at any depth, which takes naming three lockfiles one
+            by one, because `*.lock` and `*.lockb` miss them: pnpm writes YAML, Gradle
+            writes `.lockfile`, and npm writes JSON. `out` and `build` are matched at the
             repository root and one level inside `apps/` and `packages/`, because both are
             legal App Router route segments and the any-depth form hides `app/build/` from
             every lens. `dist` stays at any depth: it is a packaging convention rather than
@@ -80,7 +81,9 @@ inputs:
         default: |
             **/*.lock
             **/*.lockb
-            package-lock.json
+            **/*.lockfile
+            **/package-lock.json
+            **/pnpm-lock.yaml
             node_modules/**
             vendor/**
             **/.next/**
@@ -126,6 +129,11 @@ inputs:
             `docker compose exec -T -w /app devtools`. The prefix must put both binaries on
             PATH, mount the checkout, and start in the repository root, because the review
             reads the working tree and runs `git diff`. Leave empty to run on the runner.
+
+            Everything the review runs itself stays out of the checkout's own directory,
+            because bun runs the `preload` script a `bunfig.toml` there names. A prefix
+            sets its own working directory, so on this path bun runs that script, with
+            whatever the container gives it. Point the prefix at a checkout you trust.
         required: false
         default: ''
     github-token:
@@ -143,13 +151,16 @@ inputs:
         default: ''
     resolve-threads:
         description: |
-            Whether the review may close its own threads once their defect is gone. Set it
-            to 'false' alongside `contents: read`, which is what the shipped workflow
-            grants: `resolveReviewThread` needs `contents: write`, so on read the
-            orchestrator spends a step of the run deciding which threads are finished and
-            every one of those decisions is then refused.
+            Whether the review may close its own threads once their defect is gone.
+
+            Off by default, and a migration aid rather than a general setting. A review is
+            one body and opens no thread of its own, so the only threads a run can still
+            close are the inline ones that `@v1.0.0` and earlier left on pull requests that
+            are open now. Turning it on also needs `contents: write`, which the shipped
+            workflow does not grant: `resolveReviewThread` is refused without it, and the
+            orchestrator spends a step of the run reaching decisions nothing can act on.
         required: false
-        default: 'true'
+        default: 'false'
     pr-number:
         description: Pull request to review. Defaults to the one that triggered the run.
         required: false
@@ -194,6 +205,11 @@ inputs:
             result object, which is not secret-masked and whose prose quotes the diff.
             Anyone can download an artifact from a public repository.
 
+            Keeping the whole directory is also what it takes to audit the
+            `static-analysis` lens, which is allowed to drop a tool finding on the promise
+            that the raw report survives in `tool-*.json`. On the default those reports die
+            with the runner.
+
             Set it to an empty string to upload nothing. Every finding is then raised
             again on every push.
         required: false
@@ -204,7 +220,10 @@ outputs:
         description: Path to the merged findings JSON.
         value: ${{ steps.review.outputs.findings-file }}
     findings-count:
-        description: Number of merged findings.
+        description: |
+            Number of merged findings, or `none reported` when the run produced no
+            structured output at all. That is a different thing from a review that found
+            nothing, which is why this output is not always a number.
         value: ${{ steps.review.outputs.findings-count }}
     cost-usd:
         description: |
@@ -235,14 +254,17 @@ runs:
               newline='
               '
 
+              # A `..` segment, not a `..` anywhere: `tool-semgrep..json` escapes nothing.
               case "$ARTIFACT_PATH" in
-                  *..*)
+                  .. | ../* | */../* | */..)
                       echo "artifact-path must stay inside the build directory: $ARTIFACT_PATH" >&2
                       exit 1
                       ;;
                   *"$newline"*)
-                      # GITHUB_OUTPUT reads a value's second line onward as more outputs
-                      # to set, and this is one path rather than a list.
+                      # In the single-line `name=value` form, GitHub reads a value's second
+                      # line onward as more outputs to set. `artifact-path` is one path
+                      # rather than a list, so a second line is a mistake worth refusing
+                      # rather than writing down.
                       echo "artifact-path must be a single path" >&2
                       exit 1
                       ;;
@@ -333,15 +355,32 @@ runs:
                   exit 1
               fi
 
-              {
-                  echo "base=$base"
-                  echo "pr=${PR_NUMBER:-$DEFAULT_PR}"
-                  echo "head=${HEAD_SHA:-$DEFAULT_HEAD}"
-              } >>"$GITHUB_OUTPUT"
+              # The delimiter form for all three, for the reason `artifact-path` is refused
+              # a second line above. These three come from inputs too, and a `base-ref`
+              # whose second line reads `head=<sha>` would otherwise decide the commit the
+              # review is recorded against.
+              emit() {
+                  {
+                      printf '%s<<CF_EOF\n' "$1"
+                      printf '%s\n' "$2"
+                      printf 'CF_EOF\n'
+                  } >>"$GITHUB_OUTPUT"
+              }
+
+              emit base "$base"
+              emit pr "${PR_NUMBER:-$DEFAULT_PR}"
+              emit head "${HEAD_SHA:-$DEFAULT_HEAD}"
 
         - name: Run the review
           id: review
           shell: bash
+          # Not the workspace, which a composite `run:` step would otherwise default to.
+          # Bun reads a `bunfig.toml` from its working directory and runs the `preload` it
+          # names before the script, so on the workspace bun would run whatever the reviewed
+          # branch put in that file, in a step holding both tokens. run.sh's `cd "$BUILD"`
+          # covers the rest. Nothing here needs the checkout: run.sh is handed it as an
+          # argument.
+          working-directory: ${{ runner.temp }}
           env:
               CLAUDE_CODE_OAUTH_TOKEN: ${{ inputs.claude-code-oauth-token }}
               GITHUB_TOKEN: ${{ inputs.github-token }}
@@ -367,9 +406,8 @@ runs:
                   "$RUNNER_TEMP/codeferret" \
                   "$GITHUB_WORKSPACE" || status=$?
 
-              # In the single-line `name=value` form, GitHub reads a value's second line
-              # onward as more outputs to set, so the helper uses the delimiter form for
-              # every file, one-line values included.
+              # The delimiter form for every file, one-line values included, for the reason
+              # the two steps above use it.
               emit() {
                   if [ -f "$out/$1" ]; then
                       {
@@ -405,8 +443,13 @@ runs:
           # posting. The run still ends red either way.
           if: ${{ !cancelled() && inputs.post != 'false' && steps.review.outputs.findings-checked == 'ok' }}
           shell: bash
+          # Out of the workspace for the reason the step above is, and this step holds the
+          # token that posts.
+          working-directory: ${{ runner.temp }}
           env:
-              GITHUB_TOKEN: ${{ inputs.github-token }}
+              # Not GITHUB_TOKEN. post-review.ts prefers the variable over its stdin, and
+              # the value has to reach it over stdin for the command-prefix case below.
+              POST_TOKEN: ${{ inputs.github-token }}
               GITHUB_REPOSITORY: ${{ github.repository }}
               PREFIX: ${{ inputs.command-prefix }}
               PR: ${{ steps.target.outputs.pr }}
@@ -432,9 +475,21 @@ runs:
                   echo "pass head-sha, or drop checkout: skip, to make the two agree." >&2
               fi
 
-              $PREFIX bun "$GITHUB_ACTION_PATH/review/post-review.ts" \
-                  "$RUNNER_TEMP/codeferret/build/findings.json" \
-                  "$HEAD" "$PR"
+              # `docker compose exec` starts a process with the container's environment and
+              # not this shell's, so under a command prefix every value post-review.ts reads
+              # has to be named. Without the repository it exits before posting; without the
+              # run it takes the review for one posted from somebody's own machine and
+              # inlines every finding instead of linking the artifact. The token goes over
+              # stdin, which `-T` passes through, rather than into an argument list every
+              # other process can read.
+              printf '%s' "$POST_TOKEN" |
+                  $PREFIX env \
+                      "GITHUB_REPOSITORY=$GITHUB_REPOSITORY" \
+                      "GITHUB_SERVER_URL=$GITHUB_SERVER_URL" \
+                      "GITHUB_RUN_ID=$GITHUB_RUN_ID" \
+                      bun "$GITHUB_ACTION_PATH/review/post-review.ts" \
+                      "$RUNNER_TEMP/codeferret/build/findings.json" \
+                      "$HEAD" "$PR"
 
         # Last, and after the posting step rather than before it. `post-review.ts` writes
         # the `posted` record into the findings file once GitHub has accepted the review,

@@ -138,21 +138,16 @@ path/to/file.ts:42: One-line title
 The finding body.
 ```
 
-A finding marked `already-reported` or `declined` was answered on a previous round, so it
-does not belong in that list. Count them instead, in a line saying where to read them:
-"4 findings were raised before and are in findings.json". The posted review draws the same
-line, so a run read here and read on GitHub says the same thing.
+These four rules are `review/review-body.ts` written out for a reader rather than for
+GitHub. It renders the posted review under the same rules, and the argument behind each is
+in `review/README.md`. Change one here and change it there.
 
-Do not indent the body. Four spaces after a blank line is an indented code block in
-markdown, which strips the formatting out of every finding and stops it wrapping.
-
-Start each finding on a fresh line with `path:line`, so a terminal can link it.
-
-Leave severity and lens agreement out. A lens grades severity without the context that
-decides it (a missing index is critical on a large table and irrelevant on a small one),
-so showing the guess mostly licenses the reader to skip the finding. Agreement tracks how
-obvious a defect is rather than how much it matters. Both are in the findings file for
-anyone who wants them.
+- A finding marked `already-reported` or `declined` was answered on a previous round, so it
+  does not belong in that list. Count them instead, in a line saying where to read them:
+  "4 findings were raised before and are in findings.json".
+- Do not indent the body. Four spaces after a blank line is an indented code block.
+- Start each finding on a fresh line with `path:line`, so a terminal can link it.
+- Leave severity and lens agreement out. Both are in the findings file.
 
 Close with the lenses: name every lens whose `ok` is false and say what happened. Nothing
 else in the output says so. A lens marked `ok` having found nothing is not one of these.

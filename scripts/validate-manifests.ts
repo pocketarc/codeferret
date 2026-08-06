@@ -1,17 +1,11 @@
 #!/usr/bin/env bun
 /**
- * Parse every manifest the action and the plugin depend on, and check its shape.
+ * Parse every manifest the action and the plugin depend on, check its shape, and check the
+ * values two files have to agree on: the plugin namespace, the shipped version, the
+ * defaults, the tools lens, the artifact retention window, and everything generated.
  *
- * GitHub validates workflow syntax when you push, but it does not validate an action
- * manifest until a run tries to load it. A composite action with a YAML error
- * therefore looks fine until it fails at the first step of a real run. That is how an
- * unquoted `pull-requests: write` inside a description shipped once already.
- *
- * The plugin manifests have the same problem one step further out: Claude Code reads
- * them when somebody installs the plugin, so a broken one fails on their machine.
- *
- * Each check below is a named function returning its failures, and CHECKS is the list, so
- * what this covers can be read off one array.
+ * Nothing upstream catches any of this before somebody feels it. "Before you push" in
+ * CLAUDE.md has what a broken manifest costs and what to do about it.
  *
  * Usage: bun scripts/validate-manifests.ts [<check-name>...]
  */
@@ -19,10 +13,8 @@
 import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { reason } from "../review/json.ts";
 
-// Every path below is repository-relative, and whoever has just edited this script is
-// standing in scripts/. Without this the run dies on a raw ENOENT instead of checking
-// anything.
 process.chdir(join(import.meta.dir, ".."));
 
 type Failures = string[];
@@ -35,7 +27,7 @@ async function parseYaml(list: Failures, file: string): Promise<unknown | null> 
     try {
         return Bun.YAML.parse(await Bun.file(file).text());
     } catch (error) {
-        fail(list, file, error instanceof Error ? error.message : String(error));
+        fail(list, file, reason(error));
         return null;
     }
 }
@@ -44,7 +36,7 @@ async function parseJson(list: Failures, file: string): Promise<unknown | null> 
     try {
         return JSON.parse(await Bun.file(file).text());
     } catch (error) {
-        fail(list, file, error instanceof Error ? error.message : String(error));
+        fail(list, file, reason(error));
         return null;
     }
 }
@@ -71,7 +63,7 @@ async function frontmatter(
     try {
         return (Bun.YAML.parse(block) ?? {}) as Record<string, unknown>;
     } catch (error) {
-        fail(list, file, `frontmatter is not valid YAML: ${error instanceof Error ? error.message : error}`);
+        fail(list, file, `frontmatter is not valid YAML: ${reason(error)}`);
         return null;
     }
 }
@@ -436,6 +428,46 @@ async function checkFindingRules(): Promise<Failures> {
     return list;
 }
 
+/**
+ * The retention window fetch-previous.ts pages back to, against the one the action asks for.
+ *
+ * Drift here is quiet in the direction that matters: raise the action's retention and the
+ * paging loop stops early, dropping an artifact that is still downloadable and repeating a
+ * whole review's findings, with only a line on stderr to go on.
+ */
+async function checkRetention(): Promise<Failures> {
+    const list: Failures = [];
+    const manifest = await action(list);
+    if (!manifest) return list;
+
+    const upload = (manifest.runs?.steps ?? []).find((step) => step.uses?.startsWith("actions/upload-artifact"));
+    const kept = (upload as { with?: { "retention-days"?: unknown } } | undefined)?.with?.["retention-days"];
+
+    const paged = (await Bun.file("review/fetch-previous.ts").text()).match(/^const RETENTION_DAYS = (\d+);$/m)?.[1];
+
+    if (paged === undefined) {
+        fail(list, "review/fetch-previous.ts", "declares no RETENTION_DAYS, so nothing bounds how far back it pages");
+        return list;
+    }
+
+    if (kept === undefined) {
+        fail(list, "action.yml", "the upload step names no `retention-days`, so nothing says how long an artifact lasts");
+        return list;
+    }
+
+    if (String(kept) !== paged) {
+        fail(
+            list,
+            "action.yml",
+            `keeps an artifact for ${String(kept)} days and review/fetch-previous.ts pages back ${paged}`,
+        );
+        return list;
+    }
+
+    console.log(`OK retention: action.yml and fetch-previous.ts both say ${paged} days`);
+    return list;
+}
+
 async function checkPrompts(): Promise<Failures> {
     const list: Failures = [];
 
@@ -550,6 +582,7 @@ const CHECKS: Array<[string, () => Promise<Failures>]> = [
     ["defaults", checkDefaults],
     ["generated", checkGenerated],
     ["finding-rules", checkFindingRules],
+    ["retention", checkRetention],
     ["prompts", checkPrompts],
     ["workflows", checkWorkflows],
     ["versions", checkShippedVersions],

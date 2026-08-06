@@ -13,11 +13,10 @@
  * checked against the schema at startup.
  *
  * Three outcomes, in order of preference. A fault with one right answer is repaired and
- * written back. A fault post-review.ts survives is noted and the finding kept, because a
- * dropped finding is in neither the comment nor the findings file nor the next run's
- * `previous.json`, so nothing records that it existed. Only a finding with nothing left to
- * render is dropped, and the rest of the file is written back around it: failing the whole
- * file would throw away a review that took twenty minutes and tens of dollars to produce.
+ * written back. A fault post-review.ts survives is noted and the finding kept. Only a
+ * finding with nothing left to render is dropped, and the rest of the file is written back
+ * around it: failing the whole file would throw away a review that took twenty minutes and
+ * tens of dollars to produce. `TOLERATED` below has why the middle one is the wide case.
  *
  * Usage: bun check-findings.ts <findings.json>
  *        bun check-findings.ts --self-check
@@ -32,7 +31,7 @@
  */
 
 import { join } from "node:path";
-import { reason, record } from "./lib.ts";
+import { reason, record } from "./json.ts";
 
 interface JsonSchema {
     type?: string;
@@ -325,17 +324,45 @@ for (const [i, entry] of merged.findings.entries()) {
     }
 }
 
-// `detail` is optional, so one that is not prose comes off the entry rather than costing
-// that lens its line in the review. Repaired before the walk, so the file the walk reports
-// on is the file that gets written back.
+/** What a lens_health entry that does not name its lens is called in the review. */
+const UNNAMED_LENS = "(unnamed lens)";
+
+// Every entry is repaired rather than dropped. An entry carries `detail`, which is the one
+// place a lens's account of what it could not check is written down, and the body derives
+// "N lenses ran" from what survives here — so a dropped entry shrinks that count and leaves
+// a review of an interface change looking as though accessibility had been covered.
+//
+// Repaired before the walk, so the file the walk reports on is the file that gets written
+// back.
 for (const entry of Array.isArray(merged.lens_health) ? merged.lens_health : []) {
     const health = record(entry);
 
-    if (!health || health.detail === undefined || typeof health.detail === "string") continue;
+    // Not an object, so there is no field to repair. Dropped below.
+    if (!health) continue;
 
-    const was = JSON.stringify(health.detail);
-    delete health.detail;
-    repairs.push(`lens_health[${String(health.lens)}].detail: ${was} is not prose, so it went`);
+    const lens = health.lens;
+
+    if (typeof lens !== "string" || lens.trim() === "") {
+        health.lens = UNNAMED_LENS;
+        repairs.push(`lens_health[].lens: ${JSON.stringify(lens)} is not a name, so it reads '${UNNAMED_LENS}'`);
+    }
+
+    // `plural` puts this straight into the review, so a missing one prints the word
+    // "undefined" where a reader expects a count. The findings array is the record of what
+    // the lens actually returned; this field is only its own account of it.
+    if (!Number.isInteger(health.findings_returned)) {
+        const was = JSON.stringify(health.findings_returned);
+        health.findings_returned = 0;
+        repairs.push(`lens_health[${String(health.lens)}].findings_returned: ${was} is not a count, so it reads 0`);
+    }
+
+    // `detail` is optional, so one that is not prose comes off the entry rather than
+    // costing that lens its line in the review.
+    if (health.detail !== undefined && typeof health.detail !== "string") {
+        const was = JSON.stringify(health.detail);
+        delete health.detail;
+        repairs.push(`lens_health[${String(health.lens)}].detail: ${was} is not prose, so it went`);
+    }
 }
 
 const problems: Problem[] = [];
@@ -373,14 +400,17 @@ const elsewhere = fatal.filter((p) => !/^findings\[/.test(p.path));
 /**
  * The fields an entry has to carry for post-review.ts to render it at all.
  *
- * `lensLabel` replaces on `lens`, `clamp` slices `detail`, and the resolve reason is
- * flattened with a replace, each of them straight onto the value the orchestrator wrote.
- * One entry short is a line missing from a list; the alternative is the whole review lost
- * to a TypeError after it has been paid for.
+ * The resolve reason is flattened with a replace, straight onto the value the orchestrator
+ * wrote, and a thread id GitHub does not know costs a logged GraphQL error and nothing
+ * else. One entry short is a line missing from a list; the alternative is the whole review
+ * lost to a TypeError after it has been paid for.
+ *
+ * A lens_health entry is repaired above rather than tested here, so the only one dropped is
+ * one that is not an object at all and has no field to repair.
  */
 const RENDERABLE: Record<"resolve" | "lens_health", (entry: Record<string, unknown>) => boolean> = {
     resolve: (entry) => typeof entry.thread_id === "string" && typeof entry.reason === "string",
-    lens_health: (entry) => typeof entry.lens === "string",
+    lens_health: () => true,
 };
 
 const keepEntries = (key: "resolve" | "lens_health"): number => {

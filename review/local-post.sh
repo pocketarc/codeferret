@@ -46,7 +46,11 @@ fi
 # than resolved again here. Every line the review names is a line of that commit, so a
 # review taken at one commit and posted against another sends the reader to code nobody
 # reviewed. reviewed-commit.ts owns how the file is read, beside the code that writes it.
-if ! REVIEWED_HEAD=$(bun "$PLUGIN/review/reviewed-commit.ts" "$BUILD/diff-args"); then
+# Run from the build directory, not from the checkout. Bun reads a `bunfig.toml` from its
+# working directory and runs the `preload` it names first, and this is a checkout of a
+# branch somebody else wrote, holding a `gh` token that is the person's own. run.sh's
+# `cd "$BUILD"` has the rest.
+if ! REVIEWED_HEAD=$(cd "$BUILD" && bun "$PLUGIN/review/reviewed-commit.ts" "$BUILD/diff-args"); then
     exit 1
 fi
 
@@ -66,15 +70,21 @@ if [ -z "$GITHUB_TOKEN" ] || [ -z "$GITHUB_REPOSITORY" ]; then
     exit 1
 fi
 
-# Whether GitHub holds the reviewed commit, which is the one recorded on the review. Ask the
-# pull request: `origin/<branch>` moves only on a fetch or a push from this clone, so it
-# says no to work pushed from elsewhere and yes to a commit a force-push has taken away.
-REMOTE_HEAD=$(gh pr view "$PR" --json headRefOid --jq .headRefOid)
+# Whether GitHub holds the reviewed commit, which is the one recorded on the review. Asked
+# of the pull request rather than of `origin/<branch>`, for the reason local-preflight.sh
+# gives where it answers the same question.
+if ! REMOTE_HEAD=$(gh pr view "$PR" --json headRefOid --jq .headRefOid); then
+    echo "gh could not read pull request #$PR, so nothing here knows what GitHub holds." >&2
+    echo "check that it is open and that gh is authenticated for this repository." >&2
+    exit 1
+fi
 
 if [ "$REMOTE_HEAD" != "$REVIEWED_HEAD" ]; then
     echo "the pull request's head is $REMOTE_HEAD and the review covers $REVIEWED_HEAD." >&2
     echo "push the reviewed commit, or run the review again against what is pushed." >&2
     exit 1
 fi
+
+cd "$BUILD"
 
 exec bun "$PLUGIN/review/post-review.ts" "$FINDINGS" "$REVIEWED_HEAD" "$PR"

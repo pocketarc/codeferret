@@ -22,7 +22,7 @@ to:
 
 ```yaml
 permissions:
-    contents: read # write instead to let it resolve finished threads
+    contents: read
     pull-requests: write
     actions: read # so a finding is not raised again on every push
 
@@ -30,18 +30,18 @@ steps:
     - uses: pocketarc/codeferret@v1
       with:
           claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          resolve-threads: 'false' # 'true' with contents: write
 ```
 
 That is the whole job. The action keeps its own `codeferret-run` artifact holding
 `findings.json`, so there is no upload step to write and no name to get right. The comment
-carries the critical and high findings in full and points at that file for the rest: every
-medium, low and nit finding. That file is also what the next run reads to know what was
-said before.
+carries the critical and high findings in full and points at that file for the rest. That
+file is also what the next run reads to know what was said before.
 
-`contents: write` costs something. The review runs an agent with Bash, so a token that
-can write contents is a token that can push. On `read`, everything else works and nothing
-tries to close a thread.
+`contents: write` buys one thing, and only for a while. A review is one body and opens no
+thread of its own, so the threads left to close are the inline ones that versions released
+before `v1.1.0` left behind. `resolve-threads: 'true'` and `contents: write` together close
+those. The review runs an agent with Bash, so a token that can write contents is a token
+that can push; on `read`, everything else works and nothing tries to close a thread.
 
 `actions: read` costs little and the review is worse without it. It is used for one thing:
 reading the previous run's `findings.json` back out of the artifact. Drop it and every

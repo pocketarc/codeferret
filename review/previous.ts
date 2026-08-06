@@ -1,14 +1,15 @@
 /**
  * Which artifact the previous review is in, and what it holds.
  *
- * Separated from fetch-previous.ts so that `bun test` can reach it. Every decision here
- * answers whether something already raised may silence a finding this run made, and a wrong
- * answer marks that finding `already-reported` in this run's own findings file, so the
- * suppression lasts as long as the pull request. None of it is visible in the review.
+ * Every decision here answers whether something already raised may silence a finding this
+ * run made, and a wrong answer marks that finding `already-reported` in this run's own
+ * findings file, so the suppression lasts as long as the pull request. None of it is
+ * visible in the review, which is why it sits apart from fetch-previous.ts, where a test
+ * can reach it.
  */
 
-import { reason, record } from "./lib.ts";
-import type { Finding } from "./review-body.ts";
+import type { Finding } from "./findings.ts";
+import { reason, record } from "./json.ts";
 
 /**
  * A previous finding, cut down to what this run matches against.

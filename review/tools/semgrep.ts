@@ -18,12 +18,13 @@
  * than code the job executes. `SEMGREP_CONFIG` names a ruleset inside the repository for
  * anyone who would rather pin it.
  *
- * Usage: bun review/tools/semgrep.ts <build-dir>
+ * Usage: bun review/tools/semgrep.ts <build-dir> <workspace>
  */
 
 import { existsSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import { readDiffArgs, reason } from "../lib.ts";
+import { readDiffArgs } from "../diff-args.ts";
+import { reason } from "../json.ts";
 import { changedFiles, MAX_FINDINGS, repoRoot, reporter, runner } from "./report.ts";
 
 // One entry per file semgrep could only partly parse, so a diff in a language its parser
@@ -45,14 +46,7 @@ const MAX_ARGV_CHARS = 100_000;
 // would let a hundred INFO hits in the first files push every ERROR out of the report.
 const SEVERITY_ORDER = ["ERROR", "WARNING", "INFO"];
 
-/**
- * The part of semgrep's JSON this reads.
- *
- * Declared rather than left as `any`. The image is pinned by digest but the shape is
- * upstream's, and under `any` a renamed field hands the lens a hundred findings with
- * every field empty while the report still says the tool ran with the right count. The
- * `unreadable` counter below turns that into something the lens can see.
- */
+/** The part of semgrep's JSON this reads. */
 interface SemgrepResult {
     check_id?: string;
     path?: string;
@@ -100,16 +94,17 @@ function batches(files: string[]): string[][] {
     return out;
 }
 
-const [buildDir] = process.argv.slice(2);
+const [buildDir, workspace] = process.argv.slice(2);
 
-if (!buildDir) {
-    console.error("usage: bun review/tools/semgrep.ts <build-dir>");
+if (!buildDir || !workspace) {
+    console.error("usage: bun review/tools/semgrep.ts <build-dir> <workspace>");
     process.exit(2);
 }
 
-// Everything below runs from the repository root, because that is what git prints paths
-// relative to and what a finding has to anchor against.
-const root = repoRoot();
+// Every git and semgrep call below is given the repository root, because that is what git
+// prints paths relative to and what a finding has to anchor against. This process's own
+// working directory is somewhere else, for the reason `repoRoot` gives.
+const root = repoRoot(workspace);
 
 // `handed` is how many files were passed over, against `scanned`, which is how many
 // semgrep says it analysed. It filters its target set before scanning, and one filter is a
@@ -125,7 +120,7 @@ const extras: {
 
 const write = reporter("semgrep", join(buildDir, "tool-semgrep.json"), extras);
 
-const semgrep = runner("semgrep", IMAGE, "semgrep");
+const semgrep = runner("semgrep", IMAGE, root, "semgrep");
 
 if (!semgrep) {
     await write({ ran: false, reason: "neither semgrep nor docker is on PATH" });
@@ -147,7 +142,7 @@ try {
     process.exit(0);
 }
 
-const changed = changedFiles(diffArgs);
+const changed = changedFiles(diffArgs, root);
 
 if ("failure" in changed) {
     await write({ ran: false, reason: changed.failure });
@@ -279,8 +274,10 @@ results.sort((a, b) => severityRank(a.extra?.severity) - severityRank(b.extra?.s
 
 const errors = allErrors.slice(0, MAX_ERRORS);
 
-// Both are always present in 1.172.0's output, so an absence is the shape having moved
-// rather than a hit with no identity.
+// The image is pinned by digest but the shape it emits is upstream's, and a renamed field
+// hands the lens a hundred findings with every field empty while the report still carries
+// the right count. Both of these are always present in 1.172.0's output, so an absence
+// means the shape has moved, and this is what makes that visible to the lens.
 const unreadable = results.filter((r) => !r.check_id || !r.path).length;
 
 const findings = results.slice(0, MAX_FINDINGS).map((r) => ({

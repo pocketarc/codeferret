@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { closeOpenFence, fenceMap } from "./markdown.ts";
+import { clamp, closeOpenFence, escapeBlocks, escapeInline, fenceMap } from "./markdown.ts";
 
 describe("fenceMap", () => {
     test("marks the delimiters as fenced, so a caller mapping the rest leaves them alone", () => {
@@ -35,5 +35,84 @@ describe("closeOpenFence", () => {
 
         expect(closeOpenFence(text)).toBe(text);
         expect(fenceMap(text.split("\n")).every(Boolean)).toBe(true);
+    });
+});
+
+describe("escapeInline", () => {
+    test("leaves a code span alone", () => {
+        expect(escapeInline("`**/out/**` is a glob")).toBe("`**/out/**` is a glob");
+    });
+
+    test("escapes emphasis outside a code span", () => {
+        expect(escapeInline("**/out/** is a glob")).toBe("\\*\\*/out/\\*\\* is a glob");
+    });
+
+    test("escapes a link opener and raw html", () => {
+        expect(escapeInline("a [b] <c>")).toBe("a \\[b\\] \\<c>");
+    });
+
+    test("escapes a backtick that opens no span, so it cannot pair with one below", () => {
+        expect(escapeInline("the `foo parameter")).toBe("the \\`foo parameter");
+    });
+
+    test("escapes a backslash, which would otherwise cancel the escape after it", () => {
+        expect(escapeInline("a\\*b")).toBe("a\\\\\\*b");
+    });
+
+    test("escapes a tilde pair, which renders as strikethrough", () => {
+        expect(escapeInline("~~draft~~")).toBe("\\~\\~draft\\~\\~");
+    });
+});
+
+describe("escapeBlocks", () => {
+    test("escapes a tag wherever it sits on the line, not only at the start", () => {
+        expect(escapeBlocks(["wrap it in a <div> instead"])).toEqual(["wrap it in a \\<div> instead"]);
+    });
+
+    test("leaves a tag inside a code span alone, so no backslash lands on the page", () => {
+        expect(escapeBlocks(["the `<details>` element"])).toEqual(["the `<details>` element"]);
+    });
+
+    test("escapes a heading and a quote a line would open", () => {
+        expect(escapeBlocks(["# heading", "  > quote"])).toEqual(["\\# heading", "  \\> quote"]);
+    });
+
+    test("escapes a setext underline, which turns the line above it into a heading", () => {
+        expect(escapeBlocks(["A claim", "---"])).toEqual(["A claim", "\\---"]);
+        expect(escapeBlocks(["A claim", "="])).toEqual(["A claim", "\\="]);
+    });
+
+    test("leaves the emphasis and links a model meant to write", () => {
+        expect(escapeBlocks(["**bold** and [a link](https://example.test)"])).toEqual([
+            "**bold** and [a link](https://example.test)",
+        ]);
+    });
+
+    test("leaves everything inside a fence alone", () => {
+        expect(escapeBlocks(["```html", "<div>", "```"])).toEqual(["```html", "<div>", "```"]);
+    });
+});
+
+describe("clamp", () => {
+    test("leaves text under the limit alone", () => {
+        expect(clamp("short", 100)).toBe("short");
+    });
+
+    test("cuts on a paragraph boundary", () => {
+        expect(clamp("one\n\ntwo\n\nthree", 10)).toBe("one\n\ntwo\n\n_(cut for length)_");
+    });
+
+    test("closes a fence the cut left open", () => {
+        const cut = clamp("```\ncode line one\n\nmore\n\ntail", 22);
+
+        expect(cut.endsWith("```\n\n_(cut for length)_")).toBe(true);
+    });
+
+    test("falls back to a sentence when one paragraph is all there is", () => {
+        expect(clamp("One thing. Another thing. A third.", 20)).toBe("One thing.\n\n_(cut for length)_");
+    });
+
+    test("falls back to a word rather than cutting one in half", () => {
+        expect(clamp("alpha beta gamma delta", 14)).toBe("alpha beta\n\n_(cut for length)_");
     });
 });

@@ -34,34 +34,8 @@ GIT_DIR=$(git rev-parse --absolute-git-dir)
 # shellcheck source=review/lib.sh
 . "$PLUGIN/review/lib.sh"
 
-# One `gh pr view` for both values. A closed or merged pull request the branch used to have
-# would name a base nobody is working from now, so only an open one counts.
-PR=""
-PR_BASE=""
-
-if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-    PR_LINE=$(gh pr view --json number,baseRefName,state \
-        --jq 'select(.state == "OPEN") | [.number, .baseRefName] | @tsv' 2>/dev/null || true)
-    PR=$(printf '%s' "$PR_LINE" | cut -f1)
-    PR_BASE=$(printf '%s' "$PR_LINE" | cut -f2)
-fi
-
-if [ -z "$BASE" ] && [ -n "$PR_BASE" ]; then
-    BASE="origin/$PR_BASE"
-fi
-
-if [ -z "$BASE" ]; then
-    DEFAULT=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
-    DEFAULT=${DEFAULT#origin/}
-
-    if [ -z "$DEFAULT" ] && command -v gh >/dev/null 2>&1; then
-        DEFAULT=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null || true)
-    fi
-
-    if [ -n "$DEFAULT" ]; then
-        BASE="origin/$DEFAULT"
-    fi
-fi
+open_pr
+BASE=$(resolve_base "$BASE")
 
 if [ -z "$BASE" ]; then
     echo "no base ref given, and this checkout has neither an open pull request nor an origin" >&2
@@ -99,7 +73,6 @@ export RESOLVE_THREADS=0
 # Without a pull request there is nothing to read earlier comments from, so every finding
 # counts as new. That is a noisier review rather than a failed one, and run.sh warns.
 if [ -n "$PR" ]; then
-    export PR
     OWN_LOGIN=$(gh api user --jq .login 2>/dev/null || true)
     export OWN_LOGIN
     gh_credentials

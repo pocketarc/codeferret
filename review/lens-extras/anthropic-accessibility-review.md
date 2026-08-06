@@ -7,17 +7,21 @@ above zero, an ARIA attribute on a role that does not take it, a language attrib
 table without headers.
 
 The rule for the rest: a criterion whose outcome depends on a computed style, a live focus
-ring, timing or motion cannot be decided here. That rules out contrast, focus order, target
-size, reflow, text spacing, content on hover, keyboard traps, timing limits, moving or
-flashing content, and any change of context on focus or input. Do not report one as
-passing, and do not guess a contrast ratio from a source colour whose background you cannot
-see.
+ring, an accessibility tree, timing or motion cannot be decided here. That rules out
+contrast, focus order, target size, reflow, text spacing, content on hover, keyboard traps,
+timing limits, moving or flashing content, any change of context on focus or input, and the
+computed accessible name and role an assistive technology would announce. Do not report one
+as passing, do not guess a contrast ratio from a source colour whose background you cannot
+see, and do not describe what a screen reader would say.
 
-Two parts of the skill contradict the paragraph above, and this overrides both. Its Output
-template has a "Color Contrast Check" table with a column each for a foreground colour, a
-background colour, a computed ratio and a pass or fail per element: leave that table out
-entirely, because every cell in it would be invented. Its Tip 1 puts contrast first: start
-with keyboard instead, and with the rest of the statically checkable set below.
+Four parts of the skill contradict the paragraph above, and that paragraph overrides all
+four. Three are tables in its Output template, and every cell in each of them would be
+invented: "Color Contrast Check" has a column for a computed ratio per element, "Keyboard
+Navigation" one for a rendered tab order and the runtime behaviour of four keys, and
+"Screen Reader" an "Announced As" column. Leave all three out entirely. The fourth is its
+Tip 1, which puts contrast first: start with keyboard instead, meaning the part of 2.1.1
+that the source settles (a handler on a non-interactive element, a control with no keyboard
+affordance written into it) and the rest of the statically checkable set below.
 
 Two of those have a source-level failure worth reporting, and reporting it is not the same
 as judging the rendered result:
