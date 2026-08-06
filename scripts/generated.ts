@@ -1,9 +1,4 @@
-/**
- * Write a set of generated files, or check the ones on disk against what would be written.
- *
- * Shared by both generators, because this is the shape that decides whether a hand edit to
- * a generated file is caught, and one copy of it keeps that answer the same for both.
- */
+/** Write a set of generated files, or check the ones on disk against what would be written. */
 
 import { existsSync } from "node:fs";
 

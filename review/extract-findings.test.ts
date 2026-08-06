@@ -49,4 +49,15 @@ describe("extract-findings: what a run cost, over the four shapes of run log see
     test("is zero when the log says zero and names no models at all", async () => {
         expect(await costOf({ total_cost_usd: 0 })).toBe("0.00");
     });
+
+    test("survives a log cut off mid-line, which is the run whose cost matters most", async () => {
+        const runPath = join(dir, "run.json");
+        const complete = JSON.stringify({ type: "result", total_cost_usd: 4.5 });
+
+        await Bun.write(runPath, `{"type":"system"}\n${complete}\n{"type":"result","total_c`);
+
+        Bun.spawnSync(["bun", SCRIPT, runPath, join(dir, "findings.json")]);
+
+        expect(await Bun.file(join(dir, "cost-usd")).text()).toBe("4.50");
+    });
 });

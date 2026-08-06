@@ -62,6 +62,14 @@ interface ScanOutput {
     results?: Array<{ packages?: ScanPackage[] }>;
 }
 
+/** What one invocation did with one lockfile, which the report carries per manifest. */
+interface Attempt {
+    manifest: string;
+    ok: boolean;
+    exit: number | null;
+    detail?: string;
+}
+
 const [buildDir, workspace] = process.argv.slice(2);
 
 if (!buildDir || !workspace) {
@@ -73,7 +81,7 @@ const root = repoRoot(workspace);
 
 // One `manifests` entry per lockfile, so a scan that failed on one and succeeded on
 // another is legible rather than a single number.
-const extras: { manifests: Array<Record<string, unknown>>; caveat: string } = {
+const extras: { manifests: Attempt[]; caveat: string } = {
     manifests: [],
     caveat:
         "A lockfile holds every dependency, not only the ones this diff touched, so a" +
@@ -130,7 +138,7 @@ if (manifests.length === 0) {
 // the manifest it belongs to. The price is a process per manifest, and a diff that changes
 // more than two or three of them is not the usual case.
 const findings: Array<Record<string, unknown>> = [];
-const attempts: Array<Record<string, unknown>> = [];
+const attempts: Attempt[] = [];
 
 for (const manifest of manifests) {
     // `--lockfile=` rather than a separate argument, so that a later edit cannot separate

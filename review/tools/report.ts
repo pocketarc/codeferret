@@ -66,8 +66,8 @@ export function reporter<Extra extends Record<string, unknown>>(
  * The repository root, because git prints paths relative to it and a finding anchors on one.
  *
  * The workspace is handed in rather than taken from the working directory, because no `bun`
- * a run starts may have the reviewed tree as its own: a `bunfig.toml` there names a
- * `preload`, and bun runs it before the script in the job holding the tokens.
+ * a run starts may have the reviewed tree as its own. The comment on `cd "$BUILD"` in
+ * run.sh has why.
  *
  * Under a command prefix the tool runs inside a container where the host's workspace path
  * does not exist, and that prefix is required to start in the repository root, so there git

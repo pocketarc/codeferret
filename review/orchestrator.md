@@ -89,6 +89,11 @@ For each merged finding, set `status`:
   thread `url` when the thread is resolved. Not the first comment of the thread unless the
   decline is in that comment: the url is checked again against the association of whoever
   wrote it, and a decline citing anything else is posted as `new`.
+
+  What the comment is about is checked again too. A reply on a thread anchored to the
+  finding's own file passes on that alone; anything else, a conversation comment included,
+  has to name that file. So do not settle a finding on a general remark: an owner writing
+  "LGTM, merging" declines nothing, and a decline resting on it is posted as `new`.
 - `new` in every other case.
 
 A thread with `outdated: true` covers nothing. GitHub collapses those, so the author
@@ -127,7 +132,7 @@ it returned and whether or not you mark it `ok`. That is the only per-lens chann
 a reader sees. A lens that reports three findings on a large interface change and also
 lists eight criteria it could not judge is covering less than its count suggests. If its
 limits stay in its report, nobody learns that. Do not route them through `notes` instead:
-`notes` is yours, and it is cut to a fixed length that fourteen lenses cannot share.
+`notes` is yours, and it is cut to a fixed length a full set of lenses cannot share.
 
 A lens that never started needs an entry too. When a session hits a budget or concurrency
 limit, later agents never launch, while the ones already running report as usual. Without

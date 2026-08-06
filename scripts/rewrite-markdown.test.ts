@@ -83,6 +83,12 @@ describe("stripDeadLinks", () => {
 });
 
 describe("isPointerOnly", () => {
+    test("is false for a list item carrying content after the pointer", () => {
+        expect(
+            isPointerOnly("- the palette is the source of truth; body text is 4.5:1", ["the palette"]),
+        ).toBe(false);
+    });
+
     test("is true for a bare list item naming the link", () => {
         expect(isPointerOnly("- the palette", ["the palette"])).toBe(true);
     });

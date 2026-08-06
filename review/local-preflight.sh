@@ -31,7 +31,15 @@ ACTUAL_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # shellcheck source=review/lib.sh
 . "$ACTUAL_ROOT/review/lib.sh"
 
-if [ -z "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+# The plugin root is the value the model substitutes into every `bash "<plugin>/review/..."`
+# line in commands/review.md, so it takes the same guard as the paths below. Both are
+# checked: an unsafe `CLAUDE_PLUGIN_ROOT` is what the model would paste, and an unsafe
+# `ACTUAL_ROOT` is what the branches below print for it to paste instead.
+if ! plain_path "$ACTUAL_ROOT" || ! plain_path "${CLAUDE_PLUGIN_ROOT:-x}"; then
+    say plugin unsafe
+    echo "the plugin root's path holds a character that would run as shell" >&2
+    exit 0
+elif [ -z "${CLAUDE_PLUGIN_ROOT:-}" ]; then
     say plugin "unset:$ACTUAL_ROOT"
 elif [ ! -f "$CLAUDE_PLUGIN_ROOT/review/build-prompts.sh" ]; then
     say plugin "mismatch:$ACTUAL_ROOT"

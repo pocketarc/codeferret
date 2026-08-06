@@ -45,14 +45,10 @@ process.chdir(join(import.meta.dir, ".."));
 // it at the CLI; a session has only this list. Some skills fan out into subagents and
 // will do their passes one after another instead.
 //
-// `WebFetch` and `WebSearch` are absent, but that is a cost rather than a control. A lens
-// reads a diff written by whoever opened the pull request, and it has `Bash`, which on a
-// runner means `curl`, `wget`, `git push` and DNS. So a lens that is talked into reading
-// CLAUDE_CODE_OAUTH_TOKEN out of its environment can also send it. What limits that in CI
-// is the shipped workflow's gate — a branch pushed here by an owner, member or
-// collaborator — and not this list. `/codeferret:review` runs under `auto`, where a
-// classifier sits in front of Bash. A lens that wants a CVE looked up says so in its
-// finding instead.
+// `WebFetch` and `WebSearch` are absent, and that bounds little: `Bash` on a runner already
+// means `curl` and DNS. What limits a lens's reach in CI is the shipped workflow's gate, a
+// branch pushed here by an owner, member or collaborator. The CLAUDE.md bullet on the tool
+// list has the argument. A lens that wants a CVE looked up says so in its finding.
 const TOOLS = "Read, Bash, Skill";
 
 const AGENTS_DIR = "agents";
@@ -89,10 +85,22 @@ function render(skillLine: string, extras: string): string {
     // Replacer functions, because `replace` reads `$&`, `` $` `` and `$1` in a
     // replacement *string* as substitutions, and JSON Schema's whole vocabulary is
     // `$schema`, `$ref`, `$defs`.
-    return brief
+    const out = brief
         .replace("__SKILL_LINE__", () => skillLine)
         .replace("__EXTRAS__", () => extras)
         .replace("__SCHEMA__", () => schema);
+
+    // A fourth placeholder added to lens-brief.md and not filled here would ship literally
+    // into every agent, and the only symptom is a lens reading `__WHATEVER__`. The check is
+    // the one render-prompt.ts ends with, for the same reason.
+    const left = out.match(/__[A-Z_]+__/g);
+
+    if (left) {
+        console.error(`review/lens-brief.md: nothing fills ${[...new Set(left)].join(", ")}`);
+        process.exit(1);
+    }
+
+    return out;
 }
 
 function agent(name: string, description: string, body: string): string {

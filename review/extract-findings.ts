@@ -21,25 +21,16 @@
 import { dirname, join } from "node:path";
 import { record } from "./json.ts";
 
-interface ModelUsage {
-    outputTokens?: number;
-    costUSD?: number;
-}
-
 interface Denial {
     tool_name?: string;
     tool_input?: { command?: string };
 }
 
-interface ResultMessage {
-    type?: string;
-    subtype?: string;
-    is_error?: boolean;
-    total_cost_usd?: number;
-    duration_ms?: number;
-    modelUsage?: Record<string, ModelUsage>;
-    permission_denials?: Denial[];
-    structured_output?: { findings?: unknown[]; lens_health?: Array<{ lens?: string; findings_returned?: number; ok?: boolean; detail?: string }> };
+interface LensHealth {
+    lens?: unknown;
+    findings_returned?: unknown;
+    ok?: unknown;
+    detail?: unknown;
 }
 
 const [runPath, outPath] = process.argv.slice(2);
@@ -53,6 +44,10 @@ function number(value: unknown): number | null {
     return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+function string(value: unknown): string | null {
+    return typeof value === "string" ? value : null;
+}
+
 const text = await Bun.file(runPath).text();
 
 let messages: unknown[];
@@ -60,24 +55,36 @@ try {
     const parsed: unknown = JSON.parse(text);
     messages = Array.isArray(parsed) ? parsed : [parsed];
 } catch {
-    messages = text
-        .split("\n")
-        .filter((line) => line.trim().length > 0)
-        .map((line) => JSON.parse(line) as unknown);
+    // Each line in a `try` of its own. A log cut off mid-line is exactly what a killed or
+    // out-of-memory session leaves behind, and that is the run whose cost and refusals
+    // somebody most wants to see: one throw here and none of the four numbers below is ever
+    // written.
+    messages = [];
+
+    for (const line of text.split("\n")) {
+        if (line.trim().length === 0) continue;
+
+        try {
+            messages.push(JSON.parse(line) as unknown);
+        } catch {
+            console.error("the run log holds a line that is not JSON, which a cut-off session leaves behind.");
+        }
+    }
 }
 
 const results = messages.map(record).filter((m) => m !== null && m.type === "result");
-const raw = results[results.length - 1];
+const last = results[results.length - 1];
 
-if (!raw) {
+if (!last) {
     console.error("no result message in the run log. The session produced no terminal output.");
     process.exit(1);
 }
 
-const last: ResultMessage = raw;
-
-if (last.is_error) {
-    console.error(`the run reported an error: ${last.subtype ?? "unknown"}`);
+// Read through the narrowers below rather than through an interface asserted over the
+// message. The shape is upstream's, and a field it renamed would come back as a confident
+// zero or a TypeError halfway through the reporting loop.
+if (last.is_error === true) {
+    console.error(`the run reported an error: ${string(last.subtype) ?? "unknown"}`);
 }
 
 const dir = dirname(outPath);
@@ -111,12 +118,12 @@ await Bun.write(join(dir, "output-tokens"), String(outputTokens));
 await Bun.write(join(dir, "duration-ms"), String(durationMs));
 await Bun.write(join(dir, "permission-denials"), String(denials.length));
 
-const structured = last.structured_output;
+const structured = record(last.structured_output);
 
 if (!structured || !Array.isArray(structured.findings)) {
     await Bun.write(join(dir, "findings-count"), "none reported");
     console.error("the run produced no structured findings");
-    console.error(`result subtype: ${last.subtype ?? "unknown"}`);
+    console.error(`result subtype: ${string(last.subtype) ?? "unknown"}`);
     console.error(`it cost ${money} and was refused ${denials.length} tool call(s)`);
     process.exit(1);
 }
@@ -124,8 +131,11 @@ if (!structured || !Array.isArray(structured.findings)) {
 await Bun.write(outPath, `${JSON.stringify(structured, null, 2)}\n`);
 await Bun.write(join(dir, "findings-count"), String(structured.findings.length));
 
-const health = structured.lens_health ?? [];
-const broken = health.filter((h) => h.ok === false);
+// Guarded like `findings` beside it. This is iterated below, after the findings file is
+// already on disk, so a `lens_health` that is not a list would turn a complete run into a
+// bare stack trace.
+const health: LensHealth[] = Array.isArray(structured.lens_health) ? structured.lens_health : [];
+const broken = health.filter((h) => record(h)?.ok === false);
 
 console.log(`findings: ${structured.findings.length}`);
 console.log(`lenses reported: ${health.length}`);
@@ -140,7 +150,12 @@ for (const [model, usage] of perModel) {
 
 for (const h of health) {
     const status = h.ok === false ? "NEEDS ATTENTION" : "ok";
-    console.log(`  ${h.lens}: ${h.findings_returned} findings, ${status}${h.detail ? ` (${h.detail})` : ""}`);
+    const detail = string(h.detail);
+
+    console.log(
+        `  ${string(h.lens) ?? "?"}: ${number(h.findings_returned) ?? "?"} findings,` +
+            ` ${status}${detail ? ` (${detail})` : ""}`,
+    );
 }
 
 if (broken.length > 0) {

@@ -8,10 +8,11 @@
  * `markdown.ts`.
  */
 
-import { brokenLenses, isListed, lenses, partition, plural } from "./findings.ts";
-import type { Finding, Merged, Partitioned } from "./findings.ts";
+import { brokenLenses, isListed, lenses, LISTED, plural } from "./findings.ts";
+import type { Finding, LensHealth, Merged, Partitioned } from "./findings.ts";
 import {
     clamp,
+    closeOpenDetails,
     closeOpenFence,
     code,
     details,
@@ -40,28 +41,43 @@ export const MAX_PROSE = 4000;
  */
 export const MAX_LENS_DETAIL = 2000;
 
-/**
- * One finding's body, which is the only model-written prose in the review that nothing
- * upstream bounds. check-findings.ts asks only that it be a non-empty string.
- */
+/** One finding's body. check-findings.ts asks only that it be a non-empty string. */
 export const MAX_FINDING_BODY = 4000;
 
-/** The workflow run this review came out of, or null when nothing names one. */
-export function runUrl(env: Record<string, string | undefined>): string | null {
+/**
+ * One finding's title, which is asked for as one line and checked only for being a string.
+ *
+ * Generous for a line. What this stops is the runaway: a title of several hundred
+ * characters renders as an unbroken run of bold text where the reader wanted something to
+ * scan, and `mention` puts titles into two lists `assemble` never budgets.
+ */
+export const MAX_TITLE = 200;
+
+/** Where this review is being posted. `listedIn` reads it to bound what the body carries. */
+export type Destination = { kind: "run"; url: string } | { kind: "session" };
+
+/**
+ * Which of the two this run is.
+ *
+ * Answered once, at the boundary, rather than re-derived from the environment wherever the
+ * question comes up: five branches over the same three variables is five chances for the
+ * body and the log beside it to describe different reviews.
+ */
+export function destinationOf(env: Record<string, string | undefined>): Destination {
     const server = env.GITHUB_SERVER_URL;
     const repo = env.GITHUB_REPOSITORY;
     const id = env.GITHUB_RUN_ID;
 
-    if (!server || !repo || !id) return null;
+    if (!server || !repo || !id) return { kind: "session" };
 
-    return `${server}/${repo}/actions/runs/${id}`;
+    return { kind: "run", url: `${server}/${repo}/actions/runs/${id}` };
 }
 
 /**
  * The findings the body prints in full.
  *
- * With a run behind it the body prints the two severities that decide whether to stop and
- * names the artifact for the rest, because that artifact is one download away for
+ * With a run behind it the body prints the severities a reader should stop for and names
+ * the artifact for the rest, because that artifact is one download away for
  * everybody reading the pull request. Posted from a session there is no artifact and no
  * run, and the findings file is a path under `.git/` on one person's machine, so every
  * finding goes in the body instead.
@@ -70,8 +86,8 @@ export function runUrl(env: Record<string, string | undefined>): string | null {
  * and a log line that contradicts the body it describes is worse than no log line: a
  * 97-finding session run once logged `listed=6` beside a body carrying all 97.
  */
-export function listedIn(fresh: Finding[], env: Record<string, string | undefined>): Finding[] {
-    return runUrl(env) ? fresh.filter(isListed) : fresh;
+export function listedIn(fresh: Finding[], to: Destination): Finding[] {
+    return to.kind === "run" ? fresh.filter(isListed) : fresh;
 }
 
 /**
@@ -96,7 +112,19 @@ export function bullet(f: Finding): string {
     // so the line goes rather than rendering the word "undefined" under the body.
     const category = f.category ? `\n\n  _${escapeInline(f.category)}_` : "";
 
-    return `- ${code(where(f))}: **${escapeInline(flatten(f.title))}**\n\n  ${body}${category}`;
+    return `- ${code(where(f))}: **${title(f)}**\n\n  ${body}${category}`;
+}
+
+/**
+ * A finding's title as one bounded line.
+ *
+ * Escaped before the cut, for the reason `lensDetail` gives: the marker `clamp` appends is
+ * markdown of its own and must not be escaped and shown as underscores. Flattened again
+ * after it, because that marker carries newlines, and one inside `bullet`'s strong emphasis
+ * closes it and leaves a literal `**` on the page.
+ */
+function title(f: Finding): string {
+    return flatten(clamp(escapeInline(flatten(f.title)), MAX_TITLE));
 }
 
 /**
@@ -114,20 +142,34 @@ export function where(f: Finding): string {
     return `${f.file}:${f.line}`;
 }
 
-/** One finding as a single line, for the sections that only say a finding was seen. */
-export function mention(f: Finding, link: string): string {
-    const target = linkTarget(f.existing_comment_url);
+/**
+ * One finding as a single line, for the sections that only say a finding was seen.
+ *
+ * `linkable` is every comment url the pull request actually carries. `existing_comment_url`
+ * is the orchestrator's word for where a finding was answered, and an `already-reported`
+ * finding takes no vetting anywhere else, so without the check a comment written by anyone
+ * who can comment can put an arbitrary link into a review posted under the bot's name.
+ */
+export function mention(f: Finding, link: string, linkable: ReadonlySet<string>): string {
+    const cited = f.existing_comment_url;
+    const target = cited && linkable.has(cited) ? linkTarget(cited) : null;
     const url = target ? ` ([${link}](${target}))` : "";
 
-    return `- ${escapeInline(flatten(f.title))} (${code(where(f))})${url}`;
+    return `- ${title(f)} (${code(where(f))})${url}`;
 }
 
 /**
- * One lens's line in the collapsed list.
+ * One lens's account of what it could not check, as a paragraph of its own inside the list
+ * item.
+ *
+ * A blank line and the item's content indent, rather than a single newline: a soft break
+ * joins the caveat onto the count above it, leaving the one channel a reader has for what a
+ * lens could not cover buried in the middle of that line. Four spaces would be an indented
+ * code block.
  *
  * Escaped before the cut rather than after, so the marker `clamp` appends is not itself
  * escaped and shown to the reader as underscores. Flattened again after it, because that
- * marker carries newlines of its own, and one of those inside a list item ends the item and
+ * marker carries newlines of its own, and one of those into column zero ends the item and
  * drops the rest of the list out of the block.
  *
  * The line starts at the item's own content column, where a `#` or a `>` opens a block of
@@ -136,7 +178,28 @@ export function mention(f: Finding, link: string): string {
 function lensDetail(detail: string): string {
     const line = escapeBlockStart(escapeInline(flatten(detail)));
 
-    return `\n  ${flatten(clamp(line, MAX_LENS_DETAIL))}`;
+    return `\n\n  ${flatten(clamp(line, MAX_LENS_DETAIL))}`;
+}
+
+/**
+ * What a lens could not check, whatever it reported.
+ *
+ * Two lenses ship without the capability their skills describe, and every step that would
+ * carry that as far as the reader is a soft one: the lens is asked to write its limits down,
+ * and the orchestrator to copy them into `detail`. Either can forget, and then a pull request full
+ * of interface changes comes back looking as though its accessibility had been checked,
+ * which is the failure `review/lens-extras/anthropic-accessibility-review.md` exists to
+ * prevent. A standing sentence is worse than the lens's own words and cannot be forgotten.
+ */
+const STANDING_DETAIL: Readonly<Record<string, string>> = {
+    "anthropic-accessibility-review":
+        "No page was rendered, so contrast, focus order, target size, reflow, text spacing," +
+        " timing and motion were not evaluated.",
+    "copilot-web-design-reviewer": "No browser was available, so nothing was judged from a rendered page.",
+};
+
+function caveatOf(h: LensHealth): string | undefined {
+    return h.detail ?? STANDING_DETAIL[lensLabel(h.lens)];
 }
 
 /** A heading, a reason, and findings listed under it. The one section that can run long. */
@@ -194,9 +257,25 @@ export function assemble(head: string[], listing: Listing | null, tail: string[]
 
     const body = rendered.join("\n\n");
 
-    // Reached only when the short sections alone exceed the limit, which takes a
-    // lens_health list or a suppressed list of a size nothing here has seen.
-    return body.length > MAX_BODY ? clamp(body, MAX_BODY) : body;
+    return body.length > MAX_BODY ? fit(body) : body;
+}
+
+/**
+ * The last-resort cut, reached only when the short sections alone exceed the limit, which
+ * takes a `lens_health` list or a suppressed list of a size nothing here has seen.
+ *
+ * Both closers run before the notice. This cut lands anywhere, including inside one of the
+ * `<details>` blocks above, and a browser closes that block at the end of the comment: the
+ * reader would get a review that appears to stop, with the notice saying it was cut sealed
+ * inside a collapsed disclosure.
+ *
+ * The reserve is for the two closers, and overrunning it costs nothing: `MAX_BODY` is
+ * already 5536 characters under what GitHub refuses.
+ */
+function fit(body: string): string {
+    const notice = "\n\n_(this review was cut for length)_";
+
+    return `${closeOpenDetails(closeOpenFence(body.slice(0, MAX_BODY - notice.length - 200)))}${notice}`;
 }
 
 /** The plugin namespace is an implementation detail, so it is dropped for display. */
@@ -204,34 +283,34 @@ export function lensLabel(lens: string): string {
     return lens.replace(/^[^:]+:/, "");
 }
 
-/** What became of the threads the orchestrator asked to close, which the body reports. */
-export interface Outcome {
+/** Everything about this posting that is not the findings themselves. */
+export interface Posting {
+    /** What became of the threads the orchestrator asked to close, which the body reports. */
     resolved: Array<{ reason: string }>;
     resolveDenied: boolean;
     /** How many threads judged finished that refusal left open. */
     leftOpen: number;
-    env: Record<string, string | undefined>;
+    to: Destination;
+    /** Every comment url the pull request carries, which is what `mention` may link. */
+    linkable: ReadonlySet<string>;
 }
 
 /**
  * The whole review body: which sections appear, in what order, and under what headings.
  *
- * The partition is a parameter so that a caller counting the same findings for its log
- * counts them once. Left to a default, the two derivations drift the day anything filters
- * or re-orders before calling this, and the body and the log then describe different
+ * The partition is a parameter rather than taken here so that a caller counting the same
+ * findings for its log counts them once. It is required for the same reason: a default
+ * would let a caller that has already filtered or re-ordered pass nothing and get a second
+ * partition of a different list, and the body and the log would then describe different
  * reviews with nothing saying so.
  */
-export function composeReview(
-    merged: Merged,
-    outcome: Outcome,
-    parts: Partitioned = partition(merged.findings),
-): string {
+export function composeReview(merged: Merged, posting: Posting, parts: Partitioned): string {
     const { fresh, suppressed, declined } = parts;
-    const { resolved, resolveDenied, leftOpen, env } = outcome;
+    const { resolved, resolveDenied, leftOpen, to, linkable } = posting;
 
     const health = merged.lens_health ?? [];
     const broken = brokenLenses(health);
-    const limited = health.filter((h) => h.detail);
+    const limited = health.filter((h) => caveatOf(h));
 
     const counts = [`**${plural(fresh.length, "new finding")}**`];
     if (suppressed.length > 0) counts.push(`${suppressed.length} raised in an earlier review`);
@@ -254,9 +333,12 @@ export function composeReview(
             .map((h) => {
                 const name = escapeInline(lensLabel(h.lens));
                 const flag = h.ok ? "" : ", **needs attention**";
-                const detail = h.detail ? lensDetail(h.detail) : "";
+                const caveat = caveatOf(h);
+                const detail = caveat ? lensDetail(caveat) : "";
 
-                return `- **${name}**: ${plural(h.findings_returned, "finding")}${flag}${detail}`;
+                // The colon separates the name from its count, so the one bold left in the
+                // list is the exception a reader has to see.
+                return `- ${name}: ${plural(h.findings_returned, "finding")}${flag}${detail}`;
             })
             .join("\n");
 
@@ -290,7 +372,7 @@ export function composeReview(
         tail.push(
             details(
                 `${plural(suppressed.length, "finding")} raised in an earlier review`,
-                suppressed.map((f) => mention(f, "earlier comment")).join("\n"),
+                suppressed.map((f) => mention(f, "earlier comment", linkable)).join("\n"),
             ),
         );
     }
@@ -299,7 +381,7 @@ export function composeReview(
         tail.push(
             details(
                 `${plural(declined.length, "finding")} raised before and declined`,
-                declined.map((f) => mention(f, "thread")).join("\n"),
+                declined.map((f) => mention(f, "thread", linkable)).join("\n"),
             ),
         );
     }
@@ -325,30 +407,43 @@ export function composeReview(
 
     // `assemble` bounds the listing whichever branch this takes, and says how many findings
     // did not fit.
-    const run = runUrl(env);
-    const listed = listedIn(fresh, env);
+    const listed = listedIn(fresh, to);
 
     let listing: Listing | null = null;
 
     if (listed.length > 0) {
         listing = {
-            heading: run ? "Critical and high findings" : "Findings",
-            lead: run
-                ? `${listed.length} of ${plural(fresh.length, "finding")}.` +
-                  ` \`findings.json\` in the \`codeferret-run\` artifact of [this run](${run}) holds every one.`
-                : "",
-            omission: run
-                ? "Every one of them is in the findings file."
-                : "This review was posted from a session, so ask whoever ran it for the rest.",
+            heading: to.kind === "run" ? listingHeading(listed) : "Findings",
+            lead:
+                to.kind === "run"
+                    ? `${listed.length} of ${plural(fresh.length, "finding")}.` +
+                      ` \`findings.json\` in the \`codeferret-run\` artifact of [this run](${to.url}) holds every one.`
+                    : "",
+            omission:
+                to.kind === "run"
+                    ? "Every one of them is in the findings file."
+                    : "This review was posted from a session, so ask whoever ran it for the rest.",
             items: listed,
         };
-    } else if (fresh.length > 0 && run) {
+    } else if (fresh.length > 0 && to.kind === "run") {
         // A heading is a promise of something under it, and the count is already above.
         tail.unshift(
             `No finding is critical or high.` +
-                ` \`findings.json\` in the \`codeferret-run\` artifact of [this run](${run}) holds every one.`,
+                ` \`findings.json\` in the \`codeferret-run\` artifact of [this run](${to.url}) holds every one.`,
         );
     }
 
     return assemble(head, listing, tail);
+}
+
+/**
+ * What to call the section, which depends on what `isListed` let through.
+ *
+ * A severity nothing recognises is listed on purpose, because leaving a critical defect out
+ * of the comment on the strength of a label nobody chose is the wrong way to be wrong. The
+ * heading has to follow: `bullet` prints no severity, so under the narrower title a reader
+ * has no way to tell that a finding graded neither critical nor high is in the list.
+ */
+function listingHeading(listed: Finding[]): string {
+    return listed.every((f) => LISTED.has(f.severity)) ? "Critical and high findings" : "Findings worth stopping for";
 }

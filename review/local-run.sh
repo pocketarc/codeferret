@@ -25,7 +25,10 @@
 set -euo pipefail
 
 PLUGIN=${1:?usage: local-run.sh PLUGIN_ROOT BASE_REF [LENS...]}
-BASE=${2?missing base ref (pass an empty string to work it out here)}
+# No parentheses in the message: semgrep's bash parser fails on one inside a parameter
+# expansion and then produces no results for the whole file, so a script that drives a
+# review goes unscanned and nothing says so.
+BASE=${2?missing base ref; pass an empty string to work it out here}
 shift 2
 
 TOPLEVEL=$(git rev-parse --show-toplevel)

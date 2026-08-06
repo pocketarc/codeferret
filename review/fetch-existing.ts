@@ -23,15 +23,11 @@ import {
 } from "./github.ts";
 import { reason } from "./json.ts";
 
-/**
- * The two shapes an inline comment of ours was ever written in, which is how a thread an
- * earlier version left behind is recognised.
- *
- * Nothing writes either now: a review is one body and creates no threads at all. What is
- * left to recognise is what is still open on pull requests reviewed before that change.
- * Change either string and those threads become unrecognisable, nothing is resolved, and
- * nothing reports a problem.
- */
+// The two constants below are the only handle on inline threads that earlier versions left
+// open, on pull requests that are still open now. Change either string and those threads
+// become unrecognisable, nothing is resolved, and nothing reports a problem.
+
+/** The hidden marker on comments from the runs made while the plugin work was in progress. */
 const MARKER = "<!-- codeferret -->";
 
 /** The category trailer every released inline comment ended with. */

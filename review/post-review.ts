@@ -19,11 +19,11 @@
  */
 
 import { dirname, join } from "node:path";
-import { brokenLenses, partition, plural, vetDeclines } from "./findings.ts";
+import { brokenLenses, commentUrls, partition, plural, vetDeclines } from "./findings.ts";
 import type { Merged } from "./findings.ts";
 import { graphql, graphqlFailure, requirePullNumber, requireRepository, rest, tokenFromStdinOrEnv } from "./github.ts";
 import { reason } from "./json.ts";
-import { composeReview, listedIn } from "./review-body.ts";
+import { composeReview, destinationOf, listedIn } from "./review-body.ts";
 
 const [findingsPath, headSha, prNumber] = process.argv.slice(2);
 const repo = process.env.GITHUB_REPOSITORY;
@@ -38,8 +38,6 @@ if (!findingsPath || !headSha || !prNumber || !token || !repo) {
 requireRepository(repo);
 requirePullNumber(prNumber);
 
-// Bound here rather than inside a function, because the check above narrows these only at
-// this level: a function body could be called before it ran.
 const findingsFile: string = findingsPath;
 const buildDir = dirname(findingsFile);
 
@@ -102,10 +100,19 @@ const existing = await readExisting();
 // rule and the comments it judged as text in one context.
 const vetted = vetDeclines(merged.findings, existing);
 
-if (vetted.reopened > 0) {
+if (vetted.untraceable > 0) {
     console.error(
-        `${plural(vetted.reopened, "decline")} cited no comment from an owner, member or` +
+        `${plural(vetted.untraceable, "decline")} cited no comment from an owner, member or` +
             ` collaborator, and no resolved thread. Reporting them as new.`,
+    );
+}
+
+// Counted apart from the rest, because this is the half of the rule a maintainer feels:
+// a decline they meant, reopened because the comment behind it named nothing.
+if (vetted.unrelated > 0) {
+    console.error(
+        `${plural(vetted.unrelated, "decline")} cited a comment that says nothing about the file` +
+            ` the finding is in. Reporting them as new.`,
     );
 }
 
@@ -126,6 +133,12 @@ const { all: allFindings, fresh: findings, suppressed, declined } = parts;
  * reused as soon as a merged branch is recreated and can head two open pull requests at
  * once. Without it, a review of one pull request silences findings on another.
  *
+ * The findings written back are the vetted ones, not the orchestrator's. A decline
+ * `vetDeclines` overturned was posted as new, and `fetch-previous.ts` reads this file into
+ * the next run's `previous.json`, where a `declined` entry stays declined. Writing the
+ * original array back would leave the artifact contradicting the review beside it and
+ * re-suppress the finding the vetting exists to rescue.
+ *
  * A failure to write it costs a repeated comment on the next run and nothing worse, so it
  * is logged rather than allowed to fail a job whose review has already landed.
  */
@@ -133,7 +146,11 @@ async function markPosted(url: string | null): Promise<void> {
     try {
         await Bun.write(
             findingsFile,
-            `${JSON.stringify({ ...merged, posted: { at: new Date().toISOString(), url, pr: prNumber } }, null, 2)}\n`,
+            `${JSON.stringify(
+                { ...merged, findings: parts.all, posted: { at: new Date().toISOString(), url, pr: prNumber } },
+                null,
+                2,
+            )}\n`,
         );
     } catch (error) {
         console.error(
@@ -198,9 +215,14 @@ if (toResolve.length > 0 && !process.env.DRY_RUN) {
 
 const leftOpen = toResolve.length - resolved.length;
 const broken = brokenLenses(merged.lens_health ?? []);
-const listed = listedIn(findings, process.env);
+const to = destinationOf(process.env);
+const listed = listedIn(findings, to);
 
-const reviewBody = composeReview(merged, { resolved, resolveDenied, leftOpen, env: process.env }, parts);
+const reviewBody = composeReview(
+    merged,
+    { resolved, resolveDenied, leftOpen, to, linkable: commentUrls(existing) },
+    parts,
+);
 
 console.log(
     `total=${allFindings.length} new=${findings.length} suppressed=${suppressed.length}` +

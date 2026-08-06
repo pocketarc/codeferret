@@ -46,10 +46,7 @@ fi
 # than resolved again here. Every line the review names is a line of that commit, so a
 # review taken at one commit and posted against another sends the reader to code nobody
 # reviewed. reviewed-commit.ts owns how the file is read, beside the code that writes it.
-# Run from the build directory, not from the checkout. Bun reads a `bunfig.toml` from its
-# working directory and runs the `preload` it names first, and this is a checkout of a
-# branch somebody else wrote, holding a `gh` token that is the person's own. run.sh's
-# `cd "$BUILD"` has the rest.
+# Run from the build directory, not from the checkout: run.sh's `cd "$BUILD"` has why.
 if ! REVIEWED_HEAD=$(cd "$BUILD" && bun "$PLUGIN/review/reviewed-commit.ts" "$BUILD/diff-args"); then
     exit 1
 fi

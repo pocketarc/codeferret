@@ -3,7 +3,7 @@
 // it. So each is pinned against the shapes the artifacts endpoint really returns.
 
 import { describe, expect, test } from "bun:test";
-import { candidates, firstPosted, fromThisRepository, postedFor, previousOf } from "./previous.ts";
+import { candidates, firstPosted, fromThisRepository, postedFor, previousOf, sameWorkflow } from "./previous.ts";
 import type { Artifact } from "./previous.ts";
 
 function artifact(over: Partial<Artifact> & { run?: Record<string, unknown> } = {}): Artifact {
@@ -41,6 +41,25 @@ describe("fromThisRepository", () => {
         expect(fromThisRepository({ repository_id: 5 })).toBe(false);
         expect(fromThisRepository({})).toBe(false);
         expect(fromThisRepository(undefined)).toBe(false);
+    });
+});
+
+describe("sameWorkflow", () => {
+    test("takes a run of the workflow now running", () => {
+        expect(sameWorkflow(42, { workflow_id: 42 })).toBe(true);
+    });
+
+    test("refuses a run of the throwaway workflow somebody pushed to upload an artifact", () => {
+        expect(sameWorkflow(42, { workflow_id: 99 })).toBe(false);
+    });
+
+    test("refuses a run that names no workflow at all", () => {
+        expect(sameWorkflow(42, {})).toBe(false);
+        expect(sameWorkflow(42, null)).toBe(false);
+    });
+
+    test("takes any run in a session, where nothing names a workflow to compare against", () => {
+        expect(sameWorkflow(null, { workflow_id: 99 })).toBe(true);
     });
 });
 

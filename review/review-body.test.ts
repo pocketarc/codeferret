@@ -1,7 +1,17 @@
 import { describe, expect, test } from "bun:test";
+import { partition } from "./findings.ts";
 import type { Finding, Merged } from "./findings.ts";
-import { assemble, bullet, composeReview, MAX_BODY, MAX_LENS_DETAIL, mention, runUrl } from "./review-body.ts";
-import type { Outcome } from "./review-body.ts";
+import {
+    assemble,
+    bullet,
+    composeReview,
+    destinationOf,
+    MAX_BODY,
+    MAX_LENS_DETAIL,
+    MAX_TITLE,
+    mention,
+} from "./review-body.ts";
+import type { Posting } from "./review-body.ts";
 
 function finding(over: Partial<Finding> = {}): Finding {
     return {
@@ -77,46 +87,74 @@ describe("bullet", () => {
     test("leaves the category line out when the finding has none", () => {
         expect(bullet(finding({ category: "" }))).not.toContain("undefined");
     });
+
+    test("clamps a runaway title, so it is not a wall of bold text", () => {
+        const line = bullet(finding({ title: "t".repeat(4000) })).split("\n")[0] ?? "";
+
+        expect(line).toContain("(cut for length)");
+        expect(line.length).toBeLessThan(MAX_TITLE + 200);
+    });
 });
 
 describe("mention", () => {
+    const onThePullRequest = new Set([
+        "https://example.test/1",
+        "not a url",
+        "javascript:alert(1)",
+        "https://example.test/a(b)",
+    ]);
+
     test("links the thread when there is one", () => {
-        expect(mention(finding({ existing_comment_url: "https://example.test/1" }), "thread")).toBe(
-            "- A title (`a.ts:1`) ([thread](https://example.test/1))",
-        );
+        expect(
+            mention(finding({ existing_comment_url: "https://example.test/1" }), "thread", onThePullRequest),
+        ).toBe("- A title (`a.ts:1`) ([thread](https://example.test/1))");
     });
 
     test("names the finding without a link when the previous run left no url", () => {
-        expect(mention(finding(), "thread")).toBe("- A title (`a.ts:1`)");
+        expect(mention(finding(), "thread", onThePullRequest)).toBe("- A title (`a.ts:1`)");
     });
 
     test("drops a url that is not a link, rather than spilling it into the line", () => {
-        expect(mention(finding({ existing_comment_url: "not a url" }), "thread")).toBe("- A title (`a.ts:1`)");
-        expect(mention(finding({ existing_comment_url: "javascript:alert(1)" }), "thread")).toBe(
+        expect(mention(finding({ existing_comment_url: "not a url" }), "thread", onThePullRequest)).toBe(
+            "- A title (`a.ts:1`)",
+        );
+        expect(mention(finding({ existing_comment_url: "javascript:alert(1)" }), "thread", onThePullRequest)).toBe(
             "- A title (`a.ts:1`)",
         );
     });
 
     test("encodes the brackets that would end a link target early", () => {
-        expect(mention(finding({ existing_comment_url: "https://example.test/a(b)" }), "thread")).toContain(
-            "(https://example.test/a%28b%29)",
+        expect(
+            mention(finding({ existing_comment_url: "https://example.test/a(b)" }), "thread", onThePullRequest),
+        ).toContain("(https://example.test/a%28b%29)");
+    });
+
+    test("does not link a url no comment on the pull request carries", () => {
+        expect(mention(finding({ existing_comment_url: "https://evil.test/x" }), "thread", onThePullRequest)).toBe(
+            "- A title (`a.ts:1`)",
         );
+    });
+
+    test("bounds a runaway title, which would otherwise be a wall of text in the list", () => {
+        const line = mention(finding({ title: "t".repeat(4000) }), "thread", onThePullRequest);
+
+        expect(line.length).toBeLessThan(MAX_TITLE + 200);
     });
 });
 
-describe("runUrl", () => {
+describe("destinationOf", () => {
     test("builds the run url from what a runner sets", () => {
         expect(
-            runUrl({
+            destinationOf({
                 GITHUB_SERVER_URL: "https://github.com",
                 GITHUB_REPOSITORY: "pocketarc/codeferret",
                 GITHUB_RUN_ID: "42",
             }),
-        ).toBe("https://github.com/pocketarc/codeferret/actions/runs/42");
+        ).toEqual({ kind: "run", url: "https://github.com/pocketarc/codeferret/actions/runs/42" });
     });
 
-    test("is null outside a run, so nothing links a page that does not exist", () => {
-        expect(runUrl({ GITHUB_REPOSITORY: "pocketarc/codeferret" })).toBeNull();
+    test("is a session outside a run, so nothing links a page that does not exist", () => {
+        expect(destinationOf({ GITHUB_REPOSITORY: "pocketarc/codeferret" })).toEqual({ kind: "session" });
     });
 });
 
@@ -158,6 +196,14 @@ describe("assemble", () => {
         expect(body).toContain("Small");
     });
 
+    test("closes a details block the last-resort cut left open, and says so outside it", () => {
+        const wide = Array.from({ length: 400 }, (_, i) => `- lens ${i}: ${"d".repeat(200)}`).join("\n");
+        const body = assemble(["## CodeFerret", `<details>\n<summary>lenses</summary>\n\n${wide}\n</details>`], null, []);
+
+        expect(body).toEndWith("</details>\n\n_(this review was cut for length)_");
+        expect((body.match(/<details/g) ?? []).length).toBe((body.match(/<\/details>/g) ?? []).length);
+    });
+
     test("the tail survives a listing that would fill the body", () => {
         const items = Array.from({ length: 200 }, (_, i) => finding({ title: `T${i}`, body: "x".repeat(2000) }));
         const body = assemble(["## CodeFerret"], listing(items), ["### Caveats"]);
@@ -167,27 +213,35 @@ describe("assemble", () => {
 });
 
 describe("composeReview", () => {
-    const quiet: Outcome = { resolved: [], resolveDenied: false, leftOpen: 0, env: {} };
+    const quiet: Posting = {
+        resolved: [],
+        resolveDenied: false,
+        leftOpen: 0,
+        to: { kind: "session" },
+        linkable: new Set(),
+    };
 
-    const onARunner = {
+    const onARunner = destinationOf({
         GITHUB_SERVER_URL: "https://github.com",
         GITHUB_REPOSITORY: "pocketarc/codeferret",
         GITHUB_RUN_ID: "7",
-    };
+    });
 
-    function review(over: Partial<Merged> = {}, outcome: Partial<Outcome> = {}): string {
-        return composeReview({ findings: [], ...over }, { ...quiet, ...outcome });
+    function review(over: Partial<Merged> = {}, posting: Partial<Posting> = {}): string {
+        const merged: Merged = { findings: [], ...over };
+
+        return composeReview(merged, { ...quiet, ...posting }, partition(merged.findings));
     }
 
     test("lists the critical and high findings when a run holds the rest", () => {
-        const body = review({ findings: [finding({ severity: "high" })] }, { env: onARunner });
+        const body = review({ findings: [finding({ severity: "high" })] }, { to: onARunner });
 
         expect(body).toContain("### Critical and high findings");
         expect(body).toContain("1 of 1 finding.");
     });
 
     test("heads no section when a run holds every finding and none is listed", () => {
-        const body = review({ findings: [finding({ severity: "low" })] }, { env: onARunner });
+        const body = review({ findings: [finding({ severity: "low" })] }, { to: onARunner });
 
         expect(body).not.toContain("### Findings");
         expect(body).toContain("No finding is critical or high.");
@@ -202,9 +256,16 @@ describe("composeReview", () => {
     });
 
     test("lists a severity the schema does not carry rather than leaving it out", () => {
-        const body = review({ findings: [finding({ severity: "Critical", title: "Odd label" })] }, { env: onARunner });
+        const body = review({ findings: [finding({ severity: "Critical", title: "Odd label" })] }, { to: onARunner });
 
         expect(body).toContain("Odd label");
+    });
+
+    test("stops promising critical and high when a label nothing recognises is in the list", () => {
+        const body = review({ findings: [finding({ severity: "sev1", title: "Odd label" })] }, { to: onARunner });
+
+        expect(body).toContain("### Findings worth stopping for");
+        expect(body).not.toContain("### Critical and high findings");
     });
 
     test("announces a lens that did not report, above the collapsed list", () => {
@@ -217,7 +278,7 @@ describe("composeReview", () => {
 
         expect(body).toContain("> 1 of 2 lenses did not report normally");
         expect(body).toContain("2 lenses ran, 1 needing attention");
-        expect(body).toContain("**caveman-review**: 0 findings, **needs attention**");
+        expect(body).toContain("- caveman-review: 0 findings, **needs attention**");
     });
 
     test("keeps a runaway lens detail on one line, inside its list item", () => {
@@ -238,6 +299,43 @@ describe("composeReview", () => {
 
         expect(body).toContain("1 lens ran, all reporting");
         expect(body).not.toContain("needs attention");
+    });
+
+    test("gives a lens caveat a paragraph of its own, not the end of the count line", () => {
+        const body = review({
+            lens_health: [{ lens: "codeferret:x", findings_returned: 1, ok: true, detail: "no rendered page" }],
+        });
+
+        expect(body).toContain("- x: 1 finding\n\n  no rendered page");
+    });
+
+    test("says what the two render-limited lenses could not check when neither said so", () => {
+        const body = review({
+            lens_health: [
+                { lens: "codeferret:anthropic-accessibility-review", findings_returned: 4, ok: true },
+                { lens: "codeferret:copilot-web-design-reviewer", findings_returned: 2, ok: true },
+            ],
+        });
+
+        expect(body).toContain("> 2 of 2 lenses named something they could not check.");
+        expect(body).toContain("No page was rendered");
+        expect(body).toContain("No browser was available");
+    });
+
+    test("prefers the lens's own words to the standing sentence", () => {
+        const body = review({
+            lens_health: [
+                {
+                    lens: "codeferret:anthropic-accessibility-review",
+                    findings_returned: 4,
+                    ok: true,
+                    detail: "1.4.3 needs a rendered page",
+                },
+            ],
+        });
+
+        expect(body).toContain("1.4.3 needs a rendered page");
+        expect(body).not.toContain("No page was rendered");
     });
 
     test("says outside the block that a healthy lens could not check something", () => {
@@ -292,7 +390,7 @@ describe("composeReview", () => {
     });
 
     test("links the run for the findings the body does not print", () => {
-        const body = review({ findings: [finding({ severity: "high" })] }, { env: onARunner });
+        const body = review({ findings: [finding({ severity: "high" })] }, { to: onARunner });
 
         expect(body).toContain("[this run](https://github.com/pocketarc/codeferret/actions/runs/7)");
     });

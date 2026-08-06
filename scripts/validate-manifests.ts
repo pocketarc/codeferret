@@ -86,12 +86,24 @@ interface Action {
     };
 }
 
-let cachedAction: Action | null | undefined;
+/**
+ * A manifest parsed once, however many checks ask for it.
+ *
+ * The `Failures` list belongs to whichever check asked first, so a parse failure is
+ * reported once rather than on every check that reads the file. Every one of them returns
+ * early on a null, so nothing carries on as though the file had parsed.
+ */
+function parsedOnce<T>(load: (list: Failures) => Promise<T | null>): (list: Failures) => Promise<T | null> {
+    let held: { value: T | null } | undefined;
 
-async function action(list: Failures): Promise<Action | null> {
-    if (cachedAction === undefined) cachedAction = (await parseYaml(list, "action.yml")) as Action | null;
-    return cachedAction;
+    return async (list) => {
+        if (!held) held = { value: await load(list) };
+
+        return held.value;
+    };
 }
+
+const action = parsedOnce<Action>(async (list) => (await parseYaml(list, "action.yml")) as Action | null);
 
 async function checkAction(): Promise<Failures> {
     const list: Failures = [];
@@ -150,7 +162,12 @@ async function checkActionShell(): Promise<Failures> {
 
             // SC2016 for the same reason the workflow passes it: these blocks printf
             // markdown, and a backtick in a single-quoted format is not an expansion.
-            const run = Bun.spawnSync(["shellcheck", "-e", "SC2016", file]);
+            //
+            // `-x` with the repository root as the source path, because a step is written
+            // out to a temporary file and a `# shellcheck source=` directive in it would
+            // otherwise resolve nowhere. Two steps source review/lib.sh for the helper that
+            // writes their outputs, and the point of the check is to cover it.
+            const run = Bun.spawnSync(["shellcheck", "-e", "SC2016", "-x", `--source-path=${process.cwd()}`, file]);
             if (run.exitCode !== 0) {
                 fail(list, "action.yml", `shellcheck on step '${name}':\n${new TextDecoder().decode(run.stdout)}`);
             }
@@ -165,14 +182,16 @@ async function checkActionShell(): Promise<Failures> {
 
 const MANIFEST_FILE = ".claude-plugin/plugin.json";
 
-let cachedManifest: { name?: string; version?: string; description?: string; skills?: string } | null | undefined;
-
-async function pluginManifest(list: Failures) {
-    if (cachedManifest === undefined) {
-        cachedManifest = (await parseJson(list, MANIFEST_FILE)) as typeof cachedManifest;
-    }
-    return cachedManifest;
+interface PluginManifest {
+    name?: string;
+    version?: string;
+    description?: string;
+    skills?: string;
 }
+
+const pluginManifest = parsedOnce<PluginManifest>(
+    async (list) => (await parseJson(list, MANIFEST_FILE)) as PluginManifest | null,
+);
 
 async function checkPluginManifest(): Promise<Failures> {
     const list: Failures = [];
@@ -250,8 +269,6 @@ async function checkMarketplace(): Promise<Failures> {
     return list;
 }
 
-let cachedBundled: Set<string> | undefined;
-
 /**
  * The lenses this repository bundles: a directory under lenses/skills holding a SKILL.md.
  *
@@ -260,15 +277,11 @@ let cachedBundled: Set<string> | undefined;
  * lenses as missing because the check that populated the set had not run.
  */
 function bundledLenses(): Set<string> {
-    if (cachedBundled === undefined) {
-        cachedBundled = new Set(
-            readdirSync("lenses/skills", { withFileTypes: true })
-                .filter((entry) => entry.isDirectory() && existsSync(`lenses/skills/${entry.name}/SKILL.md`))
-                .map((entry) => entry.name),
-        );
-    }
-
-    return cachedBundled;
+    return new Set(
+        readdirSync("lenses/skills", { withFileTypes: true })
+            .filter((entry) => entry.isDirectory() && existsSync(`lenses/skills/${entry.name}/SKILL.md`))
+            .map((entry) => entry.name),
+    );
 }
 
 async function checkBundledSkills(): Promise<Failures> {
@@ -361,7 +374,9 @@ async function checkDefaults(): Promise<Failures> {
     const manifest = await action(list);
     if (!manifest) return list;
 
-    for (const lens of lines(manifest.inputs?.lenses?.default)) {
+    const lenses = lines(manifest.inputs?.lenses?.default);
+
+    for (const lens of lenses) {
         if (!existsSync(`lenses/skills/${lens}/SKILL.md`)) {
             fail(list, "action.yml", `default lens '${lens}' has no bundled skill`);
         }
@@ -384,7 +399,7 @@ async function checkDefaults(): Promise<Failures> {
 
     if (!toolsLens) {
         fail(list, "review/lib.sh", "declares no TOOLS_LENS, so nothing says which lens reads the tool reports");
-    } else if (tools.length > 0 && !lines(manifest.inputs?.lenses?.default).includes(toolsLens)) {
+    } else if (tools.length > 0 && !lenses.includes(toolsLens)) {
         fail(list, "action.yml", `tools run by default but '${toolsLens}' is not a default lens, so nothing reads them`);
     }
 
@@ -465,6 +480,60 @@ async function checkRetention(): Promise<Failures> {
     }
 
     console.log(`OK retention: action.yml and fetch-previous.ts both say ${paged} days`);
+    return list;
+}
+
+/** Number words for the README's headline, up to more lenses than anyone will bundle. */
+const NUMBER_WORDS = [
+    "zero",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "ten",
+    "eleven",
+    "twelve",
+    "thirteen",
+    "fourteen",
+    "fifteen",
+    "sixteen",
+    "seventeen",
+    "eighteen",
+    "nineteen",
+    "twenty",
+];
+
+/**
+ * The lens count the README leads with, against the lenses actually bundled.
+ *
+ * The first sentence a reader meets is the one claim about the shipped set that no test
+ * touches, and it has been wrong: a release that added two lenses and dropped one left the
+ * README saying fourteen for a set of thirteen. Every other prose count was rewritten to
+ * name the set rather than its size, so this is the only numeral left to check.
+ */
+async function checkHeadlineCount(): Promise<Failures> {
+    const list: Failures = [];
+    const bundled = bundledLenses().size;
+    const word = NUMBER_WORDS[bundled];
+
+    if (!word) {
+        fail(list, "README.md", `${bundled} bundled lenses is past the number words listed here`);
+        return list;
+    }
+
+    const expected = `through ${word} independent code review skills`;
+
+    if (!(await Bun.file("README.md").text()).includes(expected)) {
+        fail(list, "README.md", `does not say "${expected}", and ${bundled} lenses are bundled`);
+        return list;
+    }
+
+    console.log(`OK README.md: leads with ${word} lenses, which is what lenses/skills holds`);
     return list;
 }
 
@@ -583,6 +652,7 @@ const CHECKS: Array<[string, () => Promise<Failures>]> = [
     ["generated", checkGenerated],
     ["finding-rules", checkFindingRules],
     ["retention", checkRetention],
+    ["lens-count", checkHeadlineCount],
     ["prompts", checkPrompts],
     ["workflows", checkWorkflows],
     ["versions", checkShippedVersions],

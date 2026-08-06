@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { clamp, closeOpenFence, escapeBlocks, escapeInline, fenceMap } from "./markdown.ts";
+import { clamp, closeOpenDetails, closeOpenFence, escapeBlocks, escapeInline, fenceMap } from "./markdown.ts";
 
 describe("fenceMap", () => {
     test("marks the delimiters as fenced, so a caller mapping the rest leaves them alone", () => {
@@ -19,6 +19,10 @@ describe("fenceMap", () => {
     test("reads everything after an unclosed fence as code", () => {
         expect(fenceMap(["```", "x"])).toEqual([true, true]);
     });
+
+    test("does not close a block on a nested fence carrying an info string", () => {
+        expect(fenceMap(["```", "```sql", "x", "```", "```"])).toEqual([true, true, true, true, true]);
+    });
 });
 
 describe("closeOpenFence", () => {
@@ -35,6 +39,22 @@ describe("closeOpenFence", () => {
 
         expect(closeOpenFence(text)).toBe(text);
         expect(fenceMap(text.split("\n")).every(Boolean)).toBe(true);
+    });
+});
+
+describe("closeOpenDetails", () => {
+    test("leaves a balanced block alone", () => {
+        const text = "<details>\n<summary>s</summary>\n\nx\n</details>";
+
+        expect(closeOpenDetails(text)).toBe(text);
+    });
+
+    test("closes one a cut left open", () => {
+        expect(closeOpenDetails("<details open>\n<summary>s</summary>\n\nx")).toEndWith("x\n</details>");
+    });
+
+    test("closes one for each open block", () => {
+        expect(closeOpenDetails("<details>\na\n</details>\n<details>\nb")).toEndWith("b\n</details>");
     });
 });
 
@@ -61,6 +81,10 @@ describe("escapeInline", () => {
 
     test("escapes a tilde pair, which renders as strikethrough", () => {
         expect(escapeInline("~~draft~~")).toBe("\\~\\~draft\\~\\~");
+    });
+
+    test("escapes an at sign, which would notify whoever owns that name", () => {
+        expect(escapeInline("bump @types/bun")).toBe("bump \\@types/bun");
     });
 });
 
@@ -90,6 +114,10 @@ describe("escapeBlocks", () => {
 
     test("leaves everything inside a fence alone", () => {
         expect(escapeBlocks(["```html", "<div>", "```"])).toEqual(["```html", "<div>", "```"]);
+    });
+
+    test("escapes a mention in prose, which would notify an account on every push", () => {
+        expect(escapeBlocks(["the @param tag"])).toEqual(["the \\@param tag"]);
     });
 });
 

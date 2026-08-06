@@ -28,13 +28,7 @@ export function splitRepository(repo: string | undefined): { owner: string; name
     return { owner, name };
 }
 
-/**
- * `GITHUB_REPOSITORY` split, or the script ends.
- *
- * Every script that talks to GitHub takes this check, so it is made once here rather than
- * copied: a fourth caller written without the copy is a silent hole, and a tightening
- * applied to one copy leaves the others behind.
- */
+/** `GITHUB_REPOSITORY` split, or the script ends. */
 export function requireRepository(repo: string | undefined): { owner: string; name: string } {
     const split = splitRepository(repo);
 
@@ -99,6 +93,11 @@ export interface GraphqlResult {
  * The two callers want different things from it: one treats any error as fatal, the other
  * reads the message to tell a missing permission from a bad thread id. So neither the
  * status nor the errors are decided here.
+ *
+ * A body that is not JSON comes back as an error rather than a rejection. GitHub answers a
+ * 502 or a gateway timeout with HTML, and post-review.ts resolves threads at the top level
+ * before it posts: a throw there ends the process with a review that is written, paid for
+ * and unposted, over a thread nobody needed closed.
  */
 export async function graphql(
     token: string,
@@ -111,7 +110,18 @@ export async function graphql(
         body: JSON.stringify({ query, variables }),
     });
 
-    const payload = (await response.json()) as { data?: unknown; errors?: Array<{ message: string }> };
+    const body = await response.text();
+    let payload: { data?: unknown; errors?: Array<{ message: string }> };
+
+    try {
+        payload = JSON.parse(body);
+    } catch {
+        return {
+            ok: false,
+            status: response.status,
+            errors: [{ message: `HTTP ${response.status}, and the body was not JSON: ${body.slice(0, 200)}` }],
+        };
+    }
 
     return { ok: response.ok, status: response.status, data: payload.data, errors: payload.errors };
 }

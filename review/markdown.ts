@@ -6,12 +6,12 @@
  * `scripts/rewrite-markdown.ts` rewrites a vendored skill and can delete a line.
  *
  * The escaping below is the whole policy for what a model's prose may open in a posted
- * review. It lives in one module because the two halves — what a character does mid-line
- * and what it does at the start of one — were written apart and disagreed about `<`, and a
+ * review. It lives in one module because the two halves (what a character does mid-line,
+ * and what it does at the start of one) were written apart and disagreed about `<`, and a
  * review body is where the disagreement showed.
  */
 
-const FENCE = /^\s*(```+|~~~+)/;
+const FENCE = /^\s*(```+|~~~+)(.*)$/;
 
 /**
  * Whether a run of delimiters closes a block the given run opened.
@@ -19,9 +19,14 @@ const FENCE = /^\s*(```+|~~~+)/;
  * The length is what lets one code block nest inside another: a four-backtick fence around
  * three-backtick samples. Read as a single character, the inner ``` closes the outer ````,
  * and every line after it is read as prose.
+ *
+ * The info string is the other half of that. CommonMark lets only an opening fence carry
+ * one, so ```` ```sql ```` can never close a block. Without the rule a nested ```` ```sql ````
+ * sample ends its parent block of the same length, and every line inside it comes back as
+ * prose the rewriter may edit or delete. That is live in two vendored skills.
  */
-function closes(fence: string, open: string): boolean {
-    return fence[0] === open[0] && fence.length >= open.length;
+function closes(fence: string, info: string, open: string): boolean {
+    return fence[0] === open[0] && fence.length >= open.length && info.trim() === "";
 }
 
 /**
@@ -33,7 +38,9 @@ function scan(lines: string[]): { inside: boolean[]; open: string | null } {
     let open: string | null = null;
 
     for (const line of lines) {
-        const fence = line.match(FENCE)?.[1];
+        const match = line.match(FENCE);
+        const fence = match?.[1];
+        const info = match?.[2] ?? "";
 
         if (fence && open === null) {
             open = fence;
@@ -41,7 +48,7 @@ function scan(lines: string[]): { inside: boolean[]; open: string | null } {
             continue;
         }
 
-        if (fence && open !== null && closes(fence, open)) {
+        if (fence && open !== null && closes(fence, info, open)) {
             open = null;
             inside.push(true);
             continue;
@@ -66,6 +73,21 @@ export function closeOpenFence(text: string): string {
     const { open } = scan(text.split("\n"));
 
     return open === null ? text : `${text}\n${open}`;
+}
+
+/**
+ * Close every `<details>` the text left open, so what follows sits outside the block.
+ *
+ * The counterpart to `closeOpenFence`, and it exists for the review body's last-resort cut:
+ * a browser closes an unclosed `<details>` at the end of the comment, hiding everything
+ * after the cut inside a collapsed disclosure. `fit` in review-body.ts has the rest.
+ */
+export function closeOpenDetails(text: string): string {
+    const open = (text.match(/<details\b/g) ?? []).length - (text.match(/<\/details>/g) ?? []).length;
+
+    if (open <= 0) return text;
+
+    return `${text}\n${Array.from({ length: open }, () => "</details>").join("\n")}`;
 }
 
 /**
@@ -123,22 +145,32 @@ function escapeOutsideCode(text: string, set: string): string {
  * caveat. A title naming a glob is the case that bites: a doubled asterisk opens strong
  * emphasis, so a bare `build` exclusion glob renders as emphasis debris rather than as a
  * path.
+ *
+ * `@` is in the set because a review quotes identifiers back out of a diff, and GitHub
+ * turns `@types/bun`, a `@param` line or a CODEOWNERS entry into a mention that notifies
+ * whoever owns that name, from the account that posts the review, on every push. Anyone who
+ * wants that only has to put a handle where a lens will quote it. GitHub renders `\@name`
+ * as the text it is.
  */
 export function escapeInline(text: string): string {
-    return escapeOutsideCode(text, "\\*_[]<~");
+    return escapeOutsideCode(text, "\\*_[]<~@");
 }
 
 /**
- * Escape the raw HTML in a line of a model's prose, leaving its markdown alone.
+ * Escape the raw HTML and the mentions in a line of a model's prose, leaving its markdown
+ * alone.
  *
  * For a block of prose, where emphasis and links are the model's own and worth keeping but
  * a tag is not. GitHub renders `<details>` and `<div>` wherever they sit on a line, not
  * only at column zero, and one left unclosed hides everything after it: the suppressed
  * list, the declined list and the caveats included, which are where a reader learns how
  * much of the review to trust. Prose about markup is exactly what these lenses write.
+ *
+ * `@` for the reason `escapeInline` takes it: a finding body quoting a scoped package name
+ * would otherwise notify an account on every push.
  */
 function escapeTags(text: string): string {
-    return escapeOutsideCode(text, "\\<");
+    return escapeOutsideCode(text, "\\<@");
 }
 
 /**

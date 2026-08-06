@@ -10,6 +10,39 @@
 # `$`, `(`, `)`, a backtick, `;`, `&` and `|`, so a ref name can run on substitution. A
 # legal ref this turns away is a refusal the caller can see and rename around.
 
+# One GitHub Actions step output, for action.yml's `run:` steps.
+#
+# The heredoc form for every value, one-line ones included. In the `name=value` form GitHub
+# reads a value's second line onward as further outputs, and `base-ref`, `pr-number` and
+# `head-sha` all arrive from a workflow input: a `base-ref` whose second line reads
+# `head=<sha>` would otherwise set the commit the review is recorded against.
+#
+# The delimiter is drawn fresh for each value, because a fixed one is the same hole one step
+# in: a value carrying that exact line closes the heredoc early, and everything after it is
+# read as further outputs again.
+emit_output() {
+    local delim
+    delim="CF_$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+
+    {
+        printf '%s<<%s\n' "$1" "$delim"
+        printf '%s\n' "$2"
+        printf '%s\n' "$delim"
+    } >>"$GITHUB_OUTPUT"
+}
+
+# The same for a value in a file, and nothing at all when the file is not there.
+#
+# `$(cat)` rather than the file itself: extract-findings.ts writes these with no trailing
+# newline, which would run the value into the delimiter.
+emit_output_file() {
+    if [ ! -f "$2" ]; then
+        return 0
+    fi
+
+    emit_output "$1" "$(cat "$2")"
+}
+
 # The lens the static analysis tools report to, and the only one that reads their reports.
 # Declared once, because two scripts decide what to run by matching this name against a
 # lens list, and validate-manifests.ts checks the action's defaults against it.
@@ -72,11 +105,11 @@ default_branch() {
 # The ref a review diffs against: what the caller named, then the open pull request's base,
 # then origin's default branch. Empty when none of the three answers. Call `open_pr` first.
 #
-# One copy, because commands/review.md tells the model not to relay the base the preflight
-# printed to the run that reviews under it, on the grounds that both work it out the same
-# way. Written out twice that was a note; here it is the same function. The two disagreeing
-# costs fourteen lenses reading the wrong range for twenty minutes, and the preflight output
-# the user was shown says otherwise.
+# In commands/review.md the model is told not to relay the base the preflight printed to the
+# run that reviews under it, on the grounds that both work it out the same way. Both callers
+# run this function, so they cannot disagree. If they did, every lens would read the wrong
+# range for twenty minutes while the preflight output the user was shown named a different
+# base.
 resolve_base() {
     local default
 

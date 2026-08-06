@@ -37,6 +37,8 @@ Stop when you see any of these, and name every one you saw:
 - A `plugin=` value starting with `unset:` or `mismatch:`. The rest of the value is the
   plugin root of the script that just ran. Report that root. Without it, every `<plugin>`
   below points at a directory with no review scripts in it.
+- `plugin=unsafe`. The plugin sits under a directory whose path would run as shell where
+  the review builds its commands. Say so and stop.
 - `repo=missing`. This is not a git repository.
 - `repo=unsafe` or `toplevel=unsafe`. This checkout sits under a directory whose path
   would run as shell where the review builds its commands. Say so and stop.
@@ -81,11 +83,12 @@ Use the lenses named in `$ARGUMENTS`. Otherwise the run uses every line of
 `<plugin>/review/defaults/lenses.txt`, which is the set the action runs. Read that file to
 say how many that is.
 
-Before running, say how many lenses it is and what it costs: fourteen took 20m46s and
-$36.00 on Opus and returned 97 findings, and the bill scales with the number of lenses
-rather than the wait. Then stop and wait for the user to agree, in a turn of their own. A
-bare `/codeferret:review` is the whole default set, and someone typing it to see what the
-command does has not agreed to that.
+Before running, say how many lenses it is, taking the number from that file rather than
+from here, and what it costs: a fourteen-lens run took 20m46s and $36.00 on Opus and
+returned 97 findings, and the bill scales with the number of lenses rather than the wait.
+Then stop and wait for the user to agree, in a turn of their own. A bare
+`/codeferret:review` is the whole default set, and someone typing it to see what the command
+does has not agreed to that.
 
 ## 4. Run it
 
@@ -126,33 +129,18 @@ died. Say what the last lines of its output were, and print whatever
 `<git-dir>/codeferret/run/build/` does hold: `cost-usd`, `duration-ms` and
 `permission-denials` are written before the findings are. Then stop.
 
-Otherwise read `<git-dir>/codeferret/run/build/findings.json`. Open with its `summary`, so
-a reader who wanted the overview does not have to scroll past every finding to reach it.
+Otherwise print the findings:
 
-Then the findings whose `status` is `new`, grouped by file in diff order and by line within
-a file:
-
-```
-path/to/file.ts:42: One-line title
-
-The finding body.
+```sh
+bash "<plugin>/review/local-print.sh" "<plugin>"
 ```
 
-These four rules are `review/review-body.ts` written out for a reader rather than for
-GitHub. It renders the posted review under the same rules, and the argument behind each is
-in `review/README.md`. Change one here and change it there.
-
-- A finding marked `already-reported` or `declined` was answered on a previous round, so it
-  does not belong in that list. Count them instead, in a line saying where to read them:
-  "4 findings were raised before and are in findings.json".
-- Do not indent the body. Four spaces after a blank line is an indented code block.
-- Start each finding on a fresh line with `path:line`, so a terminal can link it.
-- Leave severity and lens agreement out. Both are in the findings file.
-
-Close with the lenses: name every lens whose `ok` is false and say what happened. Nothing
-else in the output says so. A lens marked `ok` having found nothing is not one of these.
-Half the set is domain lenses, and one with nothing in its domain says why in `detail`,
-which is worth repeating in a line.
+Relay what it prints, whole and unedited. It opens with the run's `summary`, gives each new
+finding as `path:line`, a title and a body, counts the ones a previous round already
+answered, and closes with every lens that could not report and every lens that named
+something it could not check. It uses `review/findings.ts` and `review/review-body.ts`, the
+same modules a posted review is rendered from, so what you show here and what the action
+would post cannot disagree.
 
 Then print the refusal count in `build/permission-denials` when it is above zero, and
 what the run cost, which `review/run.sh` prints as it finishes.

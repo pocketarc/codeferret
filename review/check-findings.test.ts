@@ -205,6 +205,31 @@ describe("check-findings", () => {
         );
     });
 
+    test("removes a lens_health that is not a list, which would be a TypeError in post-review.ts", async () => {
+        const { code, out, written } = await check({ findings: [finding()], lens_health: {} });
+
+        expect(code).toBe(0);
+        expect(out).toContain("FIXED lens_health");
+        expect(written).not.toHaveProperty("lens_health");
+    });
+
+    test("removes a resolve that is not a list either", async () => {
+        const { code, written } = await check({ findings: [finding()], resolve: "none" });
+
+        expect(code).toBe(0);
+        expect(written).not.toHaveProperty("resolve");
+    });
+
+    test("repairs a status that is missing, not only one that is wrong", async () => {
+        const bare = finding();
+        delete bare.status;
+
+        const { code, written } = await check({ findings: [bare] });
+
+        expect(code).toBe(0);
+        expect(findingsOf(written)[0]?.status).toBe("new");
+    });
+
     test("its own rules still name fields the schema has", async () => {
         const run = Bun.spawnSync(["bun", SCRIPT, "--self-check"]);
 

@@ -184,8 +184,8 @@ is in `review/README.md`.
 - Resolving a thread is a judgement the orchestrator makes, weighing `isOutdated` against
   the diff as one piece of evidence. `post-review.ts` then refuses any thread
   `fetch-existing.ts` did not mark `mine`, and that mark takes both a login and a comment
-  shape. `fetch-existing.ts` says why neither counts alone. Loosen either half and anyone
-  who can comment can hand this run a thread to close.
+  shape. Why neither counts alone is written beside `mine` in `fetch-existing.ts`. Loosen
+  either half and anyone who can comment can hand this run a thread to close.
 - A reply cannot make a security defect safe. The carve-out is written into
   `orchestrator.md`, because "this is intentional" on a vulnerability would otherwise
   silence it for good. Keep it if you touch the decline rules.
@@ -197,8 +197,14 @@ is in `review/README.md`.
   orchestrator and in `vetDeclines` for the run, because the orchestrator holds that rule
   and the comments it judges as text in one context, and prose is not a boundary. A
   decline names the comment it rests on, and one that cannot be traced to an entitled
-  commenter or a resolved thread goes back to `new`. Every decline is reopened when
-  `existing.json` cannot be read: a repeated comment costs less than a finding nobody sees.
+  commenter or a resolved thread goes back to `new`. So does one whose comment says nothing
+  about the finding's file, or the same maintainer's "LGTM" would settle every finding on
+  the pull request. Every decline is reopened when `existing.json` cannot be read: a
+  repeated comment costs less than a finding nobody sees.
+- The findings file a run uploads carries the statuses `vetDeclines` decided, not the
+  orchestrator's. `post-review.ts` posted the reopened finding and wrote the decline back,
+  so `fetch-previous.ts` handed it to the next run as `declined` and the gate held for one
+  run. Whatever else anyone adds to `markPosted`, the array it writes is the vetted one.
 - Whatever needs the range or the pathspec reads `build/diff-args`. `post-review.ts`
   built the pathspec itself once, the two drifted, and the anchor map then covered files no
   lens had read. `review/diff-args.ts` holds the one reader and the one rule for getting the

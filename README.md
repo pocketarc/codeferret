@@ -2,14 +2,17 @@
 
 Like CodeRabbit, but it uses your Claude subscription, and goes even deeper.
 
-CodeFerret reviews a diff through fourteen independent code review skills at once, then
-merges their findings into a single review comment. Each finding records which of the
-fourteen found it, so agreement between them stays visible.
+CodeFerret reviews a diff through thirteen independent code review skills at once, then
+merges their findings into a single review comment. Each finding records which lenses found
+it, so agreement between them stays visible.
 
 Every lens reads source. The accessibility and web design lenses have no browser and no
-rendered page, so contrast, focus visibility, focus order, target size, reflow, text
-spacing, timing and motion are not evaluated. Every review carries what each lens could
-not check, in that lens's own words.
+rendered page, so no criterion whose outcome depends on a computed style, a live focus ring,
+an accessibility tree, timing or motion is evaluated: contrast, focus order, target size,
+reflow, text spacing and timing limits among them.
+What the source can settle and what it cannot is written out in full in
+[`review/lens-extras/anthropic-accessibility-review.md`](review/lens-extras/anthropic-accessibility-review.md).
+Every review carries what each lens could not check, in that lens's own words.
 
 There are two ways to run it: as a GitHub action on every pull request, or as a Claude
 Code plugin on the branch in front of you.
@@ -107,10 +110,10 @@ behind, so the next run on that pull request posts all of these findings again.
 `/codeferret:install-workflow` writes the action's workflow into the repository you are
 in, for when you would rather have this run on every pull request.
 
-Lenses run in parallel, so fourteen of them take about as long as three and cost a good
-deal more. One fourteen-lens run came to $36.00 and 20m46s on Opus, and returned 97
-findings. `/codeferret:review` says how many lenses it is about to dispatch, and waits;
-the action reports what each run cost in the job summary.
+Lenses run in parallel, so the bill grows with the number of lenses and the wait barely
+does. Three took about 15 minutes; a fourteen-lens run came to $36.00 in 20m46s on Opus and
+returned 97 findings. `/codeferret:review` says how many lenses it is about to dispatch, and
+waits; the action reports what each run cost in the job summary.
 
 ## Where things are
 

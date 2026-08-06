@@ -20,13 +20,7 @@ export function record(value: unknown): Record<string, unknown> | null {
     return isRecord(value) ? value : null;
 }
 
-/**
- * What went wrong, as a line a reader can act on.
- *
- * A line like this is often the only sign that anything went wrong. One function, so every
- * caller words it the same way and none of them loses the message from something thrown
- * that is not an `Error`.
- */
+/** What went wrong, as a line a reader can act on. */
 export function reason(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
 }

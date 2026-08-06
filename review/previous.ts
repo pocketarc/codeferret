@@ -60,6 +60,30 @@ export function fromThisRepository(run: WorkflowRun | undefined): boolean {
 }
 
 /**
+ * Whether the run that uploaded this belongs to the workflow now running.
+ *
+ * The name `codeferret-run` is protocol between the step that writes an artifact and the run
+ * that reads it, and the artifacts endpoint lists every artifact of that name in the
+ * repository whatever produced it. Without this, anyone who can push a branch can add a
+ * throwaway workflow that uploads a `findings.json` carrying a `posted` record and a list of
+ * file and title pairs, let it run once, and delete it again: the artifact outlives the
+ * branch, the endpoint lists it ahead of every genuine one, and the next review marks each
+ * of those findings `already-reported`. Editing `fetch-previous.ts` would do the same thing
+ * and be in the diff at merge time; this leaves no trace anywhere a reviewer looks.
+ *
+ * `own` is null where nothing names a workflow, which is `/codeferret:review` on somebody's
+ * own machine, and then any run counts. What a session does with a previous artifact is
+ * print it to the person who asked, and they can see what they were shown.
+ */
+export function sameWorkflow(own: number | null, producingRun: unknown): boolean {
+    if (own === null) return true;
+
+    const id = record(producingRun)?.workflow_id;
+
+    return Number.isInteger(id) && id === own;
+}
+
+/**
  * When post-review.ts recorded this pull request's review as accepted, or null.
  *
  * The pull request number has to match. Artifacts are found by head branch, and a branch

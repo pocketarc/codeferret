@@ -8,7 +8,7 @@
  *
  * `user-invocable: false` is removed, which keeps `/codeferret:<lens>` available for
  * running one lens by hand. On 2.1.220 the flag hides the slash menu entry and nothing
- * else: the skill still registers, and the model still sees it.
+ * else: Claude Code still registers the skill, and the model still sees it.
  *
  * `description` is replaced. Upstream wrote it to win the skill an invocation:
  * writing-review asks to be used "proactively whenever writing, reviewing, or

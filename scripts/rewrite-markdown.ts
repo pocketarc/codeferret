@@ -99,7 +99,17 @@ export function isPointerOnly(line: string, linkTexts: string[]): boolean {
     const named = linkTexts.filter((text) => text !== "");
 
     if (named.some((text) => bare === text || bare === `${text}.`)) return true;
-    if (LIST_ITEM.test(line) && named.some((text) => bare.startsWith(text))) return true;
+
+    // A bullet whose whole content is the pointer. The tail still has to be filler, for the
+    // reason the branch below applies the same test: `- [the shared palette](…) is the
+    // source of truth; body text is 4.5:1` starts with the link text and carries the
+    // threshold after it, and dropping the line drops the threshold.
+    if (
+        LIST_ITEM.test(line) &&
+        named.some((text) => bare.startsWith(text) && ONLY_FILLER.test(bare.slice(text.length)))
+    ) {
+        return true;
+    }
 
     return named.some((text) => {
         const at = bare.lastIndexOf(text);

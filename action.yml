@@ -73,9 +73,11 @@ inputs:
             writes `.lockfile`, and npm writes JSON. `out` and `build` are matched at the
             repository root and one level inside `apps/` and `packages/`, because both are
             legal App Router route segments and the any-depth form hides `app/build/` from
-            every lens. `dist` stays at any depth: it is a packaging convention rather than
-            a word anybody routes on. `.vercel/` is root-anchored for the same reason as
-            `out`, and `next-env.d.ts` is a fixed filename that is never a route segment.
+            every lens. `dist`, `.next` and `.vercel` stay at any depth: a packaging
+            convention and two dot-prefixed directories, and the App Router's scan skips a
+            dot-prefixed entry, so none of the three is a name anybody routes on. In a
+            monorepo `vercel build` writes to `apps/<app>/.vercel/output/` beside that app's
+            `.next/`. `next-env.d.ts` is a fixed filename that is never a route segment.
             Add your own workspace directory here if it is neither `apps/` nor `packages/`.
         required: false
         default: |
@@ -87,7 +89,7 @@ inputs:
             node_modules/**
             vendor/**
             **/.next/**
-            .vercel/**
+            **/.vercel/**
             **/next-env.d.ts
             **/dist/**
             out/**
@@ -126,9 +128,16 @@ inputs:
         description: |
             Prefix for the `claude` and `bun` invocations, for repositories that run their
             toolchain in a container rather than on the runner. For example
-            `docker compose exec -T -w /app devtools`. The prefix must put both binaries on
-            PATH, mount the checkout, and start in the repository root, because the review
-            reads the working tree and runs `git diff`. Leave empty to run on the runner.
+            `docker compose exec -T -w /app devtools`. Leave empty to run on the runner.
+
+            The prefix must put both binaries on PATH and start in the repository root,
+            because the review reads the working tree and runs `git diff`. It must also
+            mount three paths at the same absolute location they have on the runner: the
+            checkout, `$GITHUB_ACTION_PATH`, which holds every script the prefix runs, and
+            `$RUNNER_TEMP/codeferret`, which holds the run's plugin, the diff command each
+            lens is given and the static analysis reports. `run.sh` checks the last two and
+            stops with the path named, because a lens that cannot reach the build directory
+            reads no diff and returns a review that is empty for no stated reason.
 
             Everything the review runs itself stays out of the checkout's own directory,
             because bun runs the `preload` script a `bunfig.toml` there names. A prefix
@@ -330,7 +339,19 @@ runs:
               HEAD_SHA: ${{ inputs.head-sha }}
               DEFAULT_PR: ${{ github.event.pull_request.number }}
               DEFAULT_HEAD: ${{ github.event.pull_request.head.sha }}
+              RESOLVE_THREADS_IN: ${{ inputs.resolve-threads }}
           run: |
+              # Refused rather than read as off, because somebody who wrote 'no' meant off
+              # and somebody who wrote 'ture' meant on, and neither should find out from the
+              # review.
+              case "$RESOLVE_THREADS_IN" in
+                  true | false) ;;
+                  *)
+                      echo "resolve-threads is '$RESOLVE_THREADS_IN'. It has to be 'true' or 'false'." >&2
+                      exit 1
+                      ;;
+              esac
+
               if [ -n "$BASE_REF" ]; then
                   base="$BASE_REF"
               elif [ -n "$DEFAULT_BASE" ]; then
@@ -350,35 +371,26 @@ runs:
                   git fetch --no-tags origin -- "$DEFAULT_BASE" || true
               fi
 
-              if ! git rev-parse --verify --quiet "$base" >/dev/null; then
+              # `--` for the reason the fetch above takes one: `$base` comes from the
+              # `base-ref` input, and build-prompts.sh's `plain_ref` has not run on it yet.
+              if ! git rev-parse --verify --quiet -- "$base" >/dev/null; then
                   echo "base ref '$base' does not resolve in this checkout" >&2
                   exit 1
               fi
 
-              # The delimiter form for all three, for the reason `artifact-path` is refused
-              # a second line above. These three come from inputs too, and a `base-ref`
-              # whose second line reads `head=<sha>` would otherwise decide the commit the
-              # review is recorded against.
-              emit() {
-                  {
-                      printf '%s<<CF_EOF\n' "$1"
-                      printf '%s\n' "$2"
-                      printf 'CF_EOF\n'
-                  } >>"$GITHUB_OUTPUT"
-              }
+              # shellcheck source=review/lib.sh
+              . "$GITHUB_ACTION_PATH/review/lib.sh"
 
-              emit base "$base"
-              emit pr "${PR_NUMBER:-$DEFAULT_PR}"
-              emit head "${HEAD_SHA:-$DEFAULT_HEAD}"
+              emit_output base "$base"
+              emit_output pr "${PR_NUMBER:-$DEFAULT_PR}"
+              emit_output head "${HEAD_SHA:-$DEFAULT_HEAD}"
 
         - name: Run the review
           id: review
           shell: bash
-          # Not the workspace, which a composite `run:` step would otherwise default to.
-          # Bun reads a `bunfig.toml` from its working directory and runs the `preload` it
-          # names before the script, so on the workspace bun would run whatever the reviewed
-          # branch put in that file, in a step holding both tokens. run.sh's `cd "$BUILD"`
-          # covers the rest. Nothing here needs the checkout: run.sh is handed it as an
+          # Not the workspace, which a composite `run:` step would otherwise default to, and
+          # which is the tree under review in a step holding both tokens. run.sh's
+          # `cd "$BUILD"` has why. Nothing here needs the checkout: run.sh takes it as an
           # argument.
           working-directory: ${{ runner.temp }}
           env:
@@ -394,7 +406,10 @@ runs:
               BASE: ${{ steps.target.outputs.base }}
               PR: ${{ steps.target.outputs.pr }}
               OWN_LOGIN: ${{ inputs.own-login }}
-              RESOLVE_THREADS: ${{ inputs.resolve-threads == 'false' && '0' || '1' }}
+              # Tested for the on value, not the off one. Resolving takes somebody's words
+              # off the page and the next run reads a resolved thread back as a declined
+              # finding, so `no`, `off`, `0` and a typo all have to mean off.
+              RESOLVE_THREADS: ${{ inputs.resolve-threads == 'true' && '1' || '0' }}
               PERMISSION_MODE: bypassPermissions
           run: |
               out="$RUNNER_TEMP/codeferret/build"
@@ -406,28 +421,17 @@ runs:
                   "$RUNNER_TEMP/codeferret" \
                   "$GITHUB_WORKSPACE" || status=$?
 
-              # The delimiter form for every file, one-line values included, for the reason
-              # the two steps above use it.
-              emit() {
-                  if [ -f "$out/$1" ]; then
-                      {
-                          printf '%s<<CF_EOF\n' "$1"
-                          # cat alone would run the value into the delimiter:
-                          # extract-findings.ts writes these files with no trailing newline.
-                          printf '%s\n' "$(cat "$out/$1")"
-                          printf 'CF_EOF\n'
-                      } >>"$GITHUB_OUTPUT"
-                  fi
-              }
+              # shellcheck source=review/lib.sh
+              . "$GITHUB_ACTION_PATH/review/lib.sh"
 
               if [ -f "$out/findings.json" ]; then
-                  echo "findings-file=$out/findings.json" >>"$GITHUB_OUTPUT"
+                  emit_output findings-file "$out/findings.json"
               fi
 
-              emit findings-count
-              emit cost-usd
-              emit output-tokens
-              emit findings-checked
+              emit_output_file findings-count "$out/findings-count"
+              emit_output_file cost-usd "$out/cost-usd"
+              emit_output_file output-tokens "$out/output-tokens"
+              emit_output_file findings-checked "$out/findings-checked"
 
               if ! $PREFIX bun "$GITHUB_ACTION_PATH/review/summary.ts" "$out" "$status" >>"$GITHUB_STEP_SUMMARY"; then
                   printf '### CodeFerret\n\nThe review failed before it could report what it had spent.\n' >>"$GITHUB_STEP_SUMMARY"

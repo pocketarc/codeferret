@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Run one review, from lens names to a checked findings file.
 #
-# The action calls this, and so does /codeferret:review. That is the point: a review is
-# one sequence of steps, and two copies of it drift. Everything either caller varies goes
-# in the environment below.
+# The action calls this, and so does /codeferret:review. Everything either caller varies
+# goes in the environment below.
 #
 # The orchestrator runs here, in its own process, rather than in whoever's session asked
 # for it. It reads a diff and pull request comments written by whoever opened them, and a
@@ -30,7 +29,7 @@
 #                     `static-analysis` lens, which decides which findings hold. These run
 #                     under PREFIX and need git and docker rather than the repository's
 #                     own toolchain, so leave TOOLS empty where the prefix has neither.
-#   RESOLVE_THREADS   Set to 0 to close no threads. Use 0 everywhere except CI.
+#   RESOLVE_THREADS   0 to close no threads. Use 0 everywhere except CI.
 #   GITHUB_TOKEN, GITHUB_REPOSITORY   needed when PR is set.
 #   INCLUDE_WORKING_TREE  1 to review uncommitted work as well.
 set -euo pipefail
@@ -57,17 +56,40 @@ PERMISSION_MODE=${PERMISSION_MODE:-bypassPermissions}
 # shellcheck source=review/lib.sh
 . "$ACTION/review/lib.sh"
 
+# A prefix mounts only what whoever wrote it was told to mount, and two of the three paths a
+# run needs are outside the checkout. Named here rather than left to fail on their own: a
+# missing action path shows up in the first seconds as a bun module-resolution error, and a
+# missing build directory shows up much later and much more quietly, with every lens reading
+# no diff at all and the review coming back empty for no stated reason.
+prefix_reaches() {
+    if [ -z "$PREFIX" ]; then
+        return 0
+    fi
+
+    if $PREFIX test -d "$1"; then
+        return 0
+    fi
+
+    echo "the command prefix cannot reach $1. Mount it in the container at that same path." >&2
+    exit 1
+}
+
+prefix_reaches "$ACTION"
+
 # PREFIX goes with it because build-prompts.sh runs bun too, to render an agent for a lens
 # the action does not bundle.
 printf '%s\n' "$LENSES" |
     PREFIX="$PREFIX" bash "$ACTION/review/build-prompts.sh" "$BASE" "$ACTION" "$OUT" "$WORKSPACE"
 
+prefix_reaches "$BUILD"
+
 # No `bun` this script starts may have the reviewed tree as its working directory. Bun
 # reads `bunfig.toml` from there, `preload` in that file names a script, and bun runs it
-# before the one on the command line. A branch that adds the file therefore runs code
-# inside the job holding the tokens, before a lens is dispatched and with no model in the
-# loop. Only the working directory decides this: `-c` pointed at another file does not
-# suppress it, and the lookup does not walk up, so the build directory is out of reach.
+# before the one on the command line. So whoever pushes a branch carrying that file has bun
+# run their script inside the job holding the tokens, before a lens is dispatched and with
+# no model in the loop. Only the working directory matters here: `-c` pointed at another
+# file does not suppress it, and the lookup does not walk up, so the build directory is out
+# of reach.
 #
 # Only the orchestrator starts in the workspace, and it does so in a subshell below,
 # because its lenses read whatever tree their session started in. The tools take the
@@ -90,9 +112,16 @@ cd "$BUILD"
 # nothing below needs, and the files a job step writes its own results to. Those files are
 # not read-only: a line appended to GITHUB_PATH or GITHUB_ENV lands in every later step of
 # the job, and the next one runs post-review.ts with the token this block just removed. The
-# action's own `emit` helper and summary.ts both run in the parent shell after this script
-# has returned, which keeps its own copy of the environment, so removing them here costs
-# nothing.
+# action's own `emit_output` helper and summary.ts both run in the parent shell after this
+# script has returned, which keeps its own copy of the environment, so removing them here
+# costs nothing.
+#
+# Removing those five names is not the same as putting the files out of reach. The runner
+# creates them under `$RUNNER_TEMP/_runner_file_commands` before the job starts, and the
+# orchestrator is handed build paths under `RUNNER_TEMP` anyway, so a lens with Bash can
+# list the directory and append to a `set_env_` file whatever this shell exports. Like the
+# WebFetch and WebSearch denials, this raises the cost rather than closing the channel; what
+# would close it is running the orchestrator somewhere that directory does not exist.
 #
 # This is a denylist and a denylist is the weaker shape: an allowlist would need the full
 # set of variables the Claude Code CLI reads to start, and a missing one fails the run
@@ -129,10 +158,14 @@ done
 if [ -n "${PR:-}" ]; then
     across=(env "GITHUB_REPOSITORY=${GITHUB_REPOSITORY:-}" "GITHUB_RUN_ID=${GITHUB_RUN_ID:-}")
 
+    # Half the fetch can fail on its own. fetch-existing.ts writes the half that came back
+    # and names the half that did not, and the orchestrator treats only the named half as
+    # unread, so the message below is true either way, where reporting the whole file as
+    # empty would not be.
     printf '%s' "$token" |
         $PREFIX "${across[@]}" bun "$ACTION/review/fetch-existing.ts" \
             "$PR" "$BUILD/existing.json" ${OWN_LOGIN:+"$OWN_LOGIN"} ||
-        echo "could not read this pull request's comments. Every finding will count as new." >&2
+        echo "could not read all of this pull request's comments. Whatever went unread counts as new." >&2
 
     # What the last run raised is in its own findings file, which needs `actions: read` to
     # read back. The shipped workflow grants it and a consumer can decline it, so this is
@@ -221,6 +254,13 @@ status=0
             --disallowed-tools Edit Write NotebookEdit WebFetch WebSearch \
             --plugin-dir "$OUT"
 ) >"$BUILD/run.json" || status=$?
+
+# The orchestrator ran with Bash under bypassPermissions and knows this directory: its
+# dispatch prompt names `build/diff-args`. Whether the action posts a review turns on the
+# two files below, and each is evidence only if the step that earns it wrote it during this
+# run. So anything at either path goes now, and the two steps below put it back or they do
+# not.
+rm -f "$BUILD/findings.json" "$BUILD/findings-checked"
 
 if [ -s "$BUILD/run.json" ]; then
     extracted=0

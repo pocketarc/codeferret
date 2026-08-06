@@ -93,11 +93,13 @@ const MAY_DECLINE = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
 interface Commenter {
     association?: string;
     url?: string;
+    body?: string;
 }
 
 interface Threaded {
     resolved?: boolean;
     url?: string;
+    file?: string;
     comments?: Commenter[];
 }
 
@@ -107,36 +109,111 @@ interface Existing {
 }
 
 /**
- * The urls that count as evidence of a decline: a comment from someone entitled to settle
- * one, or any comment on a thread somebody resolved.
+ * The comments that can settle a finding, and what each one is about.
  *
- * Resolving is the harder act. GitHub refuses `resolveReviewThread` to a token that cannot
- * write contents, so a resolved thread stands on its own, and the association of the
- * comments on it is no guide to who closed it.
+ * A comment qualifies when someone entitled to settle a finding wrote it, or when it sits
+ * on a thread somebody resolved. Resolving is the harder act: GitHub refuses
+ * `resolveReviewThread` to a token that cannot write contents, so a resolved thread stands
+ * on its own, and the association of the comments on it is no guide to who closed it.
+ *
+ * `onFile` is the file a comment's thread is anchored to. `inText` is the comment's own
+ * words, which is all a conversation comment has to say what it is about.
  */
-function settlingUrls(existing: Existing): Set<string> {
-    const urls = new Set<string>();
+interface Settling {
+    onFile: Map<string, string>;
+    inText: Map<string, string>;
+}
 
-    const take = (c: Commenter | undefined, resolved: boolean): void => {
+function settlingComments(existing: Existing): Settling {
+    const onFile = new Map<string, string>();
+    const inText = new Map<string, string>();
+
+    const take = (c: Commenter | undefined, file: string, resolved: boolean): void => {
         if (!c?.url) return;
-        if (resolved || MAY_DECLINE.has(c.association ?? "")) urls.add(c.url);
+        if (!resolved && !MAY_DECLINE.has(c.association ?? "")) return;
+
+        if (file) onFile.set(c.url, file);
+        inText.set(c.url, c.body ?? "");
     };
 
     for (const thread of existing.threads ?? []) {
         const resolved = thread.resolved === true;
+        const file = typeof thread.file === "string" ? thread.file : "";
 
-        if (resolved && thread.url) urls.add(thread.url);
+        if (resolved && thread.url && file) onFile.set(thread.url, file);
 
-        for (const comment of thread.comments ?? []) take(comment, resolved);
+        for (const comment of thread.comments ?? []) take(comment, file, resolved);
     }
 
-    for (const comment of existing.conversation ?? []) take(comment, false);
+    for (const comment of existing.conversation ?? []) take(comment, "", false);
+
+    return { onFile, inText };
+}
+
+/**
+ * Every comment url the pull request carries, whoever wrote it.
+ *
+ * `review-body.ts` renders `existing_comment_url` as a link, and that url is the
+ * orchestrator's word for where a finding was answered. An `already-reported` finding is
+ * vetted nowhere else, so without this a comment written by anyone who can comment can put
+ * an arbitrary link into a review posted under the bot's name.
+ */
+export function commentUrls(existing: unknown): ReadonlySet<string> {
+    const parsed = typeof existing === "object" && existing !== null ? (existing as Existing) : {};
+    const urls = new Set<string>();
+
+    for (const thread of parsed.threads ?? []) {
+        if (thread.url) urls.add(thread.url);
+
+        for (const comment of thread.comments ?? []) {
+            if (comment?.url) urls.add(comment.url);
+        }
+    }
+
+    for (const comment of parsed.conversation ?? []) {
+        if (comment?.url) urls.add(comment.url);
+    }
 
     return urls;
 }
 
 /**
- * Reopen every decline that cannot be traced to someone entitled to make it.
+ * Whether a settling comment is about the file the finding is in.
+ *
+ * Without this the set is flat, and a maintainer who comments "LGTM, merging" settles every
+ * finding on the pull request. A thread carries the file it is anchored to, so
+ * a bare "intentional" reply on that thread settles a finding in that file. A conversation
+ * comment carries nothing but its words, so it has to name the path or the file itself.
+ *
+ * The residual: a maintainer who settles one finding in a file settles every finding this
+ * run made in that file, and a comment naming `a.ts` reaches a finding in any directory's
+ * `a.ts`. Tighter than that starts reopening the declines a maintainer plainly meant, and
+ * a repeated comment costs less than a finding nobody sees.
+ */
+function isAbout(settling: Settling, url: string, file: string): boolean {
+    if (!file) return false;
+    if (settling.onFile.get(url) === file) return true;
+
+    const text = settling.inText.get(url);
+
+    if (text === undefined) return false;
+
+    const base = file.slice(file.lastIndexOf("/") + 1);
+
+    return text.includes(file) || (base !== "" && text.includes(base));
+}
+
+export interface Vetted {
+    findings: Finding[];
+    /** Declines citing a comment nobody entitled wrote, or no comment that is there at all. */
+    untraceable: number;
+    /** Declines citing an entitled comment that says nothing about the finding's file. */
+    unrelated: number;
+}
+
+/**
+ * Reopen every decline that cannot be traced to someone entitled to make it, about the
+ * finding it was made against.
  *
  * The orchestrator is told which associations may settle a finding, and it then takes that
  * rule and the comments it judges as text in one context, with nothing marking one as the
@@ -148,24 +225,27 @@ function settlingUrls(existing: Existing): Set<string> {
  * That costs a comment somebody has already answered, and the other way costs a finding
  * nobody sees.
  */
-export function vetDeclines(findings: Finding[], existing: unknown): { findings: Finding[]; reopened: number } {
+export function vetDeclines(findings: Finding[], existing: unknown): Vetted {
     const parsed = typeof existing === "object" && existing !== null ? (existing as Existing) : {};
-    const settling = settlingUrls(parsed);
-    let reopened = 0;
+    const settling = settlingComments(parsed);
+    let untraceable = 0;
+    let unrelated = 0;
 
     const vetted = findings.map((f) => {
         if (f.status !== "declined") return f;
 
         const url = f.existing_comment_url;
+        const entitled = url ? settling.onFile.has(url) || settling.inText.has(url) : false;
 
-        if (url && settling.has(url)) return f;
+        if (url && entitled && isAbout(settling, url, f.file)) return f;
 
-        reopened += 1;
+        if (entitled) unrelated += 1;
+        else untraceable += 1;
 
         return { ...f, status: "new" as const };
     });
 
-    return { findings: vetted, reopened };
+    return { findings: vetted, untraceable, unrelated };
 }
 
 /** Keeping a count of what was taken out makes a matcher that eats findings visible. */
@@ -184,7 +264,6 @@ export function plural(n: number, word: string): string {
     return `${n} ${word}${n === 1 ? "" : "s"}`;
 }
 
-/** `plural` cannot reach this one, and a one-lens run is what `/codeferret:review` gives. */
 export function lenses(n: number): string {
     return n === 1 ? "1 lens" : `${n} lenses`;
 }

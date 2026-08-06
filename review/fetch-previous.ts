@@ -14,19 +14,19 @@
  * findings, and the orchestrator reads that the same way it reads a first run: every
  * finding is new.
  *
- * An artifact has to prove three things before what it holds silences anything: that its
- * review was posted, that the review was of this pull request, and that it came from a run
- * of a branch pushed here. `previous.ts` decides each of them, on the function that makes
- * it, and "The previous run's findings come out of its artifact" in `review/README.md` has
- * the argument for all three.
+ * Four things have to be true of an artifact before what it holds silences anything: its
+ * review was posted, the review was of this pull request, it came from a run of a branch
+ * pushed here, and that run was one of this workflow's. `previous.ts` answers each of them,
+ * on the function that makes it, and "The previous run's findings come out of its artifact"
+ * in `review/README.md` has the argument for all four.
  *
  * Usage: bun fetch-previous.ts <pr-number> <out.json>
  * Env:   GITHUB_TOKEN (or the token on stdin), GITHUB_REPOSITORY, GITHUB_RUN_ID
  */
 
 import { requirePullNumber, requireRepository, rest, restJson, tokenFromStdinOrEnv } from "./github.ts";
-import { reason } from "./json.ts";
-import { candidates, firstPosted } from "./previous.ts";
+import { reason, record } from "./json.ts";
+import { candidates, firstPosted, sameWorkflow } from "./previous.ts";
 import type { Artifact, Previous } from "./previous.ts";
 import { MAX_ENTRY_BYTES, readFromZip } from "./unzip.ts";
 
@@ -70,8 +70,6 @@ if (!prNumber || !outPath || !token || !repo) {
 
 requireRepository(repo);
 
-// Bound here rather than read inside a function, because the check narrows it only at this
-// level.
 const pull: string = requirePullNumber(prNumber);
 
 /** How many redirects the artifact download follows before giving up. */
@@ -163,10 +161,51 @@ async function download(id: number): Promise<Uint8Array> {
     return zip;
 }
 
+/**
+ * The workflow this run belongs to, or null when nothing names one.
+ *
+ * A failure to answer is a null rather than a throw: `sameWorkflow` then accepts any run,
+ * which is what a session gets, and the alternative is a review that repeats itself because
+ * one API call went wrong.
+ */
+async function ownWorkflow(): Promise<number | null> {
+    const id = process.env.GITHUB_RUN_ID;
+
+    if (!id || !/^[0-9]+$/.test(id)) return null;
+
+    try {
+        const run = record(await restJson(token, `/repos/${repo}/actions/runs/${id}`));
+        const workflow = run?.workflow_id;
+
+        return Number.isInteger(workflow) && typeof workflow === "number" ? workflow : null;
+    } catch (error) {
+        console.error(`previous findings: this run's own workflow could not be read: ${reason(error)}`);
+        return null;
+    }
+}
+
+const own = await ownWorkflow();
+
+if (own === null && process.env.GITHUB_RUN_ID) {
+    console.error("previous findings: nothing names this run's workflow, so an artifact of any workflow counts");
+}
+
 /** One artifact's findings.json, parsed. */
 async function openArtifact(artifact: Artifact): Promise<unknown> {
     if (artifact.size_in_bytes > MAX_ARTIFACT_BYTES) {
         throw new Error(`artifact ${artifact.id} is ${artifact.size_in_bytes} bytes, more than this reads`);
+    }
+
+    // Before the download, because a run of another workflow has nothing to say here
+    // however its findings file reads.
+    const producer = artifact.workflow_run?.id;
+
+    if (own !== null) {
+        const producingRun = await restJson(token, `/repos/${repo}/actions/runs/${producer}`);
+
+        if (!sameWorkflow(own, producingRun)) {
+            throw new Error(`artifact ${artifact.id} came from run ${producer}, which is not this workflow`);
+        }
     }
 
     // The shipped workflow uploads the file itself and this repository's own workflow

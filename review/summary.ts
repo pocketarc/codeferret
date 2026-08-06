@@ -39,7 +39,6 @@ const table = `### CodeFerret\n\n| Measure | Value |\n|---|---|\n${rows
     .map(([measure, reading]) => `| ${measure} | ${reading} |`)
     .join("\n")}\n`;
 
-// One refusal is the commonest case, and this is the headline warning on the run's page.
 const refused = denials === 1 ? "1 tool call was" : `${denials} tool calls were`;
 
 const refusals =

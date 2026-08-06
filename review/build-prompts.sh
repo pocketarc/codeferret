@@ -28,10 +28,9 @@ LENSES_FILE=${5:-}
 BUILD="$PLUGIN/build"
 RESOLVE_THREADS=${RESOLVE_THREADS:-1}
 
-# Absolute, because every `bun` below runs from the build directory instead of from here.
-# Bun reads a `bunfig.toml` from its working directory and runs the `preload` it names
-# before the script it was given, and this script is started in the tree under review. The
-# comment on `cd "$BUILD"` in run.sh has the rest.
+# Absolute, because every `bun` below runs from the build directory rather than from the
+# tree under review, where this script is started. The comment on `cd "$BUILD"` in run.sh
+# has why.
 ACTION=$(cd "$ACTION" && pwd)
 
 # For a containerised toolchain, where `command-prefix` is set and the action deliberately
@@ -163,11 +162,11 @@ for lens in "${LENSES[@]}"; do
     elif [ -f "$WORKSPACE/.claude/skills/$lens/SKILL.md" ]; then
         # The agent body comes from lens-brief.md and is ours. The skill it loads is not:
         # it sits in the tree the pull request modified. So naming a workspace lens puts
-        # that repository's .claude/skills/ inside the CI trust boundary, where any branch
-        # can write the instructions for an agent that has Bash and runs in the job holding
-        # the tokens. Bundled lenses carry no such exposure. Said on stderr because nothing
-        # else in a run distinguishes an agent driven by branch-supplied text from one
-        # driven by ours.
+        # that repository's .claude/skills/ inside the CI trust boundary, where anyone who
+        # can push a branch can write the instructions for an agent that has Bash and runs
+        # in the job holding the tokens. Bundled lenses carry no such exposure. Said on stderr
+        # because nothing else in a run distinguishes an agent driven by branch-supplied
+        # text from one driven by ours.
         echo "lens '$lens' is not bundled: its skill comes from $WORKSPACE/.claude/skills/$lens/," >&2
         echo "which is part of the tree under review." >&2
 
@@ -193,9 +192,9 @@ done
 # range names a commit rather than HEAD. In CI both resolve to the same checked-out commit.
 HEAD_SHA=$(git -C "$WORKSPACE" rev-parse HEAD 2>/dev/null || echo HEAD)
 
-# Compared with 1 rather than tested for emptiness. The value is composed by a model
-# following commands/review.md, so `INCLUDE_WORKING_TREE=0` is a spelling that turns up,
-# and under a test for emptiness it would drop the HEAD pin above.
+# The value is composed by a model following commands/review.md, so `INCLUDE_WORKING_TREE=0`
+# is a spelling that turns up, and it must not be read as unset: that would drop the HEAD
+# pin above.
 case ${INCLUDE_WORKING_TREE:-0} in
 0) RANGE="$BASE...$HEAD_SHA" ;;
 1) RANGE="$BASE" ;;
@@ -237,9 +236,8 @@ DIFF_SCRIPT
 )
 
 # Only CodeFerret's own account can tell its threads from a person's. Anywhere else the
-# review posts as whoever ran it, and closing a thread would take their words off the
-# page along with everyone else's. The two policies are separate files rather than one
-# followed by its retraction, so the prompt states a single policy either way.
+# review is posted as whoever ran it, and closing a thread would take their words off the
+# page along with everyone else's.
 if [ "$RESOLVE_THREADS" = "0" ]; then
     RESOLVE_FILE="$ACTION/review/resolve-none.md"
 else

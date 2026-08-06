@@ -6,7 +6,7 @@
 node_modules/**
 vendor/**
 **/.next/**
-.vercel/**
+**/.vercel/**
 **/next-env.d.ts
 **/dist/**
 out/**
