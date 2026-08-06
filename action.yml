@@ -371,9 +371,13 @@ runs:
                   git fetch --no-tags origin -- "$DEFAULT_BASE" || true
               fi
 
-              # `--` for the reason the fetch above takes one: `$base` comes from the
-              # `base-ref` input, and build-prompts.sh's `plain_ref` has not run on it yet.
-              if ! git rev-parse --verify --quiet -- "$base" >/dev/null; then
+              # `--end-of-options` rather than the `--` the fetch above takes. Both guard
+              # the same thing, that `$base` comes from the `base-ref` input and
+              # build-prompts.sh's `plain_ref` has not run on it yet, but `--` means
+              # something else here: rev-parse reads it as the rev/path separator, so the
+              # ref lands on the path side and `--verify` finds no revision at all. That
+              # shipped once and every run failed at this line.
+              if ! git rev-parse --verify --quiet --end-of-options "$base" >/dev/null; then
                   echo "base ref '$base' does not resolve in this checkout" >&2
                   exit 1
               fi

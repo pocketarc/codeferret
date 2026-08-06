@@ -95,6 +95,13 @@ manifest until a run loads it. So nothing catches a broken `action.yml` until th
 step of a real review fails. That is how an unquoted `pull-requests: write` inside an
 input description shipped once. Quote any string that contains `: `.
 
+The shell inside `action.yml` runs nowhere else, so shellcheck is all that reads it before
+CI does, and shellcheck reads syntax rather than meaning. A `git rev-parse --verify -- "$ref"`
+shipped that way and failed every run at the fourth step: in `rev-parse`, `--` separates
+revisions from paths, so the ref landed on the path side and no revision was verified.
+`--end-of-options` is the marker that guards a leading dash. Run a line you changed here
+against a real repository before pushing it.
+
 ## Things that will bite you
 
 Each of these is a rule and the one fact that makes it stick. The argument behind each one
