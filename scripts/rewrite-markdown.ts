@@ -53,9 +53,9 @@ const CONNECTORS_HEADING = /^#{1,6}\s+If Connectors Available\s*$/i;
  * `Audit for accessibility: @$1` reaches the model as `Audit for accessibility: @`, an
  * instruction naming nothing. The dispatch names the diff, so the replacement does too.
  *
- * `${selection}` and its siblings are the same thing from GitHub Copilot's prompt files,
- * which two vendored skills came from. Left in, they are the first instruction a lens
- * follows after loading its skill.
+ * `${selection}` and its siblings are the same thing from GitHub Copilot's prompt files.
+ * PROVENANCE.tsv names the skills that came from `github/awesome-copilot`. Left in, they are
+ * the first instruction a lens follows after loading its skill.
  *
  * `@` is required in front of a digit. The bare `$1` through `$9` are PostgreSQL and
  * node-postgres bind placeholders, and they turn up in exactly the prose a SQL or a

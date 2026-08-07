@@ -23,6 +23,18 @@ describe("fenceMap", () => {
     test("does not close a block on a nested fence carrying an info string", () => {
         expect(fenceMap(["```", "```sql", "x", "```", "```"])).toEqual([true, true, true, true, true]);
     });
+
+    test("reads a marker indented four spaces as the indented code block the renderer does", () => {
+        expect(fenceMap(["a", "    ```", "<div>"])).toEqual([false, false, false]);
+    });
+
+    test("reads a tab-indented marker the same way, a tab being four columns", () => {
+        expect(fenceMap(["a", "\t```", "<div>"])).toEqual([false, false, false]);
+    });
+
+    test("still opens on the three spaces the renderer allows", () => {
+        expect(fenceMap(["a", "   ```", "x"])).toEqual([false, true, true]);
+    });
 });
 
 describe("closeOpenFence", () => {
@@ -39,6 +51,12 @@ describe("closeOpenFence", () => {
 
         expect(closeOpenFence(text)).toBe(text);
         expect(fenceMap(text.split("\n")).every(Boolean)).toBe(true);
+    });
+
+    test("appends nothing for a marker the renderer reads as an indented code block", () => {
+        const text = "see this:\n\n    ```\n\nend";
+
+        expect(closeOpenFence(text)).toBe(text);
     });
 });
 
@@ -65,6 +83,18 @@ describe("closeOpenDetails", () => {
 
     test("leaves a tag inside a fenced sample alone, which renders as code", () => {
         const text = "```html\n<details>\n```";
+
+        expect(closeOpenDetails(text)).toBe(text);
+    });
+
+    test("closes a block whose only closing tag is inside a code span", () => {
+        const text = "<details>\n<summary>s</summary>\n\nthe `</details>` tag is what closes it";
+
+        expect(closeOpenDetails(text)).toEndWith("closes it\n</details>");
+    });
+
+    test("appends nothing for a body that only names the element in a code span", () => {
+        const text = "a body about the `<details>` element";
 
         expect(closeOpenDetails(text)).toBe(text);
     });

@@ -312,6 +312,13 @@ describe("composeReview", () => {
         expect(item?.length).toBeLessThan(MAX_LENS_DETAIL + 200);
     });
 
+    test("says so when the run reported no lens health at all, rather than going quiet", () => {
+        const body = review({});
+
+        expect(body).toContain("> [!WARNING]");
+        expect(body).toContain("reported nothing about which lenses ran");
+    });
+
     test("counts one lens as one lens", () => {
         const body = review({ lens_health: [{ lens: "codeferret:x", findings_returned: 1, ok: true }] });
 

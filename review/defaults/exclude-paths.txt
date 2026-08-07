@@ -3,8 +3,8 @@
 **/*.lockfile
 **/package-lock.json
 **/pnpm-lock.yaml
-node_modules/**
-vendor/**
+**/node_modules/**
+**/vendor/**
 **/.next/**
 **/.vercel/**
 **/next-env.d.ts

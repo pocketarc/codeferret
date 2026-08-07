@@ -10,8 +10,7 @@
  * Usage: bun tool-stub.ts <tool> <build-dir> <exit-code>
  */
 
-import { join } from "node:path";
-import { reporter } from "./tools/report.ts";
+import { reporter, reportPath } from "./tools/report.ts";
 
 const [tool, build, code] = process.argv.slice(2);
 
@@ -20,7 +19,17 @@ if (!tool || !build || !code) {
     process.exit(2);
 }
 
-const write = reporter(tool, join(build, `tool-${tool}.json`), {});
+const out = reportPath(tool, build);
+
+// Whether a stub is needed is decided here rather than by run.sh, which cannot import
+// `reportPath` and would have to spell the filename out a second time. A tool that reached
+// its own reporter has already said more about what it did than a stub could.
+if (await Bun.file(out).exists()) {
+    console.log(`'${tool}' wrote its own report, so no stub was needed`);
+    process.exit(0);
+}
+
+const write = reporter(tool, out, {});
 
 await write({ ran: false, reason: `the tool exited ${code} without writing a report` });
 

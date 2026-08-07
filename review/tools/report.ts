@@ -63,12 +63,23 @@ export interface ToolReport {
     raised: number;
     /** The report is sorted so that what did not fit is the low end. */
     truncated: number;
+    /**
+     * What this run sent off the runner, in the tool's own words, or null where it sent
+     * nothing.
+     *
+     * Written by the invocation that made the request rather than derived from the tool's
+     * name, because whether a tool reached the network is a property of the run: a scan with
+     * no lockfile in the diff looks up nothing, and a semgrep pointed at a ruleset on disk
+     * fetches nothing. summary.ts reports this to a maintainer, and a disclosure that is
+     * wrong in either direction stops being read.
+     */
+    egress: string | null;
     findings: Array<Record<string, unknown>>;
 }
 
 /**
- * Where a tool's report goes. Named once, because review/lens-extras/static-analysis.md
- * points the lens at this glob and `keepRaised` has to stay outside it.
+ * Where a tool's report goes. Named once, because the `static-analysis` lens is pointed at
+ * this glob in review/lens-extras/static-analysis.md and `keepRaised` has to stay outside it.
  */
 export function reportPath(tool: string, buildDir: string): string {
     return join(buildDir, `tool-${tool}.json`);
@@ -91,6 +102,7 @@ export function reporter<Extra extends Record<string, unknown>>(
         scanned: 0,
         raised: 0,
         truncated: 0,
+        egress: null,
         findings: [],
         ...extra,
     };
@@ -177,13 +189,14 @@ export function changedFiles(args: string[], root: string): Changed | { failure:
 /**
  * Everything a tool needs before it can scan, and every way that can end in a skip.
  *
- * `usePathspec` is the one difference between the two tools that ship: semgrep reads the
- * same files the lenses do, and osv-scanner drops the pathspec because the `exclude-paths`
- * default names every lockfile. Every exit from here writes a report. An exit that wrote
- * none would leave the lens with silence it cannot tell from a clean scan.
+ * `usePathspec` is where the tools differ: semgrep reads the same files the lenses do, and
+ * osv-scanner drops the pathspec because the `exclude-paths` default names every lockfile.
+ * Every exit from here writes a report. An exit that wrote none would leave the lens with
+ * silence it cannot tell from a clean scan.
  *
  * Null means the refusal is already written and the caller has nothing left to do but
- * `process.exit(0)`. The tool and the binary share a name, because both that ship do.
+ * `process.exit(0)`. A tool's file name has to match the binary it looks for, because that
+ * name is what `runner` searches PATH for.
  */
 export async function startTool(spec: {
     tool: string;
@@ -237,8 +250,8 @@ export async function startTool(spec: {
  * also the record. The record is what makes the lens auditable: it may drop a tool finding
  * only because both the capped list it was handed and the full list it was not survive here.
  *
- * Named outside `tool-*.json` deliberately. That glob is what
- * review/lens-extras/static-analysis.md tells the lens to read, so a file matching it would
+ * Named outside `tool-*.json` deliberately. That glob is the one the `static-analysis` lens
+ * is told to read, in review/lens-extras/static-analysis.md, so a file matching it would
  * hand back the whole list the cap exists to keep out.
  */
 export async function keepRaised(tool: string, buildDir: string, raised: unknown[]): Promise<void> {

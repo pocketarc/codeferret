@@ -13,6 +13,7 @@
  * Env:   GITHUB_TOKEN (or the token on stdin), GITHUB_REPOSITORY
  */
 
+import type { Commenter, Existing, Threaded } from "./existing.ts";
 import {
     graphqlFailure,
     graphql as request,
@@ -23,15 +24,14 @@ import {
 } from "./github.ts";
 import { reason } from "./json.ts";
 
-// The two constants below are the only handle on inline threads that earlier versions left
-// open, on pull requests that are still open now. Change either string and those threads
-// become unrecognisable, nothing is resolved, and nothing reports a problem.
-
-/** The hidden marker on comments from the runs made while the plugin work was in progress. */
+/**
+ * The hidden marker on comments from the runs made while the plugin work was in progress,
+ * and the only handle on the inline threads those runs left open.
+ *
+ * Change the string and those threads become unrecognisable, nothing is resolved, and
+ * nothing reports a problem.
+ */
 const MARKER = "<!-- codeferret -->";
-
-/** The category trailer every released inline comment ended with. */
-const RELEASED_TRAILER = /<sub>[^<]*<\/sub>\s*$/;
 
 const [prNumber, outPath, ownArg] = process.argv.slice(2);
 const own = (ownArg || "github-actions").replace(/\[bot\]$/, "");
@@ -104,6 +104,19 @@ const MORE_COMMENTS = `query($id: ID!, $cursor: String) {
   }
 }`;
 
+/**
+ * How far each of the paging loops below reads. Ten pages is a thousand threads, a thousand
+ * comments on one thread, or a thousand conversation comments, each past anything a pull
+ * request carries in practice.
+ *
+ * The cap is what stops a paging-ignoring response from filling memory in a step that holds
+ * the tokens, and the threads are the larger half: each node carries up to a hundred comment
+ * bodies. Every loop throws when it hits the cap, for the reason `fetchConversation` gives:
+ * a list cut short in silence reads as a short list, and the comment that goes missing is a
+ * decline that gets reposted.
+ */
+const MAX_PAGES = 10;
+
 async function graphql(query: string, variables: Record<string, unknown>): Promise<unknown> {
     const result = await request(token, query, variables);
     const failure = graphqlFailure(result);
@@ -128,16 +141,18 @@ async function restOfThread(id: string, from: string): Promise<GqlComment[]> {
     const all: GqlComment[] = [];
     let cursor: string | null = from;
 
-    while (cursor) {
+    for (let page = 1; cursor; page += 1) {
+        if (page > MAX_PAGES) throw new Error(`thread ${id} is still going after ${MAX_PAGES} pages of comments`);
+
         const data = (await graphql(MORE_COMMENTS, { id, cursor })) as {
             node?: { comments?: Page<GqlComment> };
         };
 
-        const page = data?.node?.comments;
-        if (!page) break;
+        const next = data?.node?.comments;
+        if (!next) break;
 
-        all.push(...page.nodes);
-        cursor = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+        all.push(...next.nodes);
+        cursor = next.pageInfo.hasNextPage ? next.pageInfo.endCursor : null;
     }
 
     return all;
@@ -149,13 +164,6 @@ interface IssueComment {
     user: { login: string };
     author_association: string;
 }
-
-/**
- * How far the conversation is read. Ten pages is a thousand comments, past anything a
- * pull request carries in practice, and the cap is what stops a paging-ignoring response
- * from filling memory in a step that holds the tokens.
- */
-const MAX_PAGES = 10;
 
 /**
  * The comments not anchored to a line.
@@ -190,11 +198,16 @@ let threadError: string | null = null;
 
 try {
     let cursor: string | null = null;
-    do {
-        const page = await threadPage(cursor);
-        raw.push(...page.nodes);
-        cursor = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
-    } while (cursor);
+
+    for (let page = 1; ; page += 1) {
+        if (page > MAX_PAGES) throw new Error(`the review threads are still going after ${MAX_PAGES} pages`);
+
+        const batch = await threadPage(cursor);
+        raw.push(...batch.nodes);
+        cursor = batch.pageInfo.hasNextPage ? batch.pageInfo.endCursor : null;
+
+        if (!cursor) break;
+    }
 
     for (const thread of raw) {
         if (thread.comments.pageInfo.hasNextPage) {
@@ -203,24 +216,27 @@ try {
     }
 } catch (error) {
     // Not thrown, unlike the conversation fetch above: threads are the larger half and
-    // throwing here would cost the review. The failure goes into the file instead, where
-    // orchestrator.md reads it and treats that half as unread rather than as quiet.
+    // throwing here would cost the review. The failure goes into the file instead, and that
+    // half then counts as unread rather than as quiet, per orchestrator.md.
     threadError = reason(error);
     console.error(`could not list review threads: ${threadError}`);
 }
 
 // Both halves of `mine` are required.
 //
-// The login alone is not enough: `github-actions[bot]` is the identity of every workflow
-// posting with `github.token`, so matching on it puts another workflow's threads on the
-// list this run may resolve, and resolving takes that workflow's words off the page.
+// The login: `github-actions[bot]` is the identity of every workflow posting with
+// `github.token`, so matching on it alone puts another workflow's threads on the list this
+// run may resolve, and resolving takes that workflow's words off the page.
 //
-// Neither shape is enough alone either. An HTML comment renders as nothing, so anyone who
-// can open a review thread can put the marker in it and have this run adopt the thread;
-// `<sub>` is ordinary markup somebody could reach by accident. Resolving is the one
-// non-model control on what gets taken off the page, so it is not opened to whoever can
-// comment.
-const threads = raw.map((t) => {
+// The marker: an HTML comment renders as nothing, so anyone who can open a review thread can
+// put it there and have this run adopt the thread. Resolving is the one non-model control on
+// what gets taken off the page, so it is not opened to whoever can comment.
+//
+// A trailing `<sub>` category line used to count as a second shape here, for inline threads
+// left by a released version. Nothing has been released, every thread this run has ever seen
+// carries the marker, and ordinary markup proves nothing about who wrote a comment, in a
+// test whose whole job is to be narrow.
+const threads: Threaded[] = raw.map((t) => {
     const root = t.comments.nodes[0];
     const body = root?.body ?? "";
     const login = (root?.author?.login ?? "").replace(/\[bot\]$/, "");
@@ -232,7 +248,7 @@ const threads = raw.map((t) => {
         file: root?.path ?? "",
         line: root?.line ?? root?.originalLine ?? null,
         url: root?.url ?? "",
-        mine: login === own && (body.includes(MARKER) || RELEASED_TRAILER.test(body)),
+        mine: login === own && body.includes(MARKER),
         comments: t.comments.nodes.map((c) => ({
             author: c.author?.login ?? "unknown",
             association: c.authorAssociation,
@@ -245,7 +261,7 @@ const threads = raw.map((t) => {
     };
 });
 
-let conversation: Array<{ author: string; association: string; body: string; url: string }> = [];
+let conversation: Commenter[] = [];
 let conversationError: string | null = null;
 
 try {
@@ -260,23 +276,20 @@ try {
     console.error(`could not list the conversation: ${conversationError}`);
 }
 
-await Bun.write(
-    outPath,
-    `${JSON.stringify(
-        {
-            threads,
-            conversation,
-            ...(threadError ? { error: threadError } : {}),
-            ...(conversationError ? { conversation_error: conversationError } : {}),
-        },
-        null,
-        2,
-    )}\n`,
-);
+// Typed as the shape every reader declares, so a field renamed here stops compiling rather
+// than reaching the vetting as an absence it cannot tell from "nobody said anything".
+const written: Existing = {
+    threads,
+    conversation,
+    ...(threadError ? { error: threadError } : {}),
+    ...(conversationError ? { conversation_error: conversationError } : {}),
+};
+
+await Bun.write(outPath, `${JSON.stringify(written, null, 2)}\n`);
 
 const mine = threads.filter((t) => t.mine).length;
 const resolved = threads.filter((t) => t.resolved).length;
-const answered = threads.filter((t) => t.comments.length > 1).length;
+const answered = threads.filter((t) => (t.comments ?? []).length > 1).length;
 
 console.log(
     `threads: ${threads.length} (${mine} mine, ${resolved} resolved, ${answered} answered)` +

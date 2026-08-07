@@ -67,13 +67,16 @@ skill for what it knows about Next.js, not for its workflow.
 - Skip the Bundle Analysis section of `bundling.md` and the Debugging step of
   `hydration-error.md`. Both need a rendered page or an interactive analyser.
 
-What the source settles on its own is the whole of your scope, and it is most of the skill:
-the server and client boundary and what crosses it, `async` `params`, `searchParams`,
-`cookies()` and `headers()`, the `"use client"` and `"use server"` directives, file
-conventions and route structure, the choice between a route handler and a Server Action,
-metadata, `next/image`, `next/font` and `next/script`, a `useSearchParams` outside a
-`Suspense` boundary, caching and revalidation options, and the source-level causes of a
-hydration mismatch.
+Your scope is everything in the skill except what the bullets above take out, which is most
+of it. Start with the server and client boundary and what crosses it, `async` `params`,
+`searchParams`, `cookies()` and `headers()`, the `"use client"` and `"use server"`
+directives, file conventions and route structure, the choice between a route handler and a
+Server Action, metadata, `next/image`, `next/font` and `next/script`, a `useSearchParams`
+outside a `Suspense` boundary, caching and revalidation options, the `runtime` a route or
+layout exports, the `next.config` reads behind `output: 'standalone'` and a `cacheHandler`,
+`unstable_rethrow` in a `catch` that would otherwise swallow `redirect()` or `notFound()`,
+and the source-level causes of a hydration mismatch. Anything else the source settles is in
+scope whether or not it is named here.
 
 Say in `notes` which of the skill's checks needed a running application, so that a reader
 can tell what this lens covered from what it could not reach.

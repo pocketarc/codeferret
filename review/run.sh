@@ -77,18 +77,10 @@ prefix_reaches "$ACTION"
 printf '%s\n' "$LENSES" |
     PREFIX="$PREFIX" bash "$ACTION/review/build-prompts.sh" "$BASE" "$ACTION" "$OUT" "$WORKSPACE"
 
-# Every `bun` a review starts is given `--config=/dev/null`. Bun reads `bunfig.toml` from
-# its working directory, `preload` in that file names a script, and bun runs it before the
-# one on the command line. So whoever pushes a branch carrying that file would have bun run
-# their script inside the job holding the tokens, before a lens is dispatched and with no
-# model in the loop.
-#
-# The working directory alone does not settle it. The lookup does not walk up, so `cd`
-# out of the reviewed tree closes the branch's own file, but every directory the session is
-# still allowed to run from is one it can write: the orchestrator has Bash, runs under
-# bypassPermissions, and its prompt names `$BUILD` absolutely. `--config` replaces the
-# lookup outright, and `/dev/null` is the one path on the runner whose contents nothing
-# short of root can change.
+# Every `bun` a review starts is given `--config=/dev/null`. Without it, bun reads the
+# `bunfig.toml` in whatever directory a run stands in and runs the script that file names,
+# inside the job holding the tokens. "Bun runs whatever a `bunfig.toml` in the reviewed tree
+# names" in review/README.md has why the working directory alone does not settle it.
 #
 # The working directory still moves, because a relative path in a report or an argument
 # resolves against it. Only the orchestrator starts in the workspace, and it does so in a
@@ -113,12 +105,18 @@ cd "$BUILD"
 # script has returned, which keeps its own copy of the environment, so removing them here
 # costs nothing.
 #
-# Removing those five names is not the same as putting the files out of reach. The runner
-# creates them under `$RUNNER_TEMP/_runner_file_commands` before the job starts, and the
-# orchestrator is handed build paths under `RUNNER_TEMP` anyway, so a lens with Bash can
-# list the directory and append to a `set_env_` file whatever this shell exports. Like the
-# WebFetch and WebSearch denials, this raises the cost rather than closing the channel; what
-# would close it is running the orchestrator somewhere that directory does not exist.
+# Removing those names is not the same as putting the files out of reach. The runner creates
+# them under `$RUNNER_TEMP/_runner_file_commands` before the job starts, and the orchestrator
+# is handed build paths under `RUNNER_TEMP` anyway, so a lens with Bash can list the
+# directory and append to a `set_env_` file whatever this shell exports. The toolchain is a
+# second route to the same place: `install: auto` runs `npm install -g` as this user, so the
+# `bun` the posting step resolves through PATH is a file the review session can overwrite.
+#
+# Both end in the next step of this job running code a lens chose, holding the token this
+# block just removed. Like the WebFetch and WebSearch denials, the unset raises the cost
+# rather than closing the channel. What would close it is posting from a job that never runs
+# the agent, and a composite action has steps rather than jobs, so that is a change for
+# whoever installs this to make, not one available here.
 #
 # This is a denylist and a denylist is the weaker shape: an allowlist would need the full
 # set of variables the Claude Code CLI reads to start, and a missing one fails the run
@@ -215,11 +213,10 @@ for tool in ${TOOLS:-}; do
     if [ "$code" -ne 0 ]; then
         echo "tool '$tool' failed. The review carries on without its report." >&2
 
-        # tool-stub.ts has why a report is written at all.
-        if [ ! -f "$BUILD/tool-$tool.json" ]; then
-            $PREFIX bun --config=/dev/null "$ACTION/review/tool-stub.ts" "$tool" "$BUILD" "$code" ||
-                echo "could not write a stub report for '$tool'. The lens will not know it ran." >&2
-        fi
+        # tool-stub.ts has why a report is written at all, and decides for itself whether the
+        # tool already wrote one: the report's path is spelled out once, in reportPath.
+        $PREFIX bun --config=/dev/null "$ACTION/review/tool-stub.ts" "$tool" "$BUILD" "$code" ||
+            echo "could not write a stub report for '$tool'. The lens will not know it ran." >&2
     fi
 done
 set +f
@@ -228,6 +225,19 @@ set +f
 # because extract-findings.ts writes what the run cost and what it was refused before it
 # looks for findings, and a run that failed is the one those numbers matter most for.
 status=0
+
+# Copied before the session and put back after it, for the reason the block below the
+# orchestrator gives. Each decides something once the review has ended: reviewed-commit.ts
+# reads `diff-args` for the commit local-post.sh refuses to post against, check-findings.ts
+# reads `lens-list.txt` for the one check that notices a lens that ran and reported nothing
+# about itself, and `vetSuppression` reads `previous.json` for whether the last review raised
+# anything in the file of a finding this run says was raised before. None of them can move
+# out of the build directory (diff.sh reads its arguments from beside itself, and the prompts
+# name every path), so a copy is what there is. A lens with Bash could find this one too;
+# what it buys is that a rewritten file is reported instead of believed.
+PRISTINE=$(mktemp -d)
+trap 'rm -rf "$PRISTINE"' EXIT
+cp "$BUILD/diff-args" "$BUILD/lens-list.txt" "$BUILD/previous.json" "$PRISTINE/"
 
 # WebFetch and WebSearch are denied for the reason scripts/build-lens-agents.ts gives for
 # leaving them off every lens. Agent has to stay: STEP 1 of the orchestrator prompt
@@ -265,8 +275,21 @@ status=0
 # is fetched again from GitHub, and the fresh copy has whatever was said during the twenty
 # minutes the review took. The empty file is written first, so a fetch that fails before it
 # writes leaves nothing traced and every suppression reopened.
+#
+# The rest cannot be re-derived here without running build-prompts.sh again or paying for
+# another artifact download, so the copies taken before the session go back instead. A
+# difference is reported rather than swallowed: it means the session rewrote what the lenses
+# were diffing, or the record its own suppressions are checked against.
 rm -f "$BUILD/findings.json" "$BUILD/findings-checked" "$BUILD/existing.json"
-printf '{"threads": [], "conversation": []}\n' >"$BUILD/existing.json"
+empty_existing "$BUILD/existing.json"
+
+for pinned in diff-args lens-list.txt previous.json; do
+    if ! cmp -s "$PRISTINE/$pinned" "$BUILD/$pinned"; then
+        echo "$pinned changed during the review. The lenses did not all read the same diff." >&2
+    fi
+
+    cp "$PRISTINE/$pinned" "$BUILD/$pinned"
+done
 
 if [ -n "${PR:-}" ]; then
     fetch_existing

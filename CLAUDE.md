@@ -72,9 +72,10 @@ branch once over a fake `sk_live_...` Stripe key.
 
 ## Before you push
 
-`lefthook.yml` runs all of this, so a push that would go red in CI fails here first, and
-the first three fail at commit time. `bun install` puts the hooks in place: lefthook is a
-dev dependency and `prepare` runs `lefthook install`.
+`lefthook.yml` runs all of this, so a push that would go red in CI fails here first.
+Everything but `bun test` also fails at commit time; `lefthook.yml` is the record of which
+runs where. `bun install` puts the hooks in place: lefthook is a dev dependency and
+`prepare` runs `lefthook install`.
 
 ```sh
 bun install
@@ -116,9 +117,9 @@ is in `review/README.md`.
   nothing failed, so a check on that one numeral was added rather than the sentence being
   rewritten. Name the set instead of counting it, and the check goes too. A measurement of
   something that happened is a different thing and stays: "$1.28 and no findings" is the
-  evidence for the rule beside it, and no later commit can make it wrong.
-  `review/lens-extras/comment-review.md` asks that lens to report the ones that get past
-  this.
+  evidence for the rule beside it, and no later commit can make it wrong. The
+  `comment-review` lens is told, in `review/lens-extras/comment-review.md`, to report the
+  ones that get past this.
 - A lens's `in_diff` field is unreliable, and nothing reads it. On every run that used
   inline comments, a lens reported an out-of-diff finding as in-diff. Nothing anchors to a
   line now, so there is nothing left to be wrong about. Whoever adds the first inline
@@ -157,22 +158,22 @@ is in `review/README.md`.
   `review/lens-brief.md` too.
 - Every `bun` a review starts takes `--config=/dev/null`. Bun runs the `preload` script
   that the `bunfig.toml` in its working directory names, before the script on the command
-  line.
-  Moving the working directory out of the checkout only relocated that: the orchestrator has
-  `Bash` under `bypassPermissions` and its prompt names `$BUILD`, so it can write a
-  `bunfig.toml` into every directory a run has left to stand in. The flag replaces the lookup
-  wherever the process is, and `/dev/null` is the one path nothing short of root can fill.
-  Add the flag with the invocation, and `validate-repo.ts` will not have to find it missing.
-- The vetting reads an `existing.json` fetched after the orchestrator exits. `run.sh`
-  deletes the file the orchestrator was given and fetches it again, because the orchestrator
-  holds that path in the same prompt as the rule `vetSuppression` applies, and it could
-  write the file its own suppressions are then checked against. Fetching it again costs one
-  extra pair of API calls, and picks up whatever was said during the run.
+  line, and moving the working directory out of the checkout only moves the problem: the
+  orchestrator has `Bash` under `bypassPermissions` and its prompt names `$BUILD`, so it can
+  write that file into every directory a run has left to stand in. Add the flag with the
+  invocation, and `validate-repo.ts` will not have to find it missing.
+- No file the session could have written is evidence about the session. `run.sh` deletes
+  the `existing.json` the orchestrator was given and fetches it again, because the
+  orchestrator holds that path in the same prompt as the rule `vetSuppression` applies, and
+  it could write the file its own suppressions are then checked against. Refetching costs
+  one extra pair of API calls and picks up whatever was said during the run. `previous.json`,
+  `diff-args` and `lens-list.txt` cannot be had again that cheaply, so they are copied aside
+  before the session and put back after it, and a copy that comes back changed is reported.
 - An input that names what a review may do has to reach the code that does it.
   `resolve-threads` reached the orchestrator's prompt and nothing else until
-  `post-review.ts` was given `RESOLVE_THREADS`, and `artifact-path` decided what was
-  uploaded while the body went on carrying a link to an artifact nobody kept. Prose is not
-  a boundary, and neither is a default.
+  `post-review.ts` was given `RESOLVE_THREADS`, and the upload step read `artifact-path`
+  while `post-review.ts` never saw it, so the body went on linking an artifact nobody kept.
+  Prose is not a boundary, and neither is a default.
 - The reviewed tree does not configure the session that reviews it. `run.sh` passes
   `--setting-sources user`. Without it the branch's own `CLAUDE.md` reaches the model, and a
   `SessionStart` hook declared in its `.claude/settings.json` runs under
@@ -209,12 +210,13 @@ is in `review/README.md`.
   deletes the line still gets a review, and it repeats itself.
 - Only a review that reached the pull request may suppress anything. `post-review.ts`
   writes `posted` into the findings file once GitHub has accepted the review, and
-  `fetch-previous.ts` skips any artifact without it and takes the run before instead. A
-  cancelled run, a 502, a token without `pull-requests: write`, and `post: 'false'` all
-  upload a findings file for a review nobody ever saw. Do not treat an artifact as evidence
-  on its own. A run that found nothing new writes the record too, with no url: it posted
-  nothing because the last review still stood, and without a record ten quiet pushes put
-  that review past the ten artifacts `fetch-previous.ts` opens.
+  `fetch-previous.ts` skips any artifact without it and takes the run before instead. A 502,
+  a token without `pull-requests: write`, and `post: 'false'` all upload a findings file for
+  a review nobody ever saw. Do not treat an artifact as evidence on its own. A cancelled run
+  used to be another way in, which is why the upload step's condition is `!cancelled()`
+  rather than `always()`. A run that found nothing new writes the record too, with no url:
+  it posted nothing because the last review still stood, and without a record ten quiet
+  pushes put that review past the ten artifacts `fetch-previous.ts` opens.
 - An artifact is only evidence if this repository's own run produced it. A
   `pull_request` run uses the workflow files as the pull request has them, so a fork's copy
   runs and what it uploads is stored here and listed here, under a branch name its author
@@ -222,9 +224,12 @@ is in `review/README.md`.
   which no fork run can manage.
 - Resolving a thread is a judgement the orchestrator makes, weighing `isOutdated` against
   the diff as one piece of evidence. `post-review.ts` then drops any thread
-  `fetch-existing.ts` did not mark `mine`, and that mark takes both a login and a comment
-  shape. Why neither counts alone is written beside `mine` in `fetch-existing.ts`. Loosen
-  either half and anyone who can comment can hand this run a thread to close.
+  `fetch-existing.ts` did not mark `mine`, and that mark takes both a login and a hidden
+  marker. Why neither counts alone is written beside `mine` in `fetch-existing.ts`. Loosen
+  either half and anyone who can comment can hand this run a thread to close. A trailing
+  `<sub>` line counted as a second marker until it was measured: on a pull request carrying
+  forty of this tool's own threads it matched none of them, and ordinary markup is too easy
+  to reproduce to prove who wrote a comment.
 - A reply cannot make a security defect safe. The carve-out is written into
   `orchestrator.md`, because "this is intentional" on a vulnerability would otherwise
   silence it for good. Keep it if you touch the decline rules.
@@ -249,7 +254,12 @@ is in `review/README.md`.
   Anyone's comment settles it, because a defect somebody wrote down is a defect somebody
   wrote down, and the finding keeps its line in the review either way. What it still needs
   is a comment that exists on this pull request and is about the finding's file, or an
-  "LGTM" would demote the lot.
+  "LGTM" would demote the lot. Most of them cite no comment at all, because the orchestrator
+  takes the status from `previous.json`. Those are held to the same bar against that file:
+  the previous review has to have raised something in the finding's file, not something with
+  the same title. The orchestrator is told to match the defect rather than the prose, and it
+  rewrites a title every run, so an exact comparison reopened all seven suppressions of the
+  run it was measured against.
 - The findings file a run uploads carries the statuses `vetSuppression` decided, not the
   orchestrator's. `post-review.ts` posted the reopened finding and wrote the decline back,
   so `fetch-previous.ts` handed it to the next run as `declined` and the gate held for one
@@ -275,9 +285,8 @@ thing, change what reads it, and say so. This section goes when the first consum
 
 ## Accepted risks
 
-Each of these is real, has been weighed by a maintainer, and stands. A review keeps
-finding them, because a lens reads the code and not this file. Read this section before
-acting on one.
+Each of these was weighed and stands. Read this section before acting on a finding that
+raises one.
 
 - Mutable version references, `@v1` above all. The template and the README point
   consumers at `pocketarc/codeferret@v1`, which this repository moves on every release. A
@@ -297,11 +306,13 @@ acting on one.
   model can be talked out of that framing. It stands because a runner is disposable and a
   classifier that refused the orchestrator halfway would lose a review that cost $36.
   `/codeferret:review` runs under `auto` instead, on a machine that is not disposable.
-- Two lenses ship without the capability their skills describe.
+- Some lenses ship without the capability their skills describe.
   `copilot-web-design-reviewer` has no browser and `anthropic-accessibility-review` cannot
-  render a page. Both stay in the default set: measured over two runs they produced five
-  unique findings, including the one that was rendering every finding body as a code
-  block. Each has a file under `review/lens-extras/` saying what it cannot do.
+  render a page; measured over two runs the pair produced five unique findings, including the
+  one that caught every finding body being rendered as a code block.
+  `vercel-next-best-practices` has no application running. They all stay in the default set,
+  each with a file under `review/lens-extras/` saying what it cannot do, and an entry in
+  `STANDING_DETAIL` so a reader is told even when the lens forgets.
 - semgrep fetches its ruleset at run time. `--config p/default` is not pinned, so what
   the tool looks for can change between two runs of the same commit. The rules are
   declarative YAML rather than code, and `SEMGREP_CONFIG` points at a local set for anyone

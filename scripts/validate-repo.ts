@@ -20,6 +20,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { reason } from "../review/json.ts";
 import { STANDING_DETAIL } from "../review/review-body.ts";
+import { RUN_FILE_NAMES } from "../review/run-files.ts";
 
 process.chdir(join(import.meta.dir, ".."));
 
@@ -170,8 +171,8 @@ async function checkActionShell(): Promise<Failures> {
             //
             // `-x` with the repository root as the source path, because a step is written
             // out to a temporary file and a `# shellcheck source=` directive in it would
-            // otherwise resolve nowhere. Two steps source review/lib.sh for the helper that
-            // writes their outputs, and the point of the check is to cover it.
+            // otherwise resolve nowhere. The steps that source review/lib.sh for the helper
+            // that writes their outputs are the ones the check exists to cover.
             const run = Bun.spawnSync(["shellcheck", "-e", "SC2016", "-x", `--source-path=${process.cwd()}`, file]);
             if (run.exitCode !== 0) {
                 fail(list, "action.yml", `shellcheck on step '${name}':\n${new TextDecoder().decode(run.stdout)}`);
@@ -481,6 +482,38 @@ async function checkStandingDetail(): Promise<Failures> {
 }
 
 /**
+ * The run files action.yml reads back, against the names the scripts write them under.
+ *
+ * action.yml cannot import `RUN_FILES`, so its `emit_output_file` calls spell each name out
+ * a second time. Rename one side and the summary and the step outputs report `unknown` for a
+ * $36 review, which is exactly what a session killed halfway looks like. The same class as
+ * `TOOLS_LENS` and `RETENTION_DAYS`, which are checked against their second homes here too.
+ */
+async function checkRunFiles(): Promise<Failures> {
+    const list: Failures = [];
+    const manifest = await action(list);
+    if (!manifest) return list;
+
+    const shell = (manifest.runs?.steps ?? []).map((step) => step.run ?? "").join("\n");
+    const named = [...shell.matchAll(/^\s*emit_output_file\s+(\S+)\s+"\$out\/(\S+?)"/gm)];
+
+    if (named.length === 0) {
+        fail(list, "action.yml", "makes no `emit_output_file` call, so no run file reaches a step output");
+        return list;
+    }
+
+    for (const [, output, file] of named) {
+        if (!RUN_FILE_NAMES.includes(String(file))) {
+            fail(list, "action.yml", `output '${output}' reads '${file}', which review/run-files.ts does not name`);
+        }
+    }
+
+    if (list.length === 0) console.log(`OK run-files: ${named.length} step output(s) name a file the run writes`);
+
+    return list;
+}
+
+/**
  * The retention window fetch-previous.ts pages back to, against the one the action asks for.
  *
  * Drift here is quiet in the direction that matters: raise the action's retention and the
@@ -577,10 +610,10 @@ async function checkWorkflows(): Promise<Failures> {
         if (typeof gate === "string") gates.set(file, gate.replace(/\s+/g, " ").trim());
     }
 
-    // The template ships the gate this repository runs on itself, and the reasoning for
-    // all three of its clauses lives only in the template. Tightened in one file and not
-    // the other, either this repository reviews pull requests it decided not to, or every
-    // consumer who installed the template does.
+    // The template ships the gate this repository runs on itself, and the reasoning for that
+    // gate lives only in the template. Tighten it in one file and not the other, and either
+    // this repository reviews pull requests it decided not to, or every consumer who
+    // installed the template does.
     const own = `${dir}/codeferret.yml`;
 
     if (gates.has(own) && gates.has(TEMPLATE) && gates.get(own) !== gates.get(TEMPLATE)) {
@@ -633,6 +666,7 @@ const CHECKS: Array<[string, () => Promise<Failures>]> = [
     ["defaults", checkDefaults],
     ["generated", checkGenerated],
     ["finding-rules", checkFindingRules],
+    ["run-files", checkRunFiles],
     ["retention", checkRetention],
     ["standing-detail", checkStandingDetail],
     ["prompts", checkPrompts],

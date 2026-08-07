@@ -10,6 +10,7 @@
 
 import { join } from "node:path";
 import { record } from "./json.ts";
+import { RUN_FILES } from "./run-files.ts";
 
 const [buildDir, exitStatus] = process.argv.slice(2);
 
@@ -33,17 +34,24 @@ function count(text: string | null): number | null {
 }
 
 /**
- * What each static analysis tool sends off the runner to do its job.
+ * How long the run took, in a readable unit.
  *
- * Both are on by default and both reach the network. A maintainer reading a run should see
- * the egress in the run rather than have to go and find it.
+ * Tenths of a minute is unreadable at the short end, and the short end is where a maintainer
+ * is looking hardest: a session that died in the first seconds renders as `0.0 min` beside
+ * the warning saying the review failed.
  */
-const EGRESS: ReadonlyMap<string, string> = new Map([
-    ["semgrep", "fetched its ruleset from semgrep's registry"],
-    ["osv-scanner", "sent the package names in each changed lockfile to osv.dev"],
-]);
+function wallClock(durationMs: number): string {
+    return durationMs < 60_000 ? `${Math.round(durationMs / 1000)} s` : `${(durationMs / 60000).toFixed(1)} min`;
+}
 
-/** What the tool stage did, read back from the reports rather than from what was asked for. */
+/**
+ * What the tool stage did, read back from the reports rather than from what was asked for.
+ *
+ * The egress line is each tool's own `egress` field, written by the invocation that made the
+ * request. A maintainer reading a run should see what left the runner without going to find
+ * it, and a table here keyed by tool name would make the same claim for a run that sent
+ * nothing.
+ */
 async function toolsRan(): Promise<{ names: string[]; egress: string[] }> {
     const names: string[] = [];
     const egress: string[] = [];
@@ -59,25 +67,24 @@ async function toolsRan(): Promise<{ names: string[]; egress: string[] }> {
 
         names.push(tool);
 
-        const said = EGRESS.get(tool);
-        if (said) egress.push(`${tool} ${said}`);
+        if (typeof parsed.egress === "string" && parsed.egress !== "") egress.push(`${tool} ${parsed.egress}`);
     }
 
     return { names: names.sort(), egress: egress.sort() };
 }
 
-const findings = (await value("findings-count")) ?? "none reported";
-const cost = await value("cost-usd");
-const tokens = count(await value("output-tokens"));
-const durationMs = count(await value("duration-ms"));
-const denials = count(await value("permission-denials")) ?? 0;
+const findings = (await value(RUN_FILES.findingsCount)) ?? "none reported";
+const cost = await value(RUN_FILES.cost);
+const tokens = count(await value(RUN_FILES.outputTokens));
+const durationMs = count(await value(RUN_FILES.durationMs));
+const denials = count(await value(RUN_FILES.permissionDenials)) ?? 0;
 const tools = await toolsRan();
 
 const rows: Array<[string, string]> = [
     ["Findings", findings],
     ["Cost", cost === null || cost === "unknown" ? "unknown" : `$${cost}`],
     ["Output tokens", tokens === null ? "unknown" : tokens.toLocaleString("en-GB")],
-    ["Wall clock", durationMs === null ? "unknown" : `${(durationMs / 60000).toFixed(1)} min`],
+    ["Wall clock", durationMs === null ? "unknown" : wallClock(durationMs)],
 ];
 
 if (tools.names.length > 0) rows.push(["Static analysis", tools.names.join(", ")]);

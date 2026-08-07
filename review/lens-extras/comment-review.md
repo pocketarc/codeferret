@@ -6,5 +6,6 @@ not how many there are.
 
 A measurement is not a census. "One lens spent $1.28 and returned nothing", "the
 orchestrator narrated 27 when the answer was 31": each records what happened once, the
-number is the evidence for the rule beside it, and no later commit can make it wrong. The
-rules in this repository are anchored to measurements like those. Leave them alone.
+number is the evidence for the rule beside it, and no later commit can make it wrong. Many
+of the rules in this repository rest on a measurement of that kind, so a number is only a
+census when a later commit could falsify it.

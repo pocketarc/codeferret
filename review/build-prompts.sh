@@ -93,9 +93,9 @@ rm -rf "$PLUGIN"
 # Agents and skills must share one plugin to share a namespace.
 mkdir -p "$BUILD" "$PLUGIN/.claude-plugin" "$PLUGIN/agents" "$PLUGIN/skills"
 
-# Here rather than in run.sh, which is where the other two checks are: the directory does
-# not exist until the line above, and the first `$PREFIX bun` below would create it inside
-# the container and leave `test -d` answering yes about a path only the container has.
+# Here rather than beside run.sh's own call: the directory does not exist until the line
+# above, and the first `$PREFIX bun` below would create it inside the container and leave
+# `test -d` answering yes about a path only the container has.
 prefix_reaches "$BUILD"
 
 # Written first, so a run that dies halfway leaves a directory the next run may clear.
@@ -270,11 +270,10 @@ fi
 )
 
 # The orchestrator reads both files whether or not there was a pull request to fetch
-# anything from, and fetch-existing.ts and fetch-previous.ts overwrite them when there was.
-# The keys have to be the ones STEP 3 names: a branch with no pull request is the ordinary
-# case in a session, and an object with none of them reaches the step that decides what to
-# suppress.
-printf '{"threads": [], "conversation": []}\n' >"$BUILD/existing.json"
+# anything from, and fetch-existing.ts and fetch-previous.ts overwrite them when there was. A
+# branch with no pull request is the ordinary case in a session, so the empty form reaches
+# the step that decides what to suppress on most runs of `/codeferret:review`.
+empty_existing "$BUILD/existing.json"
 printf '{"findings": []}\n' >"$BUILD/previous.json"
 
 echo "built ${#LENSES[@]} lens(es): ${LENSES[*]}"

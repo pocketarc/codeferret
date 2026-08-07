@@ -42,10 +42,10 @@ inputs:
 
             A tool runs from the runner's own binary if there is one, and from a pinned
             container otherwise. With neither it records that and is skipped. So a runner
-            with neither docker nor the binaries gets two skipped reports, and a runner
-            with docker pulls two images. The semgrep image is about 420MB.
+            with neither docker nor the binaries gets a skipped report per tool, and a
+            runner with docker pulls an image per tool. The semgrep image is about 420MB.
 
-            Both tools reach the network, and the job summary says which one did what.
+            The tools reach the network, and the job summary says which one sent what.
             semgrep fetches its `p/default` ruleset from semgrep's registry, unless
             SEMGREP_CONFIG names a repository-relative one. osv-scanner sends the package
             names and versions from each changed lockfile to osv.dev. Run neither if a
@@ -68,7 +68,7 @@ inputs:
             top-level build directory, and `**/build/**` covers one at any depth, the
             top-level one included.
 
-            Three lockfiles are named one by one because `*.lock` and `*.lockb` miss them.
+            Some lockfiles are named one by one because `*.lock` and `*.lockb` miss them:
             pnpm writes YAML, Gradle writes `.lockfile`, and npm writes JSON.
 
             `out` and `build` are matched at the repository root and one level inside
@@ -76,10 +76,15 @@ inputs:
             any-depth form would hide `app/build/` from every lens. Add your own workspace
             directory here if it is neither `apps/` nor `packages/`.
 
-            `dist` is matched at any depth, and that is a trade rather than a rule. A
-            package's `dist/` turns up at depths no anchored glob can name, and `app/dist/`
-            is as legal a route segment as `app/build/`, so a repository that routes on
-            `/dist` loses that route from every lens.
+            `dist` and `vendor` are matched at any depth, and that is a trade rather than a
+            rule. A package's `dist/` and a Composer `vendor/` both turn up at depths no
+            anchored glob can name (`backend/vendor/` is the ordinary PHP layout), and
+            `app/dist/` and `app/vendor/` are as legal in a route as `app/build/`, so a
+            repository that routes on `/dist` or `/vendor` loses that route from every lens.
+
+            `node_modules` is matched at any depth with nothing given up. pnpm and npm
+            workspaces put one in every package, and it is no more a name anybody routes on
+            than `.next` is.
 
             `.next` and `.vercel` are matched at any depth with nothing given up. The App
             Router's scan skips a dot-prefixed entry, so neither is a name anybody routes
@@ -93,8 +98,8 @@ inputs:
             **/*.lockfile
             **/package-lock.json
             **/pnpm-lock.yaml
-            node_modules/**
-            vendor/**
+            **/node_modules/**
+            **/vendor/**
             **/.next/**
             **/.vercel/**
             **/next-env.d.ts
@@ -543,8 +548,15 @@ runs:
         # protocol between this step and the run that reads it. A consumer who holds the
         # step in their own file can rename it, drop it, or point it elsewhere, and the
         # only symptom is every finding being posted again on every push.
+        #
+        # `!cancelled()` rather than `always()`, so a failed run still keeps its artifact and
+        # a cancelled one keeps nothing. With `cancel-in-progress` on and `artifact-path` set
+        # to `.`, the build directory exists within seconds, so under `always()` every
+        # superseded push uploaded an artifact whose review was never posted, and ten of those
+        # in a row push the last posted review past the point `fetch-previous.ts` stops
+        # opening artifacts.
         - name: Keep the run for inspection
-          if: ${{ always() && steps.artifact.outputs.path != '' }}
+          if: ${{ !cancelled() && steps.artifact.outputs.path != '' }}
           uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
           with:
               name: codeferret-run

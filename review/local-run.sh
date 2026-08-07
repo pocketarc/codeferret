@@ -13,7 +13,7 @@
 # The base ref may be an empty string, and then it is worked out here the way
 # local-preflight.sh reports it: the open pull request's base, then the default branch. Pass
 # one only where the caller means a particular ref. git resolves a ref relayed through a
-# model whether or not it is the right one, and the symptom is fourteen lenses reviewing the
+# model whether or not it is the right one, and the symptom is every lens reviewing the
 # wrong range for twenty minutes.
 #
 # Env:

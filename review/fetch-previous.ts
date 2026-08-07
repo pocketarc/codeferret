@@ -14,11 +14,11 @@
  * findings, and the orchestrator reads that the same way it reads a first run: every
  * finding is new.
  *
- * Four things have to be true of an artifact before what it holds silences anything: its
- * review was posted, the review was of this pull request, it came from a run of a branch
- * pushed here, and that run was one of this workflow's. `previous.ts` answers each of them,
- * on the function that makes it, and "The previous run's findings come out of its artifact"
- * in `review/README.md` has the argument for all four.
+ * An artifact silences nothing until every one of these is true of it: its review was posted,
+ * the review was of this pull request, it came from a run of a branch pushed here, and that
+ * run was one of this workflow's. `previous.ts` answers each of them, on the function that
+ * makes it, and "The previous run's findings come out of its artifact" in `review/README.md`
+ * has the argument.
  *
  * Usage: bun fetch-previous.ts <pr-number> <out.json>
  * Env:   GITHUB_TOKEN (or the token on stdin), GITHUB_REPOSITORY, GITHUB_RUN_ID

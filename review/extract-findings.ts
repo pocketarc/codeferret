@@ -5,11 +5,11 @@
  * The orchestrator emits a fresh structured output each time a lens reports back, so
  * the log holds several `result` messages and only the last is complete.
  *
- * Six files come out of this, all in the directory of the findings path: `findings.json`,
- * `findings-count`, `cost-usd`, `output-tokens`, `duration-ms` and `permission-denials`.
- * The action reads every one of them, and review/summary.ts renders them into the job
- * summary. The four numbers are written before the findings are looked at, because a run
- * that produced none is the one whose cost and refusals somebody most wants to see.
+ * What comes out of this sits in the directory of the findings path: `findings.json`, and
+ * the files `RUN_FILES` names. The action reads them as step outputs, and review/summary.ts
+ * renders them into the job summary. The numbers are written before the findings are looked
+ * at, because a run that produced none is the one whose cost and refusals somebody most
+ * wants to see.
  *
  * The shape of a run log is upstream's, and a renamed field would report a $36 review as
  * $0.00 with nothing saying the number was not found, so each one is narrowed on the way
@@ -20,6 +20,7 @@
 
 import { dirname, join } from "node:path";
 import { record } from "./json.ts";
+import { RUN_FILES } from "./run-files.ts";
 
 interface LensHealth {
     lens?: unknown;
@@ -52,7 +53,7 @@ try {
 } catch {
     // Each line in a `try` of its own. A log cut off mid-line is exactly what a killed or
     // out-of-memory session leaves behind, and that is the run whose cost and refusals
-    // somebody most wants to see: one throw here and none of the four numbers below is ever
+    // somebody most wants to see: one throw here and none of the numbers below is ever
     // written.
     messages = [];
 
@@ -74,16 +75,14 @@ const dir = dirname(outPath);
 if (!last) {
     console.error("no result message in the run log. The session produced no terminal output.");
 
-    // All five files are still written. action.yml reads three of them as step outputs and
-    // summary.ts reads the other two back off disk, and for every one of those readers an
-    // absent file is indistinguishable from a zero. A killed session is exactly the run
-    // whose numbers somebody wants, so each file is written with what is known rather than
-    // left out to read as none.
-    await Bun.write(join(dir, "findings-count"), "none reported");
-    await Bun.write(join(dir, "cost-usd"), "unknown");
-    await Bun.write(join(dir, "output-tokens"), "unknown");
-    await Bun.write(join(dir, "duration-ms"), "unknown");
-    await Bun.write(join(dir, "permission-denials"), "unknown");
+    // Every file is still written. To every reader an absent file is indistinguishable from
+    // a zero, and a killed session is exactly the run whose numbers somebody wants, so each
+    // is written with what is known rather than left out to read as none.
+    await Bun.write(join(dir, RUN_FILES.findingsCount), "none reported");
+    await Bun.write(join(dir, RUN_FILES.cost), "unknown");
+    await Bun.write(join(dir, RUN_FILES.outputTokens), "unknown");
+    await Bun.write(join(dir, RUN_FILES.durationMs), "unknown");
+    await Bun.write(join(dir, RUN_FILES.permissionDenials), "unknown");
 
     process.exit(1);
 }
@@ -135,15 +134,15 @@ const denials = (Array.isArray(last.permission_denials) ? last.permission_denial
     .map(record)
     .filter((d) => d !== null);
 
-await Bun.write(join(dir, "cost-usd"), costUsd === null ? "unknown" : costUsd.toFixed(2));
-await Bun.write(join(dir, "output-tokens"), String(outputTokens));
-await Bun.write(join(dir, "duration-ms"), String(durationMs));
-await Bun.write(join(dir, "permission-denials"), String(denials.length));
+await Bun.write(join(dir, RUN_FILES.cost), costUsd === null ? "unknown" : costUsd.toFixed(2));
+await Bun.write(join(dir, RUN_FILES.outputTokens), String(outputTokens));
+await Bun.write(join(dir, RUN_FILES.durationMs), String(durationMs));
+await Bun.write(join(dir, RUN_FILES.permissionDenials), String(denials.length));
 
 const structured = record(last.structured_output);
 
 if (!structured || !Array.isArray(structured.findings)) {
-    await Bun.write(join(dir, "findings-count"), "none reported");
+    await Bun.write(join(dir, RUN_FILES.findingsCount), "none reported");
     console.error("the run produced no structured findings");
     console.error(`result subtype: ${string(last.subtype) ?? "unknown"}`);
     console.error(`it cost ${money} and was refused ${denials.length} tool call(s)`);
@@ -151,7 +150,7 @@ if (!structured || !Array.isArray(structured.findings)) {
 }
 
 await Bun.write(outPath, `${JSON.stringify(structured, null, 2)}\n`);
-await Bun.write(join(dir, "findings-count"), String(structured.findings.length));
+await Bun.write(join(dir, RUN_FILES.findingsCount), String(structured.findings.length));
 
 // Guarded like `findings` beside it. This is iterated below, after the findings file is
 // already on disk, so a `lens_health` that is not a list would turn a complete run into a

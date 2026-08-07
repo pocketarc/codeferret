@@ -210,11 +210,14 @@ the orchestrator's last turn alone, and undercounted one full run sixtyfold.
 | `unzip.ts` | Reads one file out of an artifact's zip, with `unzip.test.ts` beside it. |
 | `extract-findings.ts` | Reads the merged findings out of the run log, and what the run cost. |
 | `summary.ts` | Renders those numbers into the action's job summary. |
-| `check-findings.ts` | Checks those findings against the shape `post-review.ts` reads, and repairs, keeps or drops each fault. |
+| `check-findings.ts` | The command that checks those findings before anything posts them: argv, printing, the write-back and the exit code. |
+| `finding-rules.ts` | What may be wrong with a findings file and what to do about each thing, as functions over a parsed value. `finding-rules.test.ts` beside it. |
 | `post-review.ts` | Renders the review body, posts it, and records that it landed. |
 | `review-body.ts` | The rendering behind it, with `review-body.test.ts` beside it. |
 | `print-findings.ts` | The same findings for a terminal, which is what a session shows instead of a posted review. |
-| `findings.ts` | What a run produced: the shape, how a finding ranks, which ones the body prints. `findings.test.ts` beside it. |
+| `findings.ts` | What a run produced: the shape, how a finding ranks, which ones the body prints, and which suppressions hold. `findings.test.ts` beside it. |
+| `existing.ts` | The shape of `existing.json` and the one walk over it, so no reader declares its own. |
+| `run-files.ts` | The names a run writes its numbers under, which action.yml and summary.ts both read back. |
 | `markdown.ts` | Where a fenced block starts and stops, and what a model's prose may open in a posted review. `markdown.test.ts` beside it. |
 | `reviewed-commit.ts` | Prints the commit the lenses read, for whoever is about to post against it. |
 | `diff-args.ts` | Reads back what the lenses were told to diff, so nothing builds a second range or pathspec. |
@@ -264,8 +267,9 @@ against an earlier one is the same question as merging two lenses' findings: the
 often moved, and the words are rewritten every run. So the orchestrator marks each finding
 `new`, `already-reported`, or `declined`, and `post-review.ts` posts only the new ones.
 
-A suppression does not rest on the orchestrator's word alone. `vetSuppression` reads the
-cited comment back out of `existing.json` and reopens what the comments do not bear out.
+A suppression does not rest on the orchestrator's word alone. `vetSuppression` reads what
+each one cites back out of `existing.json` or `previous.json`, and reopens whatever those
+files do not bear out.
 
 A decline needs an owner, a member or a collaborator, or a thread somebody closed. Closing
 one takes repository write: without it, `resolveReviewThread` fails. So a closed thread is
@@ -277,18 +281,32 @@ An `already-reported` finding is held to less, because it stays a finding in the
 loses only its paragraph. Anyone's comment settles it. What it still needs is that the
 comment exists on this pull request and is about the same file.
 
-Both go through the same file test. A reply on a thread anchored to the finding's file
+Most of them cite no comment at all. Under STEP 3 the orchestrator takes the status from
+`previous.json` and names a url only where the entry carries one, so the ordinary
+`already-reported` finding arrives with nothing named. For a while that was the one status
+the orchestrator decided and nothing re-decided. It is now held to the same bar against
+`previous.json`: the last review has to have raised something in the finding's file.
+
+The bar is the file, even though the title is what the orchestrator matches on. It is told
+to match the defect rather than the prose, and the lenses word the same defect differently
+every run, so an exact title comparison reopened all seven suppressions of the run it was
+measured against. The file is what both sides can agree on.
+
+Every bar goes through the same file test. A reply on a thread anchored to the finding's file
 counts on its own; anything else, a conversation comment included, has to name the path, or
 a basename of four characters or more with nothing but punctuation or space either side.
 Without that test, a maintainer who comments "LGTM, merging" settles every finding on the
 pull request. What is left is that a maintainer settling one finding in a file settles every
 finding this run made in that file, which is the direction to be wrong in.
 
-`existing.json` is fetched a second time once the orchestrator has exited, and that copy is
-what the vetting reads. The orchestrator holds the path in the same prompt as the rule, and
-it has `Bash` under `bypassPermissions`, so with the first copy `vetSuppression` would be
-checking the orchestrator's suppressions against a file the orchestrator could have written.
-The second fetch also picks up whatever was said during the twenty minutes the review took.
+Neither file is taken as the orchestrator left it. `existing.json` is fetched a second time
+once the session has exited, and `previous.json` is copied aside before it and put back
+after, along with `diff-args` and `lens-list.txt`. The orchestrator holds every one of those
+paths in its prompt and has `Bash` under `bypassPermissions`, so the first copies could have
+been written by the session they are evidence about. The second fetch also picks up whatever
+was said during the twenty minutes the review took; a restored copy that differs from what
+went in is reported on stderr, because nothing else in a run would show a lens rewriting the
+diff the others read.
 
 It matches against two files. `build/previous.json` holds what the last run reported, and
 that is where a repeat is caught. `build/existing.json` holds the discussion on the pull
@@ -323,21 +341,24 @@ status of each finding to `build/previous.json`. The bodies are left behind: mat
 the file and the title, and pulling a previous review's prose into this run's context adds
 nothing.
 
-Four things have to be true of an artifact before what it holds can suppress a finding.
-`previous.ts` answers each of them.
+Every one of these has to be true of an artifact before what it holds can suppress a
+finding. `previous.ts` answers each of them.
 
 Its review has to have been posted. `post-review.ts` writes `posted` into `findings.json`
 once GitHub has accepted the review, and the action uploads after that, so the record
-travels inside the one file every consumer keeps. Four ordinary paths reach an uploaded
-artifact with no review on the pull request: `post: 'false'`, a 502 from the reviews
-endpoint, a token without `pull-requests: write`, and a run that `cancel-in-progress`
-kills while the upload still runs `if: always()`. A run that takes one of those for a posted
-review marks every finding `already-reported` against comments nobody ever saw, and writes
-that status into its own findings file, so the suppression lasts as long as the pull
-request. That is the failure this whole path exists to avoid, caused by the path itself. A
-run that ends red is a different case and still counts: `check-findings.ts` drops what it
-cannot use, the review lands, and the job goes red over what was dropped. So the newest
-artifact with a posted review wins, and one without is stepped over for the run before it.
+travels inside the one file every consumer keeps. Ordinary paths reach an uploaded artifact
+with no review on the pull request: `post: 'false'`, a 502 from the reviews endpoint, and a
+token without `pull-requests: write`. A run killed by `cancel-in-progress` used to be
+another, and the upload step's condition is `!cancelled()` so that it is not: with
+`artifact-path: '.'` the build directory exists within seconds, so under `always()` every
+superseded push uploaded an artifact whose review was never posted. A run that takes one of
+those for a posted review marks every finding `already-reported` against comments nobody
+ever saw, and writes that status into its own findings file, so the suppression lasts as
+long as the pull request. That is the failure this whole path exists to avoid, caused by the
+path itself. A run that ends red is a different case and still counts: `check-findings.ts`
+drops what it cannot use, the review lands, and the job goes red over what was dropped. So
+the newest artifact with a posted review wins, and one without is stepped over for the run
+before it.
 
 A run with nothing new to post records itself anyway, with a null url. It suppressed
 everything on the strength of a review that did land, and `previousRun` opens ten artifacts
@@ -465,17 +486,19 @@ whose last comment asks an unanswered question, and any it is unsure about. Each
 has a reason, and `review-body.ts` prints them in the review, so a wrong call is visible.
 
 Which threads are the run's own is decided by two things together: the login the review
-posts under, and the shape an inline comment of ours ended in. `github-actions[bot]` is the
-login of every workflow posting with `github.token`, so the login alone would put another
-workflow's threads on the list this run may close. The shape alone is worse: one of the two
-is a hidden HTML comment, which renders as nothing, so anyone who can open a review thread
-could write it into their own and have this run adopt the thread. Both halves are required.
+posts under, and a hidden marker in the comment that opened the thread. `github-actions[bot]`
+is the login of every workflow posting with `github.token`, so the login alone would put
+another workflow's threads on the list this run may close. The marker alone is worse: an
+HTML comment renders as nothing, so anyone who can open a review thread could write it into
+their own and have this run adopt the thread. Both halves are required.
 
-There are two shapes because the shape changed once. Every released version ended an
-inline comment with the category in a `<sub>`, and the marker went in later and reached
-only the runs made while the plugin work was in progress. Nothing writes either now: a
-body-only review creates no threads at all, and what is left to recognise is what those
-versions left open.
+Nothing writes the marker now. A body-only review creates no threads at all, so what is left
+to recognise are the threads left open by the runs made while the plugin work was in
+progress. A trailing `<sub>` category line counted as a second shape for a while, on the
+theory that a released version had ended its inline comments that way. No version has been
+released, every thread this run has seen carries the marker, and markup anyone can reproduce
+proves nothing about who wrote a comment, in a test whose whole job is to be narrow. So it
+went.
 
 A resolved thread also settles its finding: `resolved: true` marks it `declined` with no
 reading of replies. That makes resolving a thread the way to dismiss a finding for good.
@@ -569,9 +592,8 @@ repository root, so there it closed nothing at all.
 
 So every `bun` a review starts takes `--config=/dev/null` as well. That replaces the
 lookup wherever the process happens to be standing, and `/dev/null` is the one path on a
-runner whose contents nothing short of root can change. Fifteen invocations take the flag:
-six in `run.sh`, three in `build-prompts.sh`, three in action.yml, two in `local-post.sh` and
-one in `local-print.sh`.
+runner whose contents nothing short of root can change. Every invocation takes it: `run.sh`,
+`build-prompts.sh`, action.yml and the `local-*` scripts.
 
 The working directory still moves, because a relative path in a report or an argument
 resolves against it. Only the orchestrator starts in the workspace, in a subshell of its
@@ -697,7 +719,7 @@ dispatch whenever it changes.
    step fails with 403.
 
    Add `contents: write` as well to let CodeFerret resolve finished threads.
-   `resolveReviewThread` is gated on repository write access, which `pull-requests: write`
+   `resolveReviewThread` requires repository write access, which `pull-requests: write`
    does not give. Weigh it: the review agent runs with `bypassPermissions` and Bash, so a
    token that can write contents is a token that can push. Without it everything else
    works and nothing tries to close a thread.

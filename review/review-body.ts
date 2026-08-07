@@ -50,8 +50,8 @@ export const MAX_PROSE = 4000;
  * One lens's account of what it could not check. Every lens is asked for one.
  *
  * Wide enough for a full answer to an interface change, which is a dozen WCAG criteria
- * with a clause each. The budget does not need it back: fourteen of these is a fraction of
- * `MAX_BODY`, the listing is the elastic section, and a listed finding cut for length is
+ * with a clause each. The budget does not need it back: one of these per lens is a fraction
+ * of `MAX_BODY`, the listing is the elastic section, and a listed finding cut for length is
  * still in the findings file where a clipped caveat is nowhere.
  */
 export const MAX_LENS_DETAIL = 2000;
@@ -211,12 +211,17 @@ function lensDetail(detail: string): string {
 /**
  * What a lens could not check, whatever it reported.
  *
- * Two lenses ship without the capability their skills describe, and every step that would
+ * Some lenses ship without the capability their skills describe, and every step that would
  * carry that as far as the reader is a soft one: the lens is asked to write its limits down,
  * and the orchestrator to copy them into `detail`. Either can forget, and then a pull request full
  * of interface changes comes back looking as though its accessibility had been checked,
  * which is the failure `review/lens-extras/anthropic-accessibility-review.md` exists to
  * prevent. A standing sentence is worse than the lens's own words and cannot be forgotten.
+ *
+ * The rule for what belongs here: a lens whose `review/lens-extras/<lens>.md` opens by
+ * naming a capability the session does not have gets a sentence saying so. Written down
+ * because this map and that file are edited apart, and a lens left out of the map is the one
+ * whose gap nothing reports.
  */
 export const STANDING_DETAIL: ReadonlyMap<string, string> = new Map([
     [
@@ -225,6 +230,10 @@ export const STANDING_DETAIL: ReadonlyMap<string, string> = new Map([
             " timing and motion were not evaluated.",
     ],
     ["copilot-web-design-reviewer", "No browser was available, so nothing was judged from a rendered page."],
+    [
+        "vercel-next-best-practices",
+        "No application was running, so nothing was judged from a build, a bundle or a rendered page.",
+    ],
 ]);
 
 /**
@@ -312,8 +321,8 @@ export function assemble(head: string[], listing: Listing | null, tail: string[]
  * reader would get a review that appears to stop, with the notice saying it was cut sealed
  * inside a collapsed disclosure.
  *
- * The reserve is for the two closers, and overrunning it costs nothing: `MAX_BODY` is
- * already 5536 characters under GitHub's limit.
+ * The reserve is for the closers, and overrunning it costs nothing: `MAX_BODY` already sits
+ * under GitHub's limit.
  */
 function fit(body: string): string {
     const notice = "\n\n_(this review was cut for length)_";
@@ -381,7 +390,19 @@ export function composeReview(merged: Merged, posting: Posting, parts: Partition
     const [onlyCount] = counts;
     head.push(counts.length === 1 && onlyCount ? onlyCount : counts.map((c) => `- ${c}`).join("\n"));
 
-    if (health.length > 0) {
+    if (health.length === 0) {
+        // Everything a reader has for how much of this review to trust hangs off
+        // `lens_health`: the lens list, the coverage alert, and the standing sentence for a
+        // lens that ships without the capability its skill describes. `lens_health` is
+        // optional to the model, so one omitted array takes all of it out at once, and a
+        // body that stops mentioning lenses reads as a review with nothing to declare.
+        // check-findings.ts writes a warning to the job log, which the person the caveats are
+        // for never opens.
+        head.push(
+            "> [!WARNING]\n> This run reported nothing about which lenses ran or what they could not check," +
+                " so how much of the change was covered is unknown.",
+        );
+    } else {
         // A list, not a table: GitHub gives a wide column the container and starves the
         // rest, and most lenses report no detail at all. Punctuation a screen reader speaks,
         // for the reason the counts above are a list.

@@ -90,9 +90,9 @@ export interface GraphqlResult {
 /**
  * A GraphQL request, returning the payload whole.
  *
- * The two callers want different things from it: one treats any error as fatal, the other
- * reads the message to tell a missing permission from a bad thread id. So neither the
- * status nor the errors are decided here.
+ * Callers want different things from it: one treats any error as fatal, another reads the
+ * message to tell a missing permission from a bad thread id. So neither the status nor the
+ * errors are decided here.
  *
  * A body that is not JSON comes back as an error rather than a rejection. GitHub answers a
  * 502 or a gateway timeout with HTML, and post-review.ts resolves threads at the top level

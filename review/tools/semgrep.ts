@@ -127,17 +127,17 @@ if (files.length === 0) {
  * repository root. Anything that is not a path on disk is a registry identifier and goes
  * through as written.
  */
-function ruleset(): { config: string } | { refusal: string } {
+function ruleset(): { config: string; local: boolean } | { refusal: string } {
     const configured = process.env.SEMGREP_CONFIG;
 
-    if (!configured) return { config: "p/default" };
+    if (!configured) return { config: "p/default", local: false };
 
     const resolved = resolve(root, configured);
 
-    if (!existsSync(resolved)) return { config: configured };
+    if (!existsSync(resolved)) return { config: configured, local: false };
 
     return resolved.startsWith(`${root}/`)
-        ? { config: relative(root, resolved) }
+        ? { config: relative(root, resolved), local: true }
         : {
               refusal:
                   `SEMGREP_CONFIG is '${configured}', which resolves outside the repository.` +
@@ -256,6 +256,9 @@ await write({
     unreadable,
     errors,
     errors_truncated: allErrors.length - errors.length,
+    // A ruleset on disk is read from the bind mount, so nothing here reports an egress a
+    // maintainer closed by setting SEMGREP_CONFIG.
+    egress: chosen.local ? null : `fetched its \`${chosen.config}\` ruleset from semgrep's registry`,
     findings,
 });
 

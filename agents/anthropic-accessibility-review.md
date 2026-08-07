@@ -118,13 +118,12 @@ Report the half you can see, and say plainly what you could not judge:
   `@media (prefers-reduced-motion: reduce)` beside it is a source fact. Whether what moves
   is distracting, or flashes more than three times a second, is not.
 
-Four parts of the skill contradict the rule above, and the rule overrides all four. Three
-are tables in its Output template, and every cell in each of them would be invented: "Color
-Contrast Check" has a column for a computed ratio per element, "Keyboard Navigation" one for
-a rendered tab order and the runtime behaviour of four keys, and "Screen Reader" an
-"Announced As" column. Leave all three out entirely. The fourth is its Tip 1, which puts
-contrast first: start with keyboard instead, meaning the part of 2.1.1 the source settles
-and the rest of the set above.
+Parts of the skill contradict the rule above, and the rule overrides them. Its Output
+template holds tables whose every cell would be invented: "Color Contrast Check" has a
+column for a computed ratio per element, "Keyboard Navigation" one for a rendered tab order
+and what each key does at runtime, and "Screen Reader" an "Announced As" column. Leave those
+tables out entirely. Its Tip 1 puts contrast first: start with keyboard instead, meaning the
+part of 2.1.1 the source settles and the rest of the set above.
 
 One correction to the skill's quick reference: its table is headed "WCAG 2.1 AA" and lists
 2.5.5 Target Size under it. 2.5.5 is Level AAA. The AA criterion is 2.5.8 Target Size

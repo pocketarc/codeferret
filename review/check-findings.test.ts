@@ -87,7 +87,35 @@ describe("check-findings", () => {
         });
 
         expect(code).toBe(0);
-        expect(out).toContain("codeferret:b ran and reported no health");
+        expect(out).toContain("b ran and reported no health");
+    });
+
+    test("takes a lens that dropped the namespace as the lens that ran under it", async () => {
+        await Bun.write(join(dir, "lens-list.txt"), "- `codeferret:a`\n- `codeferret:b`\n");
+
+        const { code, out } = await check({
+            findings: [finding()],
+            lens_health: [
+                { lens: "a", findings_returned: 1, ok: true },
+                { lens: "b", findings_returned: 0, ok: true },
+            ],
+        });
+
+        expect(code).toBe(0);
+        expect(out).not.toContain("ran and reported no health");
+    });
+
+    test("reads a lens's health as needing attention when `ok` is not a boolean", async () => {
+        const { code, out, written } = await check({
+            findings: [finding()],
+            lens_health: [{ lens: "codeferret:a", findings_returned: 0, ok: "false" }],
+        });
+
+        expect(code).toBe(0);
+        expect(out).toContain("is not a boolean");
+
+        const health = (written as { lens_health?: Array<{ ok?: unknown }> }).lens_health ?? [];
+        expect(health[0]?.ok).toBe(false);
     });
 
     test("keeps a finding carrying a key nothing here knows about", async () => {

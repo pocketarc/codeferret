@@ -21,8 +21,8 @@
  */
 
 import { dirname } from "node:path";
-import { commentUrls, isMerged, partition, vetAgainstExisting } from "./findings.ts";
-import type { Merged } from "./findings.ts";
+import { ownThreads, survey } from "./existing.ts";
+import { partition, readMerged, vetAgainstExisting } from "./findings.ts";
 import { graphql, graphqlFailure, requirePullNumber, requireRepository, rest, tokenFromStdinOrEnv } from "./github.ts";
 import { reason } from "./json.ts";
 import { composeReview, destinationOf, plural } from "./review-body.ts";
@@ -43,38 +43,7 @@ requirePullNumber(prNumber);
 const findingsFile: string = findingsPath;
 const buildDir = dirname(findingsFile);
 
-/** Threads this run posted itself, which are the only ones it may resolve. */
-function ownThreads(existing: unknown): Set<string> {
-    const parsed = (typeof existing === "object" && existing !== null ? existing : {}) as {
-        threads?: Array<{ thread_id?: unknown; mine?: unknown }>;
-    };
-
-    return new Set(
-        (parsed.threads ?? [])
-            .filter((t) => t.mine === true && typeof t.thread_id === "string")
-            .map((t) => String(t.thread_id)),
-    );
-}
-
-let merged: Merged;
-
-try {
-    // Nothing has necessarily validated this file. The action runs check-findings.ts
-    // first, but local-post.sh and the by-hand path in review/README.md both come
-    // straight here, and an unhandled rejection at the end of a run that cost real money
-    // is a worse answer than a sentence naming the file.
-    merged = JSON.parse(await Bun.file(findingsFile).text()) as Merged;
-} catch (error) {
-    console.error(`${findingsFile}: ${reason(error)}`);
-    console.error(`check it with: bun check-findings.ts ${findingsFile}`);
-    process.exit(1);
-}
-
-if (!isMerged(merged)) {
-    console.error(`${findingsFile}: has no \`findings\` array`);
-    console.error(`check it with: bun check-findings.ts ${findingsFile}`);
-    process.exit(1);
-}
+const merged = await readMerged(findingsFile, `check it with: bun check-findings.ts ${findingsFile}`);
 
 // The decision is taken again here: the orchestrator held the suppression rules and the
 // comments it judged as text in one context.
@@ -101,6 +70,13 @@ if (vetted.unreported > 0) {
     console.error(
         `${plural(vetted.unreported, "finding")} came back as already raised, citing a comment that is` +
             ` not on this pull request or says nothing about the file. Reporting them as new.`,
+    );
+}
+
+if (vetted.unmatched > 0) {
+    console.error(
+        `${plural(vetted.unmatched, "finding")} came back as already raised, citing no comment and naming` +
+            ` a file the previous review did not. Reporting them as new.`,
     );
 }
 
@@ -192,8 +168,8 @@ if (toResolve.length > 0 && !process.env.DRY_RUN) {
         const failure = graphqlFailure(result);
 
         if (failure?.includes("not accessible by integration")) {
-            // resolveReviewThread is gated on repository write, which pull-requests:
-            // write does not grant.
+            // resolveReviewThread requires repository write, which pull-requests: write
+            // does not grant.
             resolveDenied = true;
             console.error(
                 `cannot resolve threads: the token lacks contents: write.` +
@@ -218,7 +194,7 @@ const {
     body: reviewBody,
     listed,
     broken,
-} = composeReview(merged, { resolved, resolveDenied, leftOpen, to, linkable: commentUrls(existing) }, parts);
+} = composeReview(merged, { resolved, resolveDenied, leftOpen, to, linkable: survey(existing).linkable }, parts);
 
 console.log(
     `total=${allFindings.length} new=${findings.length} suppressed=${suppressed.length}` +
@@ -238,8 +214,8 @@ if (findings.length === 0 && broken.length === 0 && !process.env.DRY_RUN) {
     if (resolved.length > 0) console.log(`resolved ${plural(resolved.length, "thread")}`);
 
     // Nothing new to post is this run's whole review, and the record has to carry forward
-    // or the chain of artifacts breaks. The four cases the `posted` rule exists for all
-    // fail before this branch or instead of it.
+    // or the chain of artifacts breaks. The cases the `posted` rule exists for all fail
+    // before this branch or instead of it.
     await markPosted(null);
     process.exit(0);
 }

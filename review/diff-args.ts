@@ -3,8 +3,9 @@
  *
  * Every consumer reads that file rather than building its own range or pathspec, because
  * two constructions drift, and once they do a script is working from a diff no lens read.
- * The layout lives here so that adding an argument breaks one function instead of three
- * hand-rolled parses, two of which fail into a report saying the tool ran cleanly.
+ * The layout lives here so that adding an argument breaks one function rather than a
+ * hand-rolled parse in each consumer, where the failure is a report saying the tool ran
+ * cleanly.
  */
 
 export interface DiffArgs {

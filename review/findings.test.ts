@@ -117,11 +117,40 @@ describe("vetSuppression: who may settle a finding", () => {
         expect(out.untraceable).toBe(1);
     });
 
-    test("it leaves a new finding alone, and an already-reported one citing nothing", () => {
-        const out = vetSuppression([finding({ status: "new" }), finding({ status: "already-reported" })], {});
+    test("it leaves a new finding alone", () => {
+        const out = vetSuppression([finding({ status: "new" })], {});
 
-        expect([out.untraceable, out.unrelated, out.unreported]).toEqual([0, 0, 0]);
-        expect(out.findings.map((f) => f.status)).toEqual(["new", "already-reported"]);
+        expect([out.untraceable, out.unrelated, out.unreported, out.unmatched]).toEqual([0, 0, 0, 0]);
+        expect(out.findings.map((f) => f.status)).toEqual(["new"]);
+    });
+});
+
+describe("vetSuppression: what already-reported rests on when it cites no comment", () => {
+    const seen = (file = "a.ts"): Finding => finding({ file, status: "already-reported" });
+
+    test("the previous review having raised something in the same file settles it", () => {
+        const out = vetSuppression([seen()], {}, { findings: [{ file: "a.ts", title: "worded some other way" }] });
+
+        expect(out.unmatched).toBe(0);
+        expect(out.findings[0]?.status).toBe("already-reported");
+    });
+
+    test("a previous review of other files does not, and nothing else would have checked it", () => {
+        const out = vetSuppression([seen()], {}, { findings: [{ file: "b.ts", title: "A title" }] });
+
+        expect(out.unmatched).toBe(1);
+        expect(out.findings[0]?.status).toBe("new");
+    });
+
+    test("no previous findings at all reopens, which is what a first run means", () => {
+        expect(vetSuppression([seen()], {}, { findings: [] }).unmatched).toBe(1);
+        expect(vetSuppression([seen()], {}).unmatched).toBe(1);
+    });
+
+    test("the title is not the key, because the orchestrator rewrites one every run", () => {
+        const out = vetSuppression([seen()], {}, { findings: [{ file: "a.ts", title: "nothing like it" }] });
+
+        expect(out.findings[0]?.status).toBe("already-reported");
     });
 });
 

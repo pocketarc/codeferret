@@ -16,9 +16,8 @@
  */
 
 import { dirname } from "node:path";
-import { brokenLenses, isMerged, partition, vetAgainstExisting } from "./findings.ts";
-import type { Finding, Merged } from "./findings.ts";
-import { reason } from "./json.ts";
+import { brokenLenses, partition, readMerged, vetAgainstExisting } from "./findings.ts";
+import type { Finding } from "./findings.ts";
 import { caveatOf, lensLabel, plural, where } from "./review-body.ts";
 
 const [findingsPath] = process.argv.slice(2);
@@ -29,20 +28,7 @@ if (!findingsPath) {
 }
 
 const findingsFile: string = findingsPath;
-
-let merged: Merged;
-
-try {
-    merged = JSON.parse(await Bun.file(findingsFile).text()) as Merged;
-} catch (error) {
-    console.error(`${findingsFile}: ${reason(error)}`);
-    process.exit(1);
-}
-
-if (!isMerged(merged)) {
-    console.error(`${findingsFile}: has no \`findings\` array`);
-    process.exit(1);
-}
+const merged = await readMerged(findingsFile);
 
 // A suppression the posting path would overturn has to be overturned here too, or a session
 // reports as settled a finding a posted review would raise.

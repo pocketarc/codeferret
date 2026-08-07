@@ -6,12 +6,20 @@
  * `scripts/rewrite-markdown.ts` rewrites a vendored skill and can delete a line.
  *
  * The escaping below is the whole policy for what a model's prose may open in a posted
- * review. It lives in one module because the two halves (what a character does mid-line,
- * and what it does at the start of one) were written apart and disagreed about `<`, and a
- * review body is where the disagreement showed.
+ * review: what a character does mid-line and what it does at the start of one are decided
+ * here and nowhere else.
  */
 
-const FENCE = /^\s*(```+|~~~+)(.*)$/;
+/**
+ * A fenced block's delimiter, at the indentation the renderer reads as one.
+ *
+ * CommonMark allows three spaces before an opening or closing fence and reads a fourth as an
+ * indented code block, which opens nothing. Matched at any indentation, a marker the renderer
+ * ignores would turn the escaping below off for every line after it: a `<details>` in the
+ * prose that follows hides the rest of the review, and a `@` notifies whoever owns that name.
+ * A tab is four columns, so it is outside the bound too.
+ */
+const FENCE = /^ {0,3}(```+|~~~+)(.*)$/;
 
 /**
  * Whether a run of delimiters closes a block the given run opened.
@@ -23,7 +31,7 @@ const FENCE = /^\s*(```+|~~~+)(.*)$/;
  * The info string is the other half of that. CommonMark lets only an opening fence carry
  * one, so ```` ```sql ```` can never close a block. Without the rule a nested ```` ```sql ````
  * sample ends its parent block of the same length, and every line inside it comes back as
- * prose the rewriter may edit or delete. That is live in two vendored skills.
+ * prose the rewriter may edit or delete. Vendored skills nest fences that way.
  */
 function closes(fence: string, info: string, open: string): boolean {
     return fence[0] === open[0] && fence.length >= open.length && info.trim() === "";
@@ -82,10 +90,12 @@ export function closeOpenFence(text: string): string {
  * a browser closes an unclosed `<details>` at the end of the comment, hiding everything
  * after the cut inside a collapsed disclosure. `fit` in review-body.ts has the rest.
  *
- * Counted over the same view of the text the renderer sees, which means line by line: a
- * fenced line is a code sample and a `\<` is prose that came through `escapeTags`, and
- * neither opens a disclosure. Prose and samples about markup are what these lenses write,
- * so counting the raw string appends a stray closer to an ordinary review.
+ * Counted over the view `escapeTags` leaves behind, which means line by line and outside
+ * every code span: a fenced line is a code sample, a span is one too, and a `\<` is prose
+ * that already came through the escaping. None of them opens a disclosure. Counting the
+ * raw string is wrong in both directions, and prose about markup is what these lenses write:
+ * a body naming the `<details>` element gets a closer it never needed, and one writing the
+ * closing tag inside a span cancels a real opener and seals the rest of the review inside it.
  */
 export function closeOpenDetails(text: string): string {
     const lines = text.split("\n");
@@ -95,13 +105,70 @@ export function closeOpenDetails(text: string): string {
     for (const [i, line] of lines.entries()) {
         if (fenced[i]) continue;
 
-        open += (line.match(/(?<!\\)<details\b/g) ?? []).length;
-        open -= (line.match(/(?<!\\)<\/details>/g) ?? []).length;
+        const prose = outsideCode(line);
+
+        open += (prose.match(/(?<!\\)<details\b/g) ?? []).length;
+        open -= (prose.match(/(?<!\\)<\/details>/g) ?? []).length;
     }
 
     if (open <= 0) return text;
 
     return `${text}\n${Array.from({ length: open }, () => "</details>").join("\n")}`;
+}
+
+/** A run of text, and whether the renderer reads it as a code span. */
+interface Segment {
+    kind: "prose" | "span" | "unclosed";
+    text: string;
+}
+
+/**
+ * The text split into what a code span covers and what it does not.
+ *
+ * One walk, so that escaping a character and counting a tag cannot disagree about which of
+ * the two a stretch of text is. A backtick run opens a span that ends at the next run of the
+ * same length, which is what lets a span hold a backtick of its own.
+ */
+function segments(text: string): Segment[] {
+    const out: Segment[] = [];
+    let prose = "";
+    let i = 0;
+
+    const flush = (): void => {
+        if (prose !== "") out.push({ kind: "prose", text: prose });
+        prose = "";
+    };
+
+    while (i < text.length) {
+        const char = text[i] ?? "";
+
+        if (char !== "`") {
+            prose += char;
+            i += 1;
+            continue;
+        }
+
+        let run = 0;
+        while (text[i + run] === "`") run += 1;
+
+        const fence = "`".repeat(run);
+        const close = text.indexOf(fence, i + run);
+
+        flush();
+
+        if (close !== -1) {
+            out.push({ kind: "span", text: text.slice(i, close + run) });
+            i = close + run;
+            continue;
+        }
+
+        out.push({ kind: "unclosed", text: fence });
+        i += run;
+    }
+
+    flush();
+
+    return out;
 }
 
 /**
@@ -110,46 +177,33 @@ export function closeOpenDetails(text: string): string {
  * Text inside a code span is left alone, because the orchestrator writes code spans
  * deliberately and a backslash inside one lands on the page.
  *
- * The backslash is escaped first, and before anything else in the set, because one already
- * in the text cancels the escape put after it: `a\*b` would become `a\\*b`, a literal
- * backslash followed by a live asterisk. Text ending in one is worse, since `bullet` wraps
- * a title in `**`, and the trailing backslash then escapes the first closing asterisk and
- * the emphasis runs on into the body. Windows paths, regexes and LaTeX fragments all reach
- * a title.
+ * The backslash is in every caller's set, because one already in the text cancels the escape
+ * put after it: `a\*b` would become `a\\*b`, a literal backslash followed by a live asterisk.
+ * Text ending in one is worse, since `bullet` wraps a title in `**`, and the trailing
+ * backslash then escapes the first closing asterisk and the emphasis runs on into the body.
+ * Windows paths, regexes and LaTeX fragments all reach a title.
  */
 function escapeOutsideCode(text: string, set: string): string {
-    let out = "";
-    let i = 0;
-
-    while (i < text.length) {
-        const char = text[i] ?? "";
-
-        if (char === "`") {
-            let run = 0;
-            while (text[i + run] === "`") run += 1;
-
-            const fence = "`".repeat(run);
-            const close = text.indexOf(fence, i + run);
-
-            if (close !== -1) {
-                out += text.slice(i, close + run);
-                i = close + run;
-                continue;
-            }
+    return segments(text)
+        .map((segment) => {
+            if (segment.kind === "span") return segment.text;
 
             // Nothing closes it, so this opens no code span. Left alone it pairs with the
             // next backtick markdown finds, usually one in the finding's own body, and
             // renders everything between the two as code.
-            out += "\\`".repeat(run);
-            i += run;
-            continue;
-        }
+            if (segment.kind === "unclosed") return "\\`".repeat(segment.text.length);
 
-        out += set.includes(char) ? `\\${char}` : char;
-        i += 1;
-    }
+            return [...segment.text].map((char) => (set.includes(char) ? `\\${char}` : char)).join("");
+        })
+        .join("");
+}
 
-    return out;
+/** The text with every code span taken out, which is what `escapeOutsideCode` leaves alone. */
+function outsideCode(text: string): string {
+    return segments(text)
+        .filter((segment) => segment.kind === "prose")
+        .map((segment) => segment.text)
+        .join("");
 }
 
 /**
@@ -182,6 +236,13 @@ export function escapeInline(text: string): string {
  *
  * `@` for the reason `escapeInline` takes it: a finding body quoting a scoped package name
  * would otherwise notify an account on every push.
+ *
+ * A link the model wrote survives, whereas `mention` in review-body.ts bounds the url it
+ * renders to one the pull request carries. The two are answering different questions.
+ * `mention` puts a url from somewhere else behind a label of ours that reads as provenance,
+ * and a reader clicks it on the strength of that label. Prose is the model's own sentence,
+ * and bounding the links in it would buy nothing: GFM autolinks a bare `https://` run, so
+ * the same destination reaches the same page with no link syntax at all.
  */
 function escapeTags(text: string): string {
     return escapeOutsideCode(text, "\\<@");

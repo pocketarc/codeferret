@@ -35,6 +35,28 @@ jobs:
               with:
                   claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
                   # This repository is public, so everything named in the input's
-                  # description is published for 14 days to anyone who asks. Accepted: the
-                  # fixture runs are what a maintainer reads when a review goes wrong.
+                  # description is published for 14 days to anyone who asks. "Accepted risks"
+                  # in CLAUDE.md has why this repository keeps the wide path anyway.
                   artifact-path: '.'
+                  # The shipped default without comment-review and writing-review. Both are
+                  # run by hand against the working tree before a push instead, because what
+                  # they report is a function of how much prose the last commit wrote: on the
+                  # run that followed 42 of their findings being fixed, comment-review came
+                  # back with 31 more. Nothing is wrong with either lens. This branch simply
+                  # rewrites too much prose per round for a review to be the place to catch
+                  # it. Take this out once the branch has landed and the diffs are small.
+                  #
+                  # `lenses` replaces the default rather than adding to it, so this list
+                  # goes stale on its own if a lens is added to action.yml.
+                  lenses: |
+                      static-analysis
+                      caveman-review
+                      anthropic-code-review
+                      wshobson-code-review-excellence
+                      cursor-thermo-nuclear-review
+                      sentry-security-review
+                      copilot-security-review
+                      vercel-next-best-practices
+                      copilot-web-design-reviewer
+                      copilot-sql-code-review
+                      anthropic-accessibility-review

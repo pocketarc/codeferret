@@ -36,21 +36,33 @@ emit_output_file() {
     emit_output "$1" "$(cat "$2")"
 }
 
-# ---- The one name two scripts have to agree on --------------------------------------
+# ---- The one name the scripts have to agree on --------------------------------------
 
 # The lens the static analysis tools report to, and the only one that reads their reports.
-# Declared once, because two scripts decide what to run by matching this name against a
-# lens list, and validate-repo.ts checks the action's defaults against it.
+# Declared once, because more than one script decides what to run by matching this name
+# against a lens list, and validate-repo.ts checks the action's defaults against it.
 export TOOLS_LENS=static-analysis
+
+# ---- The empty form of the file the orchestrator is handed ---------------------------
+
+# What existing.json says when there was no pull request to fetch it from, or when the fetch
+# failed before it could write.
+#
+# Written once here rather than spelled out at each of the places a run needs it. The keys
+# are the ones STEP 3 of the orchestrator prompt names, and `asExisting` reads a missing
+# `threads` as an empty list, so a copy that drifts hands the vetting a file with a key it
+# does not recognise, and every suppression is reopened with nothing saying why.
+empty_existing() {
+    printf '{"threads": [], "conversation": []}\n' >"$1"
+}
 
 # ---- Where a run keeps its files ----------------------------------------------------
 
 # The run directory and the build directory inside it, as RUN_DIR and BUILD_DIR.
 #
-# `build/` is the one name every part of a run has to agree on: action.yml names it in three
-# steps, run.sh and build-prompts.sh derive it, and the two local scripts read it back.
-# Renamed in one of those and missed in another, a review runs, costs the money, and posts
-# against a diff nothing read. The pathspec was built twice once and drifted, which is why
+# `build/` is the one name every part of a run has to agree on. Rename it here and leave it
+# spelled out by hand somewhere else, and a review runs, costs the money, and posts against a
+# diff nothing read. The pathspec was built twice once and drifted, which is why
 # review/diff-args.ts exists; this is the same fact one level up.
 #
 # The root is the caller's: `runner_run_dir` on a runner, `session_run_dir` on somebody's
@@ -77,11 +89,11 @@ session_run_dir() {
 
 # Whether `command-prefix` can see a path at the same place the runner has it.
 #
-# A prefix mounts only what whoever wrote it was told to mount, and two of the three paths a
-# run needs are outside the checkout. Each is named here, because a missing action path
-# shows up in the first seconds as a bun module-resolution error, and a missing build
-# directory shows up much later, with every lens reading no diff at all and the review
-# coming back empty for no stated reason.
+# A prefix mounts only what whoever wrote it was told to mount, and a run reads paths outside
+# the checkout. Each is named here, because a missing action path shows up in the first
+# seconds as a bun module-resolution error, and a missing build directory shows up much
+# later, with every lens reading no diff at all and the review coming back empty for no
+# stated reason.
 #
 # Each call has to sit after the path exists on the runner and before the first `$PREFIX
 # bun` that would create it inside the container. Bun.write makes parent directories, so one
@@ -141,7 +153,7 @@ open_pr() {
 }
 
 # Origin's default branch name, or nothing. Answered once per shell, because the fallback
-# is a network call and two callers here want it.
+# is a network call.
 default_branch() {
     if [ -z "${CF_DEFAULT_BRANCH+set}" ]; then
         CF_DEFAULT_BRANCH=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)

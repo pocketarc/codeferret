@@ -8,6 +8,9 @@
  */
 
 import { join } from "node:path";
+import { asExisting, readExisting, survey } from "./existing.ts";
+import type { Existing, Located } from "./existing.ts";
+import { reason } from "./json.ts";
 
 export interface Finding {
     found_by?: string[];
@@ -93,100 +96,9 @@ export interface Partitioned {
 /** GitHub's `authorAssociation` values for someone with standing in the repository. */
 const MAY_DECLINE = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
 
-interface Commenter {
-    association?: string;
-    url?: string;
-    body?: string;
-}
-
-interface Threaded {
-    resolved?: boolean;
-    url?: string;
-    file?: string;
-    comments?: Commenter[];
-}
-
-interface Existing {
-    threads?: Threaded[];
-    conversation?: Commenter[];
-}
-
-/** One comment on the pull request, as the two questions asked of it. */
-interface Comment {
-    /** The file this comment's thread is anchored to. Empty for a conversation comment. */
-    file: string;
-    /** The comment's own words, which is all a conversation comment has to say what it is about. */
-    text: string;
-    /** Whether whoever wrote it has standing in the repository. */
-    entitled: boolean;
-    /** Whether it sits on a thread somebody closed. */
-    onClosedThread: boolean;
-}
-
-/**
- * Every comment the pull request carries, by url, whoever wrote it.
- *
- * A url reaching this map says nothing about what it may settle. `vetSuppression` asks that
- * of each entry: a decline needs an entitled author or a closed thread, and an
- * `already-reported` finding needs only a comment that is there and is about the same file.
- */
-function commentsOn(existing: Existing): Map<string, Comment> {
-    const all = new Map<string, Comment>();
-
-    const take = (c: Commenter | undefined, file: string, onClosedThread: boolean): void => {
-        if (!c?.url) return;
-
-        all.set(c.url, {
-            file,
-            text: c.body ?? "",
-            entitled: MAY_DECLINE.has(c.association ?? ""),
-            onClosedThread,
-        });
-    };
-
-    for (const thread of existing.threads ?? []) {
-        const closed = thread.resolved === true;
-        const file = typeof thread.file === "string" ? thread.file : "";
-
-        // A thread whose own url names no comment still stands for the file it is anchored
-        // to, and the loop below overwrites this the moment the root comment carries it.
-        if (closed && thread.url && file) {
-            all.set(thread.url, { file, text: "", entitled: false, onClosedThread: true });
-        }
-
-        for (const comment of thread.comments ?? []) take(comment, file, closed);
-    }
-
-    for (const comment of existing.conversation ?? []) take(comment, "", false);
-
-    return all;
-}
-
-/**
- * Every comment url the pull request carries, whoever wrote it.
- *
- * `review-body.ts` renders `existing_comment_url` as a link, and that url is the
- * orchestrator's word for where a finding was answered. An `already-reported` finding is
- * vetted nowhere else, so without this a comment written by anyone who can comment can put
- * an arbitrary link into a review posted under the bot's name.
- */
-export function commentUrls(existing: unknown): ReadonlySet<string> {
-    const parsed = typeof existing === "object" && existing !== null ? (existing as Existing) : {};
-    const urls = new Set<string>();
-
-    for (const thread of parsed.threads ?? []) {
-        if (thread.url) urls.add(thread.url);
-
-        for (const comment of thread.comments ?? []) {
-            if (comment?.url) urls.add(comment.url);
-        }
-    }
-
-    for (const comment of parsed.conversation ?? []) {
-        if (comment?.url) urls.add(comment.url);
-    }
-
-    return urls;
+/** Whether whoever wrote a comment has standing in the repository. */
+function entitled(comment: Located): boolean {
+    return MAY_DECLINE.has(comment.association);
 }
 
 /**
@@ -228,7 +140,7 @@ function namesFile(text: string, base: string): boolean {
  * `a.ts`. Tighter than that starts reopening the declines a maintainer plainly meant, and
  * a repeated comment costs less than a finding nobody sees.
  */
-function isAbout(comment: Comment, file: string): boolean {
+function isAbout(comment: Located, file: string): boolean {
     if (!file) return false;
     if (comment.file !== "" && comment.file === file) return true;
     if (comment.text.includes(file)) return true;
@@ -246,6 +158,35 @@ export interface Vetted {
     unrelated: number;
     /** `already-reported` findings citing a comment that is absent or about another file. */
     unreported: number;
+    /** `already-reported` findings citing no comment, in a file the last review raised nothing in. */
+    unmatched: number;
+}
+
+/**
+ * Whether the previous review raised anything in this file.
+ *
+ * The bar an `already-reported` finding that cites no comment is held to, and deliberately
+ * the same one `isAbout` applies to a comment: the file, not the finding. Titles are the
+ * wrong key even though the orchestrator matches on them. It is told to match the defect
+ * rather than the prose, and it rewrites a title every run as the lenses word it
+ * differently, so an exact comparison here would reopen suppressions that are correct: on
+ * the run this was measured against, all seven of them.
+ *
+ * The residual is the one `isAbout` already carries: a file the last review raised anything
+ * in will bear out any suppression this run makes in it. What it still catches is a
+ * suppression with nothing at all behind it, which is what this path had before.
+ */
+function raisedBefore(previous: unknown, file: string): boolean {
+    if (!file) return false;
+
+    const parsed = typeof previous === "object" && previous !== null ? (previous as Previous) : {};
+
+    return (parsed.findings ?? []).some((entry) => entry?.file === file);
+}
+
+/** The previous run's findings, as `fetch-previous.ts` writes them. */
+interface Previous {
+    findings?: Array<{ file?: string }>;
 }
 
 /**
@@ -262,19 +203,20 @@ export interface Vetted {
  * does not grant. Replying to a closed thread takes no more than commenting and does
  * not reopen it, so a reply there settles the file its thread is anchored to and nothing
  * else. An `already-reported` finding is a defect somebody has written down, whoever they
- * are, and it stays a finding in the file either way, so all it needs is that the comment
- * it cites exists and is about the same file.
+ * are, and it stays a finding in the file either way, so all it needs is that what it rests
+ * on is there and is about the same file: a comment where it cites one, and otherwise the
+ * previous review, which is where the orchestrator is told to take the status from.
  *
- * When existing.json cannot be read, nothing can be traced and every suppression is
- * reopened. That costs a comment somebody has already answered, and the other way costs a
- * finding nobody sees.
+ * When existing.json or previous.json cannot be read, nothing can be traced and every
+ * suppression resting on it is reopened. That costs a comment somebody has already answered,
+ * and the other way costs a finding nobody sees.
  */
-export function vetSuppression(findings: Finding[], existing: unknown): Vetted {
-    const parsed = typeof existing === "object" && existing !== null ? (existing as Existing) : {};
-    const comments = commentsOn(parsed);
+export function vetSuppression(findings: Finding[], existing: unknown, previous: unknown = {}): Vetted {
+    const { comments } = survey(asExisting(existing));
     let untraceable = 0;
     let unrelated = 0;
     let unreported = 0;
+    let unmatched = 0;
 
     const reopen = (f: Finding): Finding => ({ ...f, status: "new" as const });
 
@@ -283,12 +225,12 @@ export function vetSuppression(findings: Finding[], existing: unknown): Vetted {
         const cited = url ? comments.get(url) : undefined;
 
         if (f.status === "declined") {
-            if (!cited || !(cited.entitled || cited.onClosedThread)) {
+            if (!cited || !(entitled(cited) || cited.onClosedThread)) {
                 untraceable += 1;
                 return reopen(f);
             }
 
-            const about = cited.entitled ? isAbout(cited, f.file) : cited.file !== "" && cited.file === f.file;
+            const about = entitled(cited) ? isAbout(cited, f.file) : cited.file !== "" && cited.file === f.file;
 
             if (about) return f;
 
@@ -296,19 +238,29 @@ export function vetSuppression(findings: Finding[], existing: unknown): Vetted {
             return reopen(f);
         }
 
-        // No url is the ordinary case: `previous.json` carries what the last run reported,
-        // and a finding matched against it names no comment.
-        if (f.status === "already-reported" && url) {
-            if (cited && isAbout(cited, f.file)) return f;
+        if (f.status === "already-reported") {
+            if (url) {
+                if (cited && isAbout(cited, f.file)) return f;
 
-            unreported += 1;
+                unreported += 1;
+                return reopen(f);
+            }
+
+            // No url is the ordinary path rather than an edge case: STEP 3 tells the
+            // orchestrator to take this status from `previous.json` and to copy a url only
+            // where the entry has one, so most suppressions arrive with nothing cited. Left
+            // to fall through, they were the one status decided by the orchestrator alone
+            // and re-decided nowhere, and the status carries into every later run.
+            if (raisedBefore(previous, f.file)) return f;
+
+            unmatched += 1;
             return reopen(f);
         }
 
         return f;
     });
 
-    return { findings: vetted, untraceable, unrelated, unreported };
+    return { findings: vetted, untraceable, unrelated, unreported, unmatched };
 }
 
 /** Whether a parsed file is something this module can read as a run's output. */
@@ -316,37 +268,74 @@ export function isMerged(value: unknown): value is Merged {
     return typeof value === "object" && value !== null && Array.isArray((value as Merged).findings);
 }
 
+/**
+ * A run's findings file, or the process ends naming the file and what was wrong with it.
+ *
+ * Nothing has necessarily validated the file. The action runs check-findings.ts first, but
+ * local-post.sh and the by-hand path in review/README.md both come straight to a reader, and
+ * an unhandled rejection at the end of a run that cost real money is a worse answer than a
+ * sentence naming the file.
+ *
+ * Here rather than at each entry point, beside `vetAgainstExisting` and for the same reason:
+ * a session and a posted review must not decide differently what an unreadable findings file
+ * means. `hint` is the extra line a caller adds, naming the check that would explain it.
+ */
+export async function readMerged(path: string, hint?: string): Promise<Merged> {
+    const stop = (message: string): never => {
+        console.error(`${path}: ${message}`);
+        if (hint) console.error(hint);
+        process.exit(1);
+    };
+
+    let parsed: unknown;
+
+    try {
+        parsed = JSON.parse(await Bun.file(path).text());
+    } catch (error) {
+        return stop(reason(error));
+    }
+
+    if (!isMerged(parsed)) return stop("has no `findings` array");
+
+    return parsed;
+}
+
 export interface Vetting extends Vetted {
     /** What the vetting was decided against, which post-review.ts also reads its threads from. */
-    existing: unknown;
+    existing: Existing;
+}
+
+/** The previous run's findings, or `{}` with a line saying they could not be read. */
+async function readPrevious(path: string): Promise<unknown> {
+    const file = Bun.file(path);
+
+    if (!(await file.exists())) return {};
+
+    try {
+        return JSON.parse(await file.text());
+    } catch {
+        console.error("previous.json could not be read, so a finding said to have been raised before is raised again.");
+        return {};
+    }
 }
 
 /**
- * Vet a run's suppressions against the discussion on the pull request.
+ * Vet a run's suppressions against the discussion on the pull request and against what the
+ * last review said.
  *
  * One reader for the two entry points, so a session and a posted review cannot vet the same
  * findings against different files, and so the sentence saying what an unreadable file costs
  * is written once.
  *
- * `run.sh` fetches this file again once the orchestrator has exited, and the comment there
- * has why: the orchestrator was handed the path, so it could have written the copy its own
- * suppressions are checked against.
+ * `run.sh` refetches `existing.json` and restores `previous.json` once the orchestrator has
+ * exited, and the comments there have why: the orchestrator was handed both paths, so it
+ * could have written the evidence its own suppressions are checked against.
  */
 export async function vetAgainstExisting(findings: Finding[], buildDir: string): Promise<Vetting> {
-    const file = Bun.file(join(buildDir, "existing.json"));
-    let existing: unknown = {};
+    const existing = await readExisting(buildDir, (line) => console.error(line));
+    const previous = await readPrevious(join(buildDir, "previous.json"));
 
-    if (await file.exists()) {
-        try {
-            existing = JSON.parse(await file.text());
-        } catch {
-            console.error(
-                "existing.json could not be read, so no thread is resolved and every suppression is reopened.",
-            );
-        }
-    }
-
-    return { existing, ...vetSuppression(findings, existing) };
+    return { existing, ...vetSuppression(findings, existing, previous) };
 }
 
 /**

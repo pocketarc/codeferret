@@ -202,10 +202,22 @@ if (succeeded.length === 0) {
     process.exit(0);
 }
 
+/**
+ * A finding's CVSS score, or -1 for one carrying none.
+ *
+ * Driven by whether a score is there rather than by whether it is truthy. `Number("0")` is
+ * falsy, so a genuine 0.0 would sort in among the entries with no score at all, and the same
+ * idiom misplaces any later field where zero means something.
+ */
+function score(value: unknown): number {
+    const parsed = Number(value);
+
+    return typeof value === "string" && value !== "" && Number.isFinite(parsed) ? parsed : -1;
+}
+
 // Highest severity first, so the cap takes the low end rather than whatever the scanner
-// happened to emit last. `max_severity` is a CVSS score as a string, and an entry without
-// one sorts to the back.
-const raised = [...findings].sort((a, b) => (Number(b.severity) || -1) - (Number(a.severity) || -1));
+// happened to emit last. `max_severity` is a CVSS score as a string.
+const raised = [...findings].sort((a, b) => score(b.severity) - score(a.severity));
 const kept = raised.slice(0, MAX_FINDINGS);
 
 await keepRaised("osv-scanner", buildDir, raised);
@@ -217,6 +229,10 @@ await write({
     manifests: attempts,
     raised: findings.length,
     truncated: findings.length - kept.length,
+    // Only the manifests that were looked up. A diff changing none exits above with
+    // `scanned: 0` and no egress, whereas a claim keyed on this tool's name would say the
+    // package names went to osv.dev for a run that asked it nothing.
+    egress: `sent the package names in ${succeeded.length === 1 ? "1 changed lockfile" : `${succeeded.length} changed lockfiles`} to osv.dev`,
     findings: kept,
 });
 
