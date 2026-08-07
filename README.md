@@ -62,10 +62,7 @@ The rest of that file is:
 The action's own artifact is kept for 14 days, and whoever can read the repository's
 artifacts can read every finding in `findings.json`, the suppressed ones included.
 
-The action checks the repository out and installs what it needs. It also runs semgrep and
-osv-scanner before the review, from the runner's binaries if they are there and from
-pinned containers otherwise, which means a container pull on the first run and a lookup
-against osv.dev for each changed lockfile. Set `tools: ''` to run neither.
+The action checks the repository out and installs what it needs.
 
 `@v1` moves with each 1.x release. Pin a full version, `@v1.1.0`, to hold a revision.
 

@@ -3,7 +3,7 @@
  * Write review/defaults/*.txt from the input defaults in action.yml.
  *
  * A Claude Code session cannot read a YAML default, so `/codeferret:review` cats these
- * files to get the same lenses, tools and exclusions the action runs. Generating them
+ * files to get the same lenses and exclusions the action runs. Generating them
  * keeps action.yml the one place a default is written; hand-keeping a second copy and
  * diffing it only reports the drift after somebody has shipped it.
  *
@@ -18,7 +18,6 @@ process.chdir(join(import.meta.dir, ".."));
 const FILES: Array<[string, string]> = [
     ["lenses", "review/defaults/lenses.txt"],
     ["exclude-paths", "review/defaults/exclude-paths.txt"],
-    ["tools", "review/defaults/tools.txt"],
 ];
 
 const check = process.argv.includes("--check");

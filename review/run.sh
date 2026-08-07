@@ -24,11 +24,6 @@
 #   OWN_LOGIN         the account the review posts under. fetch-existing.ts marks a thread
 #                     `mine` when the login and the marker earlier versions wrote both
 #                     match.
-#   TOOLS             whitespace-separated static analysis tools to run before the review,
-#                     naming files in review/tools/. Their reports are read by the
-#                     `static-analysis` lens, which decides which findings hold. These run
-#                     under PREFIX, and what they need there is git and docker, so leave
-#                     TOOLS empty where the prefix has neither.
 #   RESOLVE_THREADS   0 to close no threads. Use 0 everywhere except CI.
 #   GITHUB_TOKEN_FILE a file holding the token the GitHub fetches use, which this script
 #                     reads and deletes. Needed with GITHUB_REPOSITORY when PR is set. A
@@ -54,9 +49,8 @@ PERMISSION_MODE=${PERMISSION_MODE:-bypassPermissions}
 : "${LENSES:?no lenses given}"
 
 # Checked here rather than left to the `claude` invocation at the end, which is after
-# build-prompts, both GitHub fetches and the whole tool stage. A misspelling would otherwise
-# cost a 420MB image pull and an osv.dev lookup per changed lockfile before failing with a
-# CLI usage error that names no input.
+# build-prompts and both GitHub fetches. A misspelling would otherwise be found by a CLI
+# usage error that names no input, minutes into a run.
 case ${EFFORT:-} in
 "" | low | medium | high | xhigh | max) ;;
 *)
@@ -210,49 +204,6 @@ if [ -n "${PR:-}" ]; then
             "$PR" "$BUILD/previous.json" ||
         echo "could not read the previous run's findings. Every finding will count as new." >&2
 fi
-
-tools_named=$(printf '%s' "${TOOLS:-}" | tr -d '[:space:]')
-
-if printf '%s\n' "$LENSES" | tr -d '[:blank:]' | grep -qx "$TOOLS_LENS"; then
-    if [ -z "$tools_named" ]; then
-        echo "the $TOOLS_LENS lens is named but no tools are named. The lens will find no reports." >&2
-    fi
-elif [ -n "$tools_named" ]; then
-    echo "tools are named but the $TOOLS_LENS lens is not. Nothing will read their reports." >&2
-fi
-
-# A tool name reaches here from a workflow input and from a model composing an environment
-# in /codeferret:review, and it is pasted into a path that then gets executed. Globbing is
-# off for the split, so a `*` reaches `plain_name` as written and is never expanded against
-# the workspace.
-set -f
-for tool in ${TOOLS:-}; do
-    if ! plain_name "$tool"; then
-        echo "tool name '$tool' is not a plain name" >&2
-        exit 1
-    fi
-
-    if [ ! -f "$ACTION/review/tools/$tool.ts" ]; then
-        echo "no tool named '$tool' in $ACTION/review/tools/" >&2
-        exit 1
-    fi
-
-    # The exit code is taken from a plain run and not from inside `if ! cmd`, where `$?` is
-    # the status of the negation and always 0. It is the one number telling an
-    # out-of-memory kill from a missing binary, and the stub below reports it.
-    code=0
-    $PREFIX bun --config=/dev/null "$ACTION/review/tools/$tool.ts" "$BUILD" "$WORKSPACE" || code=$?
-
-    if [ "$code" -ne 0 ]; then
-        echo "tool '$tool' failed. The review carries on without its report." >&2
-
-        # tool-stub.ts has why a report is written at all, and decides for itself whether the
-        # tool already wrote one: the report's path is spelled out once, in reportPath.
-        $PREFIX bun --config=/dev/null "$ACTION/review/tool-stub.ts" "$tool" "$BUILD" "$code" ||
-            echo "could not write a stub report for '$tool'. The lens will not know it ran." >&2
-    fi
-done
-set +f
 
 # The exit code is kept and returned at the end rather than stopping the script here,
 # because extract-findings.ts writes what the run cost and what it was refused before it

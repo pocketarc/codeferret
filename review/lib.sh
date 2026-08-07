@@ -36,13 +36,6 @@ emit_output_file() {
     emit_output "$1" "$(cat "$2")"
 }
 
-# ---- The one name the scripts have to agree on --------------------------------------
-
-# The lens the static analysis tools report to, and the only one that reads their reports.
-# Declared once, because more than one script decides what to run by matching this name
-# against a lens list, and validate-repo.ts checks the action's defaults against it.
-export TOOLS_LENS=static-analysis
-
 # ---- The empty form of the file the orchestrator is handed ---------------------------
 
 # What existing.json says when there was no pull request to fetch it from, or when the fetch

@@ -5,8 +5,6 @@
 # pasted into a command by a model: the git dir the run directory hangs off, the top
 # level, the three defaults, and the gh credentials.
 #
-# Naming lenses drops the tools unless the tool-reading lens is among them, because the
-# tools report to that lens and to nothing else.
 #
 # Usage: local-run.sh <plugin-root> <base-ref> [<lens>...]
 #
@@ -52,19 +50,13 @@ echo "reviewing against $BASE"
 
 if [ "$#" -gt 0 ]; then
     LENSES=$(printf '%s\n' "$@")
-    TOOLS=""
-
-    if printf '%s\n' "$@" | grep -qx "$TOOLS_LENS"; then
-        TOOLS=$(cat "$PLUGIN/review/defaults/tools.txt")
-    fi
 else
     LENSES=$(cat "$PLUGIN/review/defaults/lenses.txt")
-    TOOLS=$(cat "$PLUGIN/review/defaults/tools.txt")
 fi
 
 EXCLUDE_PATHS=$(cat "$PLUGIN/review/defaults/exclude-paths.txt")
 
-export LENSES TOOLS EXCLUDE_PATHS
+export LENSES EXCLUDE_PATHS
 export MODEL=${MODEL:-opus}
 
 # Claude Code's permission classifier passes the reads a lens needs and refuses the rest.

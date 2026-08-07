@@ -109,8 +109,7 @@ the base to it. Add to that command line where these apply:
 - A ref in place of the empty string, when the user named one in `$ARGUMENTS`. Otherwise
   leave it empty rather than passing back the `base` value step 1 printed: both are worked
   out the same way, and a ref retyped is a ref that can be retyped wrong.
-- The lenses the user named, as further arguments. Naming any lens but `static-analysis`
-  also drops the static analysis tools, whose reports only that lens reads.
+- The lenses the user named, as further arguments.
 - To review uncommitted work as well, pass the `merge_base` value in place of the empty
   string and put `INCLUDE_WORKING_TREE=1` in front of the command.
 - `EFFORT=low` (or `medium`, `high`, `xhigh`, `max`) in front of the command to set

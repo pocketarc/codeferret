@@ -1,4 +1,3 @@
-static-analysis
 caveman-review
 anthropic-code-review
 wshobson-code-review-excellence

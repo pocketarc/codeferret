@@ -4,7 +4,7 @@
  *
  * Each manifest the action and the plugin depend on is parsed and its shape checked, along
  * with the values two files have to agree on: the plugin namespace, the shipped version,
- * the defaults, the tools lens, the standing caveats, the artifact retention window, and
+ * the defaults, the standing caveats, the artifact retention window, and
  * everything generated. Both generators are re-run with `--check`, and action.yml's `run:`
  * blocks go through shellcheck, being the only shell in the repository that lives as a
  * string inside YAML.
@@ -386,28 +386,7 @@ async function checkDefaults(): Promise<Failures> {
         }
     }
 
-    // A tool named by default and missing from review/tools/ fails every run at the point
-    // it is invoked, which is after the checkout and before anything useful has happened.
-    const tools = lines(manifest.inputs?.tools?.default);
-
-    for (const tool of tools) {
-        if (!existsSync(`review/tools/${tool}.ts`)) {
-            fail(list, "action.yml", `default tool '${tool}' has no review/tools/${tool}.ts`);
-        }
-    }
-
-    // Tools report to one lens and to nothing else, and review/lib.sh is where that lens
-    // is named. Defaulting the tools on without it means running them and throwing the
-    // reports away.
-    const toolsLens = (await Bun.file("review/lib.sh").text()).match(/^export TOOLS_LENS=(\S+)$/m)?.[1];
-
-    if (!toolsLens) {
-        fail(list, "review/lib.sh", "declares no TOOLS_LENS, so nothing says which lens reads the tool reports");
-    } else if (tools.length > 0 && !lenses.includes(toolsLens)) {
-        fail(list, "action.yml", `tools run by default but '${toolsLens}' is not a default lens, so nothing reads them`);
-    }
-
-    console.log("OK action.yml: every default lens and tool exists");
+    console.log("OK action.yml: every default lens has a bundled skill");
     return list;
 }
 

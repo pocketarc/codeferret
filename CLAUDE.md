@@ -143,11 +143,6 @@ is in `review/README.md`.
 - Do not put severity or lens agreement into a comment, and do not filter on either.
   Both are in `findings.json`, and severity orders the findings and decides which ones the
   comment prints in full. Every finding stays in the file whatever the comment prints.
-- `review/tools/*` cap what they hand the lens at 100 findings, sorted so the cap takes
-  the low end. `build/tool-<name>.json` is the lens's input and is capped with it, so past
-  the cap a run also writes `build/raised-<name>.json` holding every finding the tool
-  produced. The lens may drop a tool finding only because that file holds the whole list;
-  keep it, and keep its name outside the `tool-*.json` glob the lens reads.
 - Lenses must not modify the working tree. Every lens reads the same checkout at once,
   so one edit corrupts every other lens's review. `Edit`, `Write`, `NotebookEdit` and
   `Agent` are all kept off the tool list in `agents/`, and `run.sh` denies the first three
@@ -325,7 +320,3 @@ raises one.
   `vercel-next-best-practices` has no application running. They all stay in the default set,
   each with a file under `review/lens-extras/` saying what it cannot do, and an entry in
   `STANDING_DETAIL` so a reader is told even when the lens forgets.
-- semgrep fetches its ruleset at run time. `--config p/default` is not pinned, so what
-  the tool looks for can change between two runs of the same commit. The rules are
-  declarative YAML rather than code, and `SEMGREP_CONFIG` points at a local set for anyone
-  who wants to close it.

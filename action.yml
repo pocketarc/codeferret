@@ -18,7 +18,6 @@ inputs:
             action.
         required: false
         default: |
-            static-analysis
             caveman-review
             anthropic-code-review
             wshobson-code-review-excellence
@@ -31,33 +30,6 @@ inputs:
             anthropic-accessibility-review
             comment-review
             writing-review
-    tools:
-        description: |
-            Newline-separated static analysis tools to run before the review, one per
-            line, naming files in the action's review/tools/. Set it to an empty string to
-            run none.
-
-            Their reports go to the `static-analysis` lens, which reads each finding
-            against the code and decides which hold. Name that lens in `lenses` as well.
-
-            A tool runs from the runner's own binary if there is one, and from a pinned
-            container otherwise. With neither it records that and is skipped. So a runner
-            with neither docker nor the binaries gets a skipped report per tool, and a
-            runner with docker pulls an image per tool. The semgrep image is about 420MB.
-
-            The tools reach the network, and the job summary says which one sent what.
-            semgrep fetches its `p/default` ruleset from semgrep's registry, unless
-            SEMGREP_CONFIG names a repository-relative one. osv-scanner sends the package
-            names and versions from each changed lockfile to osv.dev. Run neither if a
-            private repository's dependency list should not leave the runner.
-
-            The tools run under `command-prefix` when one is set, and what they need there
-            is git and docker. Set this to an empty string and drop `static-analysis` from
-            `lenses` if that prefix has neither.
-        required: false
-        default: |
-            semgrep
-            osv-scanner
     exclude-paths:
         description: |
             Newline-separated globs to keep out of the review, one per line. These become
@@ -503,7 +475,6 @@ runs:
               MODEL: ${{ inputs.model }}
               EFFORT: ${{ inputs.effort }}
               LENSES: ${{ inputs.lenses }}
-              TOOLS: ${{ inputs.tools }}
               EXCLUDE_PATHS: ${{ inputs.exclude-paths }}
               BASE: ${{ steps.target.outputs.base }}
               PR: ${{ steps.target.outputs.pr }}

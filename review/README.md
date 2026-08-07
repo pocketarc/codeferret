@@ -172,9 +172,9 @@ rest. By hand and under `local-post.sh` they are unset, there is no artifact any
 open, and the body prints every finding instead, bounded the same way.
 
 Lenses run in parallel, so the bill grows with the number of lenses and the wall clock
-barely does. Three took about 15 minutes. An earlier fourteen-lens run with both static
-analysis tools took 20m46s for $36.00, returning 97 findings with no permission denials, and
-the 12-lens set before that came to $31.80 in 19 minutes over a 47-file diff. Budget between
+barely does. Three took about 15 minutes. An earlier fourteen-lens run took 20m46s for
+$36.00, returning 97 findings with no permission denials, and the 12-lens set before that
+came to $31.80 in 19 minutes over a 47-file diff. Budget between
 $2.50 and $2.70 a lens on Opus, and about 20 minutes whatever the count.
 
 `extract-findings.ts` prints that cost, `review/summary.ts` renders it into the job
@@ -200,12 +200,11 @@ the orchestrator's last turn alone, and undercounted one full run sixtyfold.
 | `resolve-judge.md`, `resolve-none.md` | The two thread-resolution policies. One fills `__RESOLVE__`. |
 | `merged-schema.json` | The shape the orchestrator returns. Enforced, because a script parses it. |
 | `run.sh` | One review, start to finish. Both front doors call this. |
-| `tools/` | Static analysis run before the review. Each writes `build/tool-<name>.json`, in the shape `tools/report.ts` declares. |
 | `build-prompts.sh` | Assembles the run's plugin and the orchestrator prompt. |
 | `../scripts/render-prompt.ts` | Fills a prompt template's placeholders, and fails on one nothing filled. |
 | `local-preflight.sh` | Works out from the checkout what the workflow event would otherwise supply. |
 | `local-run.sh`, `local-print.sh`, `local-post.sh` | What `/codeferret:review` runs, so a session pastes no paths and relays no refs. |
-| `defaults/` | The `lenses`, `exclude-paths` and `tools` defaults as plain lists, for a session that cannot read a YAML default. Generated from action.yml. |
+| `defaults/` | The `lenses` and `exclude-paths` defaults as plain lists, for a session that cannot read a YAML default. Generated from action.yml. |
 | `fetch-existing.ts` | Reads the discussion already on the pull request, for the orchestrator to match findings against. |
 | `fetch-previous.ts` | Reads the previous run's findings out of its artifact, which is the other half of that match. |
 | `previous.ts` | Which artifact that is and what it holds, with `previous.test.ts` beside it. |
@@ -443,7 +442,7 @@ A second directory used to hold per-lens text that depended on the run, spliced 
 lens list and handed on by the orchestrator. It is gone, for the reason the paragraph above
 gives: it made the routing a judgement remade every run. Nothing needed it. A lens that
 wants a path this run wrote can take it from the directory holding the `diff-args` file its
-dispatch already names, which is how `static-analysis` finds the tool reports.
+dispatch already names.
 
 ### A finding shows the claim and nothing else
 
@@ -636,49 +635,6 @@ list in the prompt. Building it outside the workspace also leaves the calling
 repository's tree untouched. A session skips all of this: it has the plugin installed
 already.
 
-### A static analysis tool reports to a lens
-
-A tool finding means a pattern matched, and whether anything is wrong here is a separate
-question; the `static-analysis` lens's own prompt has the argument. So
-`review/tools/*` run before the dispatch and write their reports into `build/`, and that
-lens reads each finding against the code and drops what does not hold. What it keeps
-becomes the comment the rule could not write: the input, the path it takes, and the fix.
-
-### Each tool has its own pathspec
-
-`exclude-paths` keeps lockfiles out of the review because nobody wants a reviewer
-reading one, and a lockfile is exactly what `osv-scanner` needs: it is the only thing
-here that can say a dependency has an advisory against it, which is the one job no lens
-can do at all. So each tool takes the range from the run's own diff (the same commits
-every lens reads) and sets its own pathspec. `semgrep` keeps the review's; `osv-scanner`
-drops it. `exclude-paths` is about what deserves a reader's attention, not a machine's.
-
-Nothing else changes shape. The orchestrator still merges N lens reports and still
-deduplicates on what the defect is, so a rule and two lenses that spot the same thing
-produce one comment with three names in `found_by`. When a tool does not run, the lens says
-so, and the orchestrator already reports that in `lens_health`.
-
-That lens is told to keep anything it cannot rule out, for the same reason the
-orchestrator marks an uncertain finding `new`: a wrong keep costs a reader seconds, and
-a wrong drop is a finding that will be raised and discarded on every run without anybody
-seeing it. It reports how many it dropped, and `build/tool-*.json` holds what it was
-handed, so its judgement can be checked against the report.
-
-Each report caps what it hands the lens at 100 findings, and it caps the low end: semgrep's
-findings are sorted `ERROR` first and osv-scanner's by CVSS score before either is cut. A
-cap in emission order would drop a hundred `INFO` hits' worth of real ones.
-
-`build/tool-<name>.json` is therefore the lens's input and not the whole record. Past the
-cap a run also writes `build/raised-<name>.json`, holding every finding the tool produced.
-The name sits outside the `tool-*.json` glob `review/lens-extras/static-analysis.md` points
-the lens at, so widening the record does not widen what the lens reads.
-
-Both those checks need the file. `artifact-path` defaults to `findings.json`, so on the
-default the tool reports die with the runner and the check is possible only while the run
-directory is still on disk: the local path, and this repository's own workflow, which sets
-`artifact-path: '.'`. A consumer who wants to audit what a lens dropped has to widen it, and
-gets `run.json` with the rest.
-
 ### The orchestrator runs in its own process
 
 A review reads two things written by whoever opened the pull request: the diff, and
@@ -781,7 +737,7 @@ Use `command-prefix` when the repository runs its toolchain in a container. For 
 start in the repository root, because the review reads the working tree and runs `git
 diff`. It must also mount three paths where the runner has them: the checkout,
 `$GITHUB_ACTION_PATH` for the scripts the prefix runs, and `$RUNNER_TEMP/codeferret` for
-the run's plugin, the diff command each lens is handed and the tool reports. The
+the run's plugin and the diff command each lens is handed. The
 run checks the last two before it dispatches anything, because a lens that cannot reach the
 build directory reads no diff and returns a review that is empty for no stated reason.
 
