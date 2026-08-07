@@ -18,7 +18,7 @@
 import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { reason } from "../review/json.ts";
+import { reason, record } from "../review/json.ts";
 import { STANDING_DETAIL } from "../review/review-body.ts";
 import { dispatchedFrom, LENS_LIST_FILE, RUN_FILE_NAMES, RUN_FILES } from "../review/run-files.ts";
 
@@ -387,6 +387,34 @@ async function checkDefaults(): Promise<Failures> {
     }
 
     console.log("OK action.yml: every default lens has a bundled skill");
+    return list;
+}
+
+/**
+ * The lenses this repository's own workflow names, against the bundled skills.
+ *
+ * `lenses` replaces the default rather than adding to it, so a workflow that names them one
+ * by one keeps its own list and nothing here reconciles the two. Removing a lens from
+ * `action.yml` therefore leaves the workflow naming a skill that is gone, and the run fails
+ * at `build-prompts.sh` seconds in. That is how the tool removal broke a run: the workflow
+ * still asked for `static-analysis`.
+ */
+async function checkWorkflowLenses(): Promise<Failures> {
+    const list: Failures = [];
+    const path = ".github/workflows/codeferret.yml";
+    const parsed = record(Bun.YAML.parse(await Bun.file(path).text()));
+    const job = record(record(parsed?.jobs)?.review);
+    const steps = Array.isArray(job?.steps) ? job.steps : [];
+
+    for (const step of steps) {
+        for (const lens of lines(record(record(step)?.with)?.lenses)) {
+            if (!existsSync(`lenses/skills/${lens}/SKILL.md`)) {
+                fail(list, path, `names lens '${lens}', which has no bundled skill`);
+            }
+        }
+    }
+
+    console.log(`OK ${path}: every lens it names has a bundled skill`);
     return list;
 }
 
@@ -767,6 +795,7 @@ const CHECKS: Array<[string, () => Promise<Failures>]> = [
     ["skills", checkBundledSkills],
     ["provenance", checkProvenance],
     ["defaults", checkDefaults],
+    ["workflow-lenses", checkWorkflowLenses],
     ["generated", checkGenerated],
     ["finding-rules", checkFindingRules],
     ["run-files", checkRunFiles],

@@ -49,7 +49,6 @@ jobs:
                   # `lenses` replaces the default rather than adding to it, so this list
                   # goes stale on its own if a lens is added to action.yml.
                   lenses: |
-                      static-analysis
                       caveman-review
                       anthropic-code-review
                       wshobson-code-review-excellence
