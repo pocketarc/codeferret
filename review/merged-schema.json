@@ -41,7 +41,10 @@
                         "type": "boolean",
                         "description": "False when the lens errored, could not load its skill, or returned an unusable response."
                     },
-                    "detail": { "type": "string" }
+                    "detail": {
+                        "type": "string",
+                        "description": "What this lens could not check, in its own words, and why it returned what it did. The only per-lens line a reader sees, so a lens's coverage limits belong here whatever its finding count."
+                    }
                 }
             }
         },
@@ -59,7 +62,7 @@
                     },
                     "existing_comment_url": {
                         "type": "string",
-                        "description": "Required when status is 'already-reported' or 'declined': the url of the thread that covers it."
+                        "description": "The url of the thread that covers this finding, when a thread is what settled it. A finding matched against the previous run's findings has no comment of its own, so leave this out in that case."
                     },
                     "found_by": {
                         "type": "array",
@@ -80,7 +83,7 @@
                     },
                     "in_diff": {
                         "type": "boolean",
-                        "description": "False when this line is not part of the reviewed diff. Report it anyway — it gets moved into the review body rather than dropped."
+                        "description": "False when this line is not part of the reviewed diff. Report it either way: the review is a comment on the pull request rather than on a line, so nothing is dropped for sitting outside the diff."
                     },
                     "severity": {
                         "type": "string",

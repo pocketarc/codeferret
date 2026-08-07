@@ -1,0 +1,22 @@
+# The same checks lint.yml runs, so a push that would go red fails here first.
+
+pre-commit:
+    parallel: true
+    commands:
+        repo:
+            tags: manifests static-analysis
+            run: bun scripts/validate-repo.ts
+        typecheck:
+            tags: ts types
+            run: bun run typecheck
+        shellcheck:
+            tags: shell lint
+            # SC2016 for the reason .github/workflows/lint.yml passes it.
+            run: shellcheck -e SC2016 review/*.sh scripts/*.sh
+
+pre-push:
+    parallel: true
+    commands:
+        test:
+            tags: ts test
+            run: bun test

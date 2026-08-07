@@ -1,0 +1,16 @@
+{
+    "name": "pocketarc",
+    "owner": {
+        "name": "pocketarc",
+        "url": "https://pocketarc.com"
+    },
+    "plugins": [
+        {
+            "name": "codeferret",
+            "source": "./",
+            "description": "Like CodeRabbit, but it uses your Claude subscription, and goes even deeper.",
+            "category": "Development",
+            "tags": ["code-review", "security-review", "accessibility"]
+        }
+    ]
+}

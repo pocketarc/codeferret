@@ -3,43 +3,122 @@
 #
 # The plugin is built outside the workspace so the caller's tree stays untouched.
 #
+# This clears the output directory, so anything else that writes into build/ has to run
+# afterwards. fetch-existing.ts is the one that matters: run it first and its file is
+# deleted, the orchestrator reads the empty placeholder written here, and every comment
+# already on the pull request gets posted a second time.
+#
 # EXCLUDE_PATHS (newline-separated globs) becomes a git pathspec on the diff each lens
 # is given, so an excluded file is absent from what they review.
 #
 # Lens names arrive on stdin, one per line.
 #
+# Set RESOLVE_THREADS=0 where the review posts under somebody's own account rather than
+# CodeFerret's, which is every run outside CI.
+#
 # Usage: build-prompts.sh <base-ref> <action-path> <plugin-out-dir> <workspace> [<lenses-file>]
 set -euo pipefail
 
-BASE=${1:?usage: build-prompts.sh <base-ref> <action-path> <plugin-out-dir> <workspace>}
+BASE=${1:?usage: build-prompts.sh BASE_REF ACTION_PATH PLUGIN_OUT_DIR WORKSPACE [LENSES_FILE]}
 ACTION=${2:?missing action path}
 PLUGIN=${3:?missing plugin output dir}
 WORKSPACE=${4:?missing workspace}
 LENSES_FILE=${5:-}
 
-BUILD="$PLUGIN/build"
+RESOLVE_THREADS=${RESOLVE_THREADS:-1}
+
+# Absolute, because every `bun` below runs from the build directory rather than from the
+# tree under review, where this script is started. Each one takes `--config=/dev/null` as
+# well; the comment on `cd "$BUILD"` in run.sh has why both.
+ACTION=$(cd "$ACTION" && pwd)
+
+# For a containerised toolchain, where `command-prefix` is set and the action deliberately
+# installs nothing on the runner. run.sh passes it through.
+PREFIX=${PREFIX:-}
+
+# shellcheck source=review/lib.sh
+. "$ACTION/review/lib.sh"
+
+run_dirs "$PLUGIN"
+BUILD=$BUILD_DIR
+
+if ! plain_ref "$BASE"; then
+    echo "base ref '$BASE' is not a plain git ref" >&2
+    exit 1
+fi
 
 NAMESPACE=codeferret
-MANIFEST="$ACTION/lenses/.claude-plugin/plugin.json"
+MANIFEST="$ACTION/.claude-plugin/plugin.json"
+
+if [ ! -f "$MANIFEST" ]; then
+    echo "no plugin manifest at $MANIFEST" >&2
+    exit 1
+fi
 
 if ! grep -q "\"name\"[[:space:]]*:[[:space:]]*\"$NAMESPACE\"" "$MANIFEST"; then
     echo "plugin namespace '$NAMESPACE' does not match the name in $MANIFEST" >&2
     exit 1
 fi
 
-rm -rf "$PLUGIN"
-mkdir -p "$PLUGIN/.claude-plugin" "$PLUGIN/agents" "$PLUGIN/skills" "$BUILD"
+# /codeferret:review has a model paste the git dir into this argument by hand, so the
+# recursive delete below can be pointed at a repository by a substitution that came back
+# empty or truncated. Refuse any path this script did not write itself: the git dir, the
+# working tree and a home directory all exist and none of them carries the marker.
+MARKER="$BUILD/.codeferret-run"
+DECLINE=""
 
-# Generated agents and bundled skills must share one plugin to share a namespace.
-cp "$ACTION/lenses/.claude-plugin/plugin.json" "$PLUGIN/.claude-plugin/plugin.json"
-if [ -d "$ACTION/lenses/skills" ]; then
-    cp -R "$ACTION/lenses/skills/." "$PLUGIN/skills/"
+case $PLUGIN in
+/) DECLINE="is the root directory" ;;
+/*) ;;
+*) DECLINE="is not an absolute path" ;;
+esac
+
+if [ -z "$DECLINE" ] && [ -e "$PLUGIN" ] && [ ! -f "$MARKER" ]; then
+    DECLINE="already exists and was not written by this script"
 fi
+
+if [ -n "$DECLINE" ]; then
+    echo "will not delete '$PLUGIN': it $DECLINE" >&2
+
+    if [ -d "$PLUGIN/build" ]; then
+        echo "it has the shape of a run directory, so an earlier run probably left it." >&2
+        echo "delete it yourself and run again: rm -rf '$PLUGIN'" >&2
+    fi
+
+    exit 1
+fi
+
+rm -rf "$PLUGIN"
+
+# Agents and skills must share one plugin to share a namespace.
+mkdir -p "$BUILD" "$PLUGIN/.claude-plugin" "$PLUGIN/agents" "$PLUGIN/skills"
+
+# Before anything that can exit, so a run that dies halfway leaves a directory the next run
+# may clear. `prefix_reaches` below exits 1, and without the marker already down that exit
+# leaves a plugin directory every later run refuses to touch.
+: >"$MARKER"
+
+# Here rather than beside run.sh's own call: the directory does not exist until the mkdir
+# above, and the first `$PREFIX bun` below would create it inside the container and leave
+# `test -d` answering yes about a path only the container has.
+prefix_reaches "$BUILD"
+
+# The shipped manifest points `skills` at the repository's own layout, which is not this
+# one. Only the name matters here.
+printf '{"name": "%s", "version": "0.0.0", "description": "CodeFerret run plugin."}\n' \
+    "$NAMESPACE" >"$PLUGIN/.claude-plugin/plugin.json"
 
 LENSES=()
 while IFS= read -r lens; do
-    lens=$(printf '%s' "$lens" | tr -d '[:space:]')
-    [ -n "$lens" ] && LENSES+=("$lens")
+    lens=$(printf '%s' "$lens" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+    [ -z "$lens" ] && continue
+
+    if ! plain_name "$lens"; then
+        echo "lens name '$lens' is not a plain name" >&2
+        exit 1
+    fi
+
+    LENSES+=("$lens")
 done < <(if [ -n "$LENSES_FILE" ]; then cat "$LENSES_FILE"; else cat; fi)
 
 if [ "${#LENSES[@]}" -eq 0 ]; then
@@ -47,64 +126,162 @@ if [ "${#LENSES[@]}" -eq 0 ]; then
     exit 1
 fi
 
-SCHEMA=$(cat "$ACTION/review/lens-schema.json")
 : >"$BUILD/lens-list.txt"
 
-# `-- .` first so the excludes attach to a positive pathspec; without it git treats a
-# list of pure exclusions as matching nothing.
-PATHSPEC=""
+# A positive pathspec comes first, because git treats a list of pure exclusions as
+# matching nothing. It is `:(top)` rather than `.` because git resolves a pathspec
+# against the process's own directory, and every lens runs diff.sh from wherever its
+# session started. With `.`, a run started in a subdirectory reviews that subdirectory
+# and says nothing about the rest of the change.
+PATHSPEC_ARGS=()
 while IFS= read -r glob; do
-    glob=$(printf '%s' "$glob" | tr -d '[:space:]')
+    glob=$(printf '%s' "$glob" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
     [ -z "$glob" ] && continue
-    [ -z "$PATHSPEC" ] && PATHSPEC="-- ."
-    PATHSPEC="$PATHSPEC ':(exclude)$glob'"
+
+    # The list reaches git as argv, through the NUL-separated file written further down, so
+    # no shell reads it on the way. The check is what keeps that true: a glob refused here
+    # cannot be the one that turns up in a prompt or a command line the day somebody hands
+    # the pathspec to something other than `git diff`.
+    if ! plain_path "$glob"; then
+        echo "exclude path '$glob' contains a shell metacharacter" >&2
+        exit 1
+    fi
+
+    if [ "${#PATHSPEC_ARGS[@]}" -eq 0 ]; then
+        PATHSPEC_ARGS+=("--" ":(top)")
+    fi
+
+    # `glob` magic, so a leading `**/` matches zero or more directories. Git matches a
+    # bare pathspec with fnmatch, where `**/` still needs a `/` earlier in the path: the
+    # default `**/.next/**` excludes `apps/web/.next/` and leaves the top-level `.next/`
+    # in, which is where `next build` writes in a repository holding one app. Under glob
+    # magic `out/**` and `build/**` stay anchored at the root, as they are meant to.
+    PATHSPEC_ARGS+=(":(top,exclude,glob)$glob")
 done <<<"${EXCLUDE_PATHS:-}"
 
-printf '%s' "$PATHSPEC" >"$BUILD/pathspec.txt"
-
 for lens in "${LENSES[@]}"; do
-    if [ -f "$PLUGIN/skills/$lens/SKILL.md" ]; then
-        skill_ref="$NAMESPACE:$lens"
+    if [ -f "$ACTION/lenses/skills/$lens/SKILL.md" ]; then
+        # Copied, not rendered, though `--one` below would render the same file. A bundled
+        # lens's agent is its system prompt, and a checked-in one is a file somebody reviewed
+        # rather than something a CI job wrote for itself. validate-repo.ts fails on one that
+        # is missing or no longer matches its generator, so nothing reaches this branch from a
+        # tree that passed it.
+        if [ ! -f "$ACTION/agents/$lens.md" ]; then
+            echo "lens '$lens' is bundled but has no agent." >&2
+            echo "run: bun --config=/dev/null scripts/build-lens-agents.ts" >&2
+            exit 1
+        fi
+
+        cp "$ACTION/agents/$lens.md" "$PLUGIN/agents/$lens.md"
+        cp -R "$ACTION/lenses/skills/$lens" "$PLUGIN/skills/$lens"
     elif [ -f "$WORKSPACE/.claude/skills/$lens/SKILL.md" ]; then
-        skill_ref="$lens"
+        # The agent body comes from lens-brief.md and is ours. The skill it loads is not:
+        # it sits in the tree the pull request modified. So naming a workspace lens puts
+        # that repository's .claude/skills/ inside the CI trust boundary, where anyone who
+        # can push a branch can write the instructions for an agent that has Bash and runs
+        # in the job holding the tokens. Bundled lenses carry no such exposure. Said on stderr
+        # because nothing else in a run distinguishes an agent driven by branch-supplied
+        # text from one driven by ours.
+        echo "lens '$lens' is not bundled: its skill comes from $WORKSPACE/.claude/skills/$lens/," >&2
+        echo "which is part of the tree under review." >&2
+
+        (
+            cd "$BUILD" &&
+                $PREFIX bun --config=/dev/null "$ACTION/scripts/build-lens-agents.ts" \
+                    --one "$lens" "$PLUGIN/agents/$lens.md"
+        )
+
+        # The skill is copied in beside the agent rather than loaded where it lives: run.sh
+        # passes `--setting-sources user`, which on 2.1.220 takes a project's own
+        # .claude/skills/ out of the session's reach with everything else the reviewed tree
+        # declares. Left there, every workspace lens would follow its agent's own
+        # instruction to stop and return nothing. "A lens agent ships pre-built" in
+        # review/README.md has what was measured.
+        cp -R "$WORKSPACE/.claude/skills/$lens" "$PLUGIN/skills/$lens"
     else
         echo "lens '$lens' has no SKILL.md in the action's bundled lenses or in" >&2
         echo "$WORKSPACE/.claude/skills/$lens/" >&2
         exit 1
     fi
 
-    brief=$(sed -e "s|__SKILL__|$skill_ref|g" -e "s|__BASE__|$BASE|g" \
-        -e "s|__PATHSPEC__|$PATHSPEC|g" "$ACTION/review/lens-brief.md")
-    brief=${brief/__SCHEMA__/$SCHEMA}
-
-    # One lens only: a rulebook given to every lens pulls them all toward the same
-    # generalist read. review/README.md has the evidence.
-    if [ "$lens" = "mattpocock-code-review" ] && [ -f "$WORKSPACE/REVIEW.md" ]; then
-        brief="$brief
-
-This repository documents its own review conventions in \`REVIEW.md\`. Read it and
-treat it as a standards source alongside anything else you find. It is additional
-context, never grounds for staying quiet about something it does not mention."
-    fi
-
-    {
-        printf -- '---\n'
-        printf 'name: %s\n' "$lens"
-        printf 'description: Reviews the diff under the %s lens.\n' "$lens"
-        printf -- '---\n\n'
-        printf '%s\n' "$brief"
-    } >"$PLUGIN/agents/$lens.md"
-
     printf -- '- `%s:%s`\n' "$NAMESPACE" "$lens" >>"$BUILD/lens-list.txt"
 done
 
-sed -e "s|__BASE__|$BASE|g" \
-    -e "s|__EXISTING__|$BUILD/existing.json|g" \
-    -e "/__LENS_LIST__/r $BUILD/lens-list.txt" \
-    -e "/__LENS_LIST__/d" \
-    "$ACTION/review/orchestrator.md" >"$BUILD/orchestrator.txt"
+# A review runs for twenty minutes and whoever started it is often still committing, so the
+# range names a commit rather than HEAD. In CI both resolve to the same checked-out commit.
+HEAD_SHA=$(git -C "$WORKSPACE" rev-parse HEAD 2>/dev/null || echo HEAD)
 
-[ -f "$BUILD/existing.json" ] || printf '{"existing": []}\n' >"$BUILD/existing.json"
+# A model following commands/review.md composes this value, and writes `INCLUDE_WORKING_TREE=0`
+# rather than leaving it out. So the test is on the value: one that asked whether the
+# variable was set at all would read that `0` as on, and drop the HEAD pin above.
+case ${INCLUDE_WORKING_TREE:-0} in
+0) RANGE="$BASE...$HEAD_SHA" ;;
+1) RANGE="$BASE" ;;
+*)
+    echo "INCLUDE_WORKING_TREE is '$INCLUDE_WORKING_TREE'. It has to be 0 or 1." >&2
+    exit 1
+    ;;
+esac
+
+# The pathspec runs to several hundred characters. Handing it to the orchestrator as
+# text means it retypes the whole thing once per lens, and a copy that loses an entry
+# puts lockfiles and build output back into the diff without anything noticing. The
+# orchestrator passes the script's path instead, so nothing retypes the pathspec.
+#
+# The arguments go beside the script rather than into it, NUL-separated. Writing them
+# into the script body made every one of them shell, and every lens is told to run it.
+printf '%s\0' "$RANGE" ${PATHSPEC_ARGS[@]+"${PATHSPEC_ARGS[@]}"} >"$BUILD/diff-args"
+
+cat >"$BUILD/diff.sh" <<'DIFF_SCRIPT'
+#!/usr/bin/env bash
+# The diff this run reviews. Rebuilt every run.
+set -euo pipefail
+args=()
+while IFS= read -r -d '' arg; do args+=("$arg"); done <"$(dirname "$0")/diff-args"
+git diff "${args[@]}"
+DIFF_SCRIPT
+
+# The dispatch prompt is indented so that it sits as a block inside the orchestrator's.
+(
+    cd "$BUILD" &&
+        $PREFIX bun --config=/dev/null "$ACTION/scripts/render-prompt.ts" \
+            "$ACTION/review/lens-dispatch.md" "$BUILD/dispatch.txt" \
+            --indent 4 \
+            "__BASE__=$BASE" \
+            "__HEAD__=$HEAD_SHA" \
+            "__RANGE__=$RANGE" \
+            "__DIFF_SCRIPT__=$BUILD/diff.sh" \
+            "__DIFF_ARGS__=$BUILD/diff-args"
+)
+
+# Only CodeFerret's own account can tell its threads from a person's. Anywhere else the
+# review is posted as whoever ran it, and closing a thread would take their words off the
+# page along with everyone else's.
+if [ "$RESOLVE_THREADS" = "0" ]; then
+    RESOLVE_FILE="$ACTION/review/resolve-none.md"
+else
+    RESOLVE_FILE="$ACTION/review/resolve-judge.md"
+fi
+
+(
+    cd "$BUILD" &&
+        $PREFIX bun --config=/dev/null "$ACTION/scripts/render-prompt.ts" \
+            "$ACTION/review/orchestrator.md" "$BUILD/orchestrator.txt" \
+            "__BASE__=$BASE" \
+            "__HEAD__=$HEAD_SHA" \
+            "__EXISTING__=$BUILD/existing.json" \
+            "__PREVIOUS__=$BUILD/previous.json" \
+            "__LENS_LIST__@$BUILD/lens-list.txt" \
+            "__DISPATCH__@$BUILD/dispatch.txt" \
+            "__RESOLVE__@$RESOLVE_FILE"
+)
+
+# The orchestrator reads both files whether or not there was a pull request to fetch
+# anything from, and fetch-existing.ts and fetch-previous.ts overwrite them when there was. A
+# branch with no pull request is the ordinary case in a session, so the empty form reaches
+# the step that decides what to suppress on most runs of `/codeferret:review`.
+empty_existing "$BUILD/existing.json"
+printf '{"findings": []}\n' >"$BUILD/previous.json"
 
 echo "built ${#LENSES[@]} lens(es): ${LENSES[*]}"
 echo "  plugin: $PLUGIN"

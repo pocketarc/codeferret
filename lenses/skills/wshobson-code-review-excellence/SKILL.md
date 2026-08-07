@@ -1,6 +1,6 @@
 ---
 name: wshobson-code-review-excellence
-description: Master effective code review practices to provide constructive feedback, catch bugs early, and foster knowledge sharing while maintaining team morale. Use when reviewing pull requests, establishing review standards, or mentoring developers.
+description: "CodeFerret review lens wshobson-code-review-excellence. A CodeFerret lens agent loads this during a multi-lens code review; it is not a general-purpose skill and is no use outside one."
 ---
 
 # Code Review Excellence

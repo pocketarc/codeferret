@@ -4,7 +4,12 @@ on:
     push:
     pull_request:
 
+permissions:
+    contents: read
+
 jobs:
+    # This job runs a fork's pull request code: `bun test` executes the test files as that
+    # pull request has them. So it holds no secrets and no write permissions.
     manifests:
         runs-on: ubuntu-latest
         steps:
@@ -14,5 +19,28 @@ jobs:
             - name: Install Bun
               run: npm install -g bun
 
-            - name: Validate manifests
-              run: bun scripts/validate-manifests.ts
+            - name: Validate the repository
+              run: bun scripts/validate-repo.ts
+
+            # `--ignore-scripts` because the manifest and the lockfile are the fork's too,
+            # and an install script in either would otherwise run before the tests do.
+            - name: Install dev dependencies
+              run: bun install --frozen-lockfile --ignore-scripts
+
+            - name: Typecheck
+              run: bun run typecheck
+
+            - name: Test
+              run: bun test
+
+    shellcheck:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout
+              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+            # SC2016 fires on every backtick inside a single-quoted printf format, and
+            # these scripts write markdown into a prompt, so every SC2016 hit here is a
+            # false positive.
+            - name: Shellcheck
+              run: shellcheck -e SC2016 review/*.sh scripts/*.sh

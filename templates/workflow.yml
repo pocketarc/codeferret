@@ -1,0 +1,49 @@
+name: CodeFerret
+
+on:
+    pull_request:
+        types: [opened, synchronize, ready_for_review, reopened]
+
+concurrency:
+    group: codeferret-${{ github.event.pull_request.number }}
+    cancel-in-progress: true
+
+jobs:
+    review:
+        # GitHub withholds the secret from a pull request whose branch lives on a fork,
+        # whoever opened it, so a fork's run would fail deep inside the review with an
+        # empty token rather than at the gate. Author association is no substitute: a
+        # collaborator working from their own fork gets no secret either.
+        #
+        # A draft is work its author has marked unfinished, and without the draft test
+        # every push to one costs a full review.
+        if: >-
+            github.event.pull_request.draft == false &&
+            github.event.pull_request.head.repo.full_name == github.repository &&
+            contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
+        runs-on: ubuntu-latest
+        # A full set of lenses on a small diff takes around 20 minutes.
+        timeout-minutes: 60
+        permissions:
+            # The review runs an agent with Bash, so a token that can write contents is a
+            # token that can push. `contents: write` plus `resolve-threads: 'true'` is what
+            # it takes to have CodeFerret close the inline threads its older versions left
+            # behind, and `contents: write` is worth granting only while an open pull
+            # request still has one of those threads on it.
+            contents: read
+            pull-requests: write
+            # What lets a run read the findings the previous run kept, so a finding is
+            # posted once instead of on every push. It is used for that and nothing else,
+            # and it grants no more than reading this repository's own runs and their
+            # artifacts.
+            actions: read
+
+        steps:
+            # `v1` is a mutable tag, moved to each new release, so you get fixes without
+            # editing this file. Pin `@v1.1.0` or a commit SHA instead if you would rather
+            # read what runs before it runs: this job holds your OAuth token and
+            # `pull-requests: write`, and it runs an agent with Bash.
+            - name: CodeFerret
+              uses: pocketarc/codeferret@v1
+              with:
+                  claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

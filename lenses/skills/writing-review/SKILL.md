@@ -1,6 +1,6 @@
 ---
 name: writing-review
-description: Review and improve any written output. Detect and remove AI writing tropes in prose (blog posts, articles, READMEs, emails, commit messages, PR descriptions, code comments) and in the progress narration an agent writes between tool calls, and apply Simplified Technical English to procedural and reference documentation (install steps, runbooks, API reference, CLI help, error messages, troubleshooting guides). Use proactively whenever writing, reviewing, or rewriting text. Also use when asked to check for AI writing patterns, humanize text, or make instructions clearer. Do NOT use for pure code output (code comments are prose and count).
+description: "CodeFerret review lens writing-review. A CodeFerret lens agent loads this during a multi-lens code review; it is not a general-purpose skill and is no use outside one."
 ---
 
 # Writing Review

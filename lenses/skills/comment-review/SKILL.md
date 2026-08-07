@@ -1,6 +1,6 @@
 ---
 name: comment-review
-description: Review the comments a change adds or leaves behind: comments that restate the code, narrate history, or document an absence, and comments the change made untrue. Use when reviewing a diff for whether its prose earns its place.
+description: "CodeFerret review lens comment-review. A CodeFerret lens agent loads this during a multi-lens code review; it is not a general-purpose skill and is no use outside one."
 ---
 
 # Comment Review

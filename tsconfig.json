@@ -1,0 +1,20 @@
+{
+    "compilerOptions": {
+        "lib": ["ESNext"],
+        "target": "ESNext",
+        "module": "Preserve",
+        "moduleResolution": "bundler",
+        "types": ["bun"],
+        "allowImportingTsExtensions": true,
+        "resolveJsonModule": true,
+        "verbatimModuleSyntax": true,
+        "noEmit": true,
+        "strict": true,
+        "skipLibCheck": true,
+        "noUncheckedIndexedAccess": true,
+        "noUnusedLocals": true,
+        "noUnusedParameters": true,
+        "noFallthroughCasesInSwitch": true
+    },
+    "include": ["review/**/*.ts", "scripts/**/*.ts"]
+}
