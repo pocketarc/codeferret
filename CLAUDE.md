@@ -184,6 +184,14 @@ is in `review/README.md`.
   tool list on purpose: a lens reads an untrusted diff with `CLAUDE_CODE_OAUTH_TOKEN` in
   its environment. This raises the cost of exfiltration rather than preventing it, since
   `Bash` still has `curl`.
+- `unset` cannot take a credential out of an environment. `/proc/<pid>/environ` holds what
+  a process was started with for as long as it lives, and a lens runs as the same user with
+  `Bash`: measured in a Linux container, an agent whose own environment was clean read
+  `GITHUB_TOKEN` back out of its parent's after the shell had unset it. So the token the two
+  GitHub fetches use is staged in a file by a step of its own, and `run.sh` reads it and
+  deletes it before the session starts. Never put it in the `env:` of the step that execs the
+  agent. "The GitHub token never enters the step that runs the agent" in review/README.md has
+  the measurement and what is left over.
 - A tool an agent asks for is not necessarily a tool it gets, and nothing says so.
   `Grep`, `Glob`, and `TodoWrite` were all in the lens tool list and none reached a
   dispatched lens. Reading the list will not tell you, so check it against a real dispatch
@@ -295,10 +303,14 @@ raises one.
   consumer editing a workflow to get a fix. Anyone who wants the guarantee can pin
   `@v1.1.0`.
 - A lens can read `CLAUDE_CODE_OAUTH_TOKEN`. It runs with `Bash` and the token is in the
-  environment it inherits. The shipped template uploads `findings.json` alone, so nothing
-  the session wrote about itself leaves the runner by that route. This repository's own
-  workflow keeps the wide artifact path, because the fixture runs are what a maintainer
-  reads when a review goes wrong.
+  environment it inherits. The artifact is not a bound on that, under any `artifact-path`:
+  `findings.json` is the session's own prose, every title, body, summary and detail of it,
+  and it is published for 14 days to anyone who asks on a public repository. What bounds it
+  is the condition on the shipped workflow: it runs no review for a fork or for anyone
+  outside the repository. A lens holding `Bash` holds `curl` too, which is a shorter route
+  anyway than writing a token into a finding and waiting for a download. This repository's
+  own workflow keeps the wide artifact path on top of that, because the fixture runs are what
+  a maintainer reads when a review goes wrong.
 - The orchestrator runs under `bypassPermissions` with `Bash`, holding comments written by
   anyone who can comment. `--disallowed-tools` takes `Edit`, `Write`, `NotebookEdit`,
   `WebFetch` and `WebSearch`; `Bash` and `Agent` stay, because the run needs git and the

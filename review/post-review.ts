@@ -21,11 +21,11 @@
  */
 
 import { dirname, join } from "node:path";
-import { ownThreads, survey } from "./existing.ts";
+import { ownThreads, unreadOf } from "./existing.ts";
 import { partition, readMerged, vetAgainstExisting } from "./findings.ts";
 import { graphql, graphqlFailure, requirePullNumber, requireRepository, rest, tokenFromStdinOrEnv } from "./github.ts";
 import { reason } from "./json.ts";
-import { composeReview, destinationOf, plural } from "./review-body.ts";
+import { composeReview, destinationOf, plural, reopenedReasons } from "./review-body.ts";
 import { readDispatched } from "./run-files.ts";
 
 const [findingsPath, headSha, prNumber] = process.argv.slice(2);
@@ -57,35 +57,7 @@ const merged = await readMerged(
 const vetted = await vetAgainstExisting(merged.findings, buildDir);
 const existing = vetted.existing;
 
-if (vetted.untraceable > 0) {
-    console.error(
-        `${plural(vetted.untraceable, "decline")} cited no comment from an owner, member or` +
-            ` collaborator, and no resolved thread. Reporting them as new.`,
-    );
-}
-
-// Counted apart from the rest, because this is the half of the rule a maintainer feels:
-// a decline they meant, reopened because the comment behind it named nothing.
-if (vetted.unrelated > 0) {
-    console.error(
-        `${plural(vetted.unrelated, "decline")} cited a comment that says nothing about the file` +
-            ` the finding is in. Reporting them as new.`,
-    );
-}
-
-if (vetted.unreported > 0) {
-    console.error(
-        `${plural(vetted.unreported, "finding")} came back as already raised, citing a comment that is` +
-            ` not on this pull request or says nothing about the file. Reporting them as new.`,
-    );
-}
-
-if (vetted.unmatched > 0) {
-    console.error(
-        `${plural(vetted.unmatched, "finding")} came back as already raised, citing no comment and naming` +
-            ` a file the previous review did not. Reporting them as new.`,
-    );
-}
+for (const said of reopenedReasons(vetted)) console.error(said);
 
 // Partitioned once and handed to composeReview, so the counts in this log line and the
 // counts in the body cannot come from two different derivations of the same findings.
@@ -200,7 +172,7 @@ const to = destinationOf(process.env);
 const {
     body: reviewBody,
     listed,
-    broken,
+    warned,
 } = composeReview(
     merged,
     {
@@ -208,7 +180,8 @@ const {
         resolveDenied,
         leftOpen,
         to,
-        linkable: survey(existing).linkable,
+        linkable: vetted.survey.linkable,
+        unread: unreadOf(existing),
         dispatched: await readDispatched(buildDir),
     },
     parts,
@@ -219,10 +192,11 @@ console.log(
         ` declined=${declined.length} listed=${listed.length} resolved=${resolved.length}/${asked.length}`,
 );
 
-// A run where every lens died also produces no findings, and posting nothing leaves the
-// pull request looking reviewed and clean. So a failed lens is enough on its own to post:
-// the body carries lens_health, which is the only place that failure becomes visible.
-if (findings.length === 0 && broken.length === 0 && !process.env.DRY_RUN) {
+// A run where every lens died also produces no findings, and posting nothing leaves the pull
+// request looking reviewed and clean. So a body carrying a warning about its own coverage is
+// enough on its own to post, whatever it found: the review is the only place those warnings
+// are read. The job log carries them too, and the person the caveats are for never opens it.
+if (findings.length === 0 && !warned && !process.env.DRY_RUN) {
     const accounted = suppressed.length + declined.length;
     console.log(
         accounted > 0

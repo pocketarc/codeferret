@@ -1,6 +1,17 @@
 import { describe, expect, test } from "bun:test";
+import { asExisting, survey } from "./existing.ts";
 import { isListed, partition, vetSuppression } from "./findings.ts";
 import type { Finding } from "./findings.ts";
+
+/**
+ * `vetSuppression` against a case written as the file on disk.
+ *
+ * It takes the walked discussion, because the caller that posts already has one and a second
+ * walk is a second answer. A case here is still clearest written as the JSON, so the
+ * narrowing and the walk happen at this boundary instead.
+ */
+const vet = (findings: Finding[], existing: unknown, previous?: unknown): ReturnType<typeof vetSuppression> =>
+    vetSuppression(findings, survey(asExisting(existing)), previous);
 
 function finding(over: Partial<Finding> = {}): Finding {
     return {
@@ -63,7 +74,7 @@ describe("vetSuppression: who may settle a finding", () => {
 
     for (const association of ["OWNER", "MEMBER", "COLLABORATOR"]) {
         test(`a reply from ${association} may decline`, () => {
-            const out = vetSuppression([declined("https://github.com/o/r/pull/1#discussion_r2")], existing(association));
+            const out = vet([declined("https://github.com/o/r/pull/1#discussion_r2")], existing(association));
 
             expect([out.untraceable, out.unrelated]).toEqual([0, 0]);
             expect(out.findings[0]?.status).toBe("declined");
@@ -72,7 +83,7 @@ describe("vetSuppression: who may settle a finding", () => {
 
     for (const association of ["NONE", "CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "MANNEQUIN", ""]) {
         test(`a reply from ${association || "no association"} may not`, () => {
-            const out = vetSuppression([declined("https://github.com/o/r/pull/1#discussion_r2")], existing(association));
+            const out = vet([declined("https://github.com/o/r/pull/1#discussion_r2")], existing(association));
 
             expect(out.untraceable).toBe(1);
             expect(out.findings[0]?.status).toBe("new");
@@ -80,7 +91,7 @@ describe("vetSuppression: who may settle a finding", () => {
     }
 
     test("a reply on a resolved thread settles a finding in that thread's own file", () => {
-        const out = vetSuppression([declined("https://github.com/o/r/pull/1#discussion_r2")], existing("NONE", true));
+        const out = vet([declined("https://github.com/o/r/pull/1#discussion_r2")], existing("NONE", true));
 
         expect([out.untraceable, out.unrelated]).toEqual([0, 0]);
         expect(out.findings[0]?.status).toBe("declined");
@@ -92,7 +103,7 @@ describe("vetSuppression: who may settle a finding", () => {
 
         if (comment) comment.body = "src/elsewhere.ts is meant to be like that";
 
-        const out = vetSuppression(
+        const out = vet(
             [finding({ file: "src/elsewhere.ts", status: "declined", existing_comment_url: comment?.url })],
             anyone,
         );
@@ -102,23 +113,23 @@ describe("vetSuppression: who may settle a finding", () => {
     });
 
     test("a decline citing no comment is reopened", () => {
-        expect(vetSuppression([declined()], existing("OWNER")).untraceable).toBe(1);
+        expect(vet([declined()], existing("OWNER")).untraceable).toBe(1);
     });
 
     test("a decline citing a comment that is not there is reopened", () => {
-        const out = vetSuppression([declined("https://github.com/o/r/pull/1#discussion_r9")], existing("OWNER"));
+        const out = vet([declined("https://github.com/o/r/pull/1#discussion_r9")], existing("OWNER"));
 
         expect(out.untraceable).toBe(1);
     });
 
     test("unreadable input reopens rather than accepts", () => {
-        const out = vetSuppression([declined("https://github.com/o/r/pull/1#discussion_r2")], null);
+        const out = vet([declined("https://github.com/o/r/pull/1#discussion_r2")], null);
 
         expect(out.untraceable).toBe(1);
     });
 
     test("it leaves a new finding alone", () => {
-        const out = vetSuppression([finding({ status: "new" })], {});
+        const out = vet([finding({ status: "new" })], {});
 
         expect([out.untraceable, out.unrelated, out.unreported, out.unmatched]).toEqual([0, 0, 0, 0]);
         expect(out.findings.map((f) => f.status)).toEqual(["new"]);
@@ -129,26 +140,26 @@ describe("vetSuppression: what already-reported rests on when it cites no commen
     const seen = (file = "a.ts"): Finding => finding({ file, status: "already-reported" });
 
     test("the previous review having raised something in the same file settles it", () => {
-        const out = vetSuppression([seen()], {}, { findings: [{ file: "a.ts", title: "worded some other way" }] });
+        const out = vet([seen()], {}, { findings: [{ file: "a.ts", title: "worded some other way" }] });
 
         expect(out.unmatched).toBe(0);
         expect(out.findings[0]?.status).toBe("already-reported");
     });
 
     test("a previous review of other files does not, and nothing else would have checked it", () => {
-        const out = vetSuppression([seen()], {}, { findings: [{ file: "b.ts", title: "A title" }] });
+        const out = vet([seen()], {}, { findings: [{ file: "b.ts", title: "A title" }] });
 
         expect(out.unmatched).toBe(1);
         expect(out.findings[0]?.status).toBe("new");
     });
 
     test("no previous findings at all reopens, which is what a first run means", () => {
-        expect(vetSuppression([seen()], {}, { findings: [] }).unmatched).toBe(1);
-        expect(vetSuppression([seen()], {}).unmatched).toBe(1);
+        expect(vet([seen()], {}, { findings: [] }).unmatched).toBe(1);
+        expect(vet([seen()], {}).unmatched).toBe(1);
     });
 
     test("the title is not the key, because the orchestrator rewrites one every run", () => {
-        const out = vetSuppression([seen()], {}, { findings: [{ file: "a.ts", title: "nothing like it" }] });
+        const out = vet([seen()], {}, { findings: [{ file: "a.ts", title: "nothing like it" }] });
 
         expect(out.findings[0]?.status).toBe("already-reported");
     });
@@ -165,21 +176,21 @@ describe("vetSuppression: what already-reported has to rest on", () => {
     });
 
     test("a comment from anyone at all settles it, which is the whole point of the status", () => {
-        const out = vetSuppression([seen("src/a.ts", conversationUrl)], said("src/a.ts has this already"));
+        const out = vet([seen("src/a.ts", conversationUrl)], said("src/a.ts has this already"));
 
         expect(out.unreported).toBe(0);
         expect(out.findings[0]?.status).toBe("already-reported");
     });
 
     test("an LGTM naming no file does not, and it would have settled every finding", () => {
-        const out = vetSuppression([seen("src/a.ts", conversationUrl)], said("LGTM, merging"));
+        const out = vet([seen("src/a.ts", conversationUrl)], said("LGTM, merging"));
 
         expect(out.unreported).toBe(1);
         expect(out.findings[0]?.status).toBe("new");
     });
 
     test("a url no comment on the pull request carries does not", () => {
-        const out = vetSuppression([seen("src/a.ts", "https://evil.test/x")], said("src/a.ts has this already"));
+        const out = vet([seen("src/a.ts", "https://evil.test/x")], said("src/a.ts has this already"));
 
         expect(out.unreported).toBe(1);
     });
@@ -193,25 +204,25 @@ describe("vetSuppression: naming a file by its basename", () => {
     const declined = (file: string): Finding => finding({ file, status: "declined", existing_comment_url: url });
 
     test("a basename in ordinary prose settles the file it names", () => {
-        expect(vetSuppression([declined("src/money.ts")], said("money.ts is deliberate")).unrelated).toBe(0);
+        expect(vet([declined("src/money.ts")], said("money.ts is deliberate")).unrelated).toBe(0);
     });
 
     test("a basename inside a longer word does not", () => {
-        expect(vetSuppression([declined("src/money.ts")], said("see money.ts.bak")).unrelated).toBe(1);
-        expect(vetSuppression([declined("src/cache")], said("the cached value is fine")).unrelated).toBe(1);
+        expect(vet([declined("src/money.ts")], said("see money.ts.bak")).unrelated).toBe(1);
+        expect(vet([declined("src/cache")], said("the cached value is fine")).unrelated).toBe(1);
     });
 
     test("a basename too short to be more than prose needs the whole path", () => {
-        expect(vetSuppression([declined("cmd/id")], said("the id is meant to be like that")).unrelated).toBe(1);
-        expect(vetSuppression([declined("cmd/id")], said("cmd/id is meant to be like that")).unrelated).toBe(0);
+        expect(vet([declined("cmd/id")], said("the id is meant to be like that")).unrelated).toBe(1);
+        expect(vet([declined("cmd/id")], said("cmd/id is meant to be like that")).unrelated).toBe(0);
     });
 
     test("a root-level file too short to be more than prose settles nothing", () => {
-        expect(vetSuppression([declined("id")], said("the id column is fine")).unrelated).toBe(1);
+        expect(vet([declined("id")], said("the id column is fine")).unrelated).toBe(1);
     });
 
     test("a whole path inside a longer one does not settle it either", () => {
-        expect(vetSuppression([declined("src/a.ts")], said("see apps/web/src/a.ts.bak")).unrelated).toBe(1);
+        expect(vet([declined("src/a.ts")], said("see apps/web/src/a.ts.bak")).unrelated).toBe(1);
     });
 });
 
@@ -236,25 +247,25 @@ describe("vetSuppression: whether the comment is about the finding", () => {
     }
 
     test("a reply on the finding's own thread settles it without naming anything", () => {
-        expect(vetSuppression([declined("src/a.ts", url)], thread("src/a.ts")).unrelated).toBe(0);
+        expect(vet([declined("src/a.ts", url)], thread("src/a.ts")).unrelated).toBe(0);
     });
 
     test("a reply on a thread about another file does not", () => {
-        const out = vetSuppression([declined("src/a.ts", url)], thread("src/b.ts"));
+        const out = vet([declined("src/a.ts", url)], thread("src/b.ts"));
 
         expect([out.untraceable, out.unrelated]).toEqual([0, 1]);
         expect(out.findings[0]?.status).toBe("new");
     });
 
     test("a reply about another file still settles a finding it names", () => {
-        expect(vetSuppression([declined("src/a.ts", url)], thread("src/b.ts", "src/a.ts is meant to be")).unrelated).toBe(
+        expect(vet([declined("src/a.ts", url)], thread("src/b.ts", "src/a.ts is meant to be")).unrelated).toBe(
             0,
         );
     });
 
     test("an unrelated conversation comment from an owner settles nothing", () => {
         const lgtm = { conversation: [{ association: "OWNER", url: conversationUrl, body: "LGTM, merging" }] };
-        const out = vetSuppression([declined("src/a.ts", conversationUrl)], lgtm);
+        const out = vet([declined("src/a.ts", conversationUrl)], lgtm);
 
         expect([out.untraceable, out.unrelated]).toEqual([0, 1]);
     });
@@ -264,7 +275,7 @@ describe("vetSuppression: whether the comment is about the finding", () => {
             conversation: [{ association: "OWNER", url: conversationUrl, body: "the float in `money.ts` is deliberate" }],
         };
 
-        expect(vetSuppression([declined("src/money.ts", conversationUrl)], named).unrelated).toBe(0);
+        expect(vet([declined("src/money.ts", conversationUrl)], named).unrelated).toBe(0);
     });
 
     test("a stranger naming the file settles nothing either", () => {
@@ -272,6 +283,6 @@ describe("vetSuppression: whether the comment is about the finding", () => {
             conversation: [{ association: "NONE", url: conversationUrl, body: "src/a.ts is fine" }],
         };
 
-        expect(vetSuppression([declined("src/a.ts", conversationUrl)], named).untraceable).toBe(1);
+        expect(vet([declined("src/a.ts", conversationUrl)], named).untraceable).toBe(1);
     });
 });

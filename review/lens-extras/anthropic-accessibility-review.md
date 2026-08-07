@@ -59,9 +59,16 @@ Report the half you can see, and say plainly what you could not judge:
 - 3.2.2, change of context on input. A handler that navigates or submits a form from
   `onChange` or `onFocus` is a source fact. Whether a subtler change counts as a change of
   context is not.
-- 2.2.2 and 2.3.3, motion. A CSS `animation` or `transition` set to `infinite` with no
-  `@media (prefers-reduced-motion: reduce)` beside it is a source fact. Whether what moves
-  is distracting, or flashes more than three times a second, is not.
+- 2.2.2, moving content. A CSS `animation` or `transition` set to `infinite` starts on its
+  own and runs well past five seconds, and under 2.2.2 Pause, Stop, Hide (Level A) it needs
+  a mechanism to pause, stop or hide it. Whether the source carries one anywhere is a source
+  fact.
+- 2.3.3, motion from interactions. A `@media (prefers-reduced-motion: reduce)` block is
+  technique C39, which is sufficient for this criterion under WCAG and not for 2.2.2, so an
+  animation with no such block goes here rather than under the bullet above. 2.3.3 is Level
+  AAA. Name the level if you name the criterion.
+- Neither of those covers flashing. Three flashes in a second is 2.3.1 (Level A), it needs
+  the rendered page, and so does whether what moves is distracting at all.
 
 Parts of the skill contradict the rule above, and the rule overrides them. Its Output
 template holds tables whose every cell would be invented: "Color Contrast Check" has a

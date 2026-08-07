@@ -85,6 +85,18 @@ session_run_dir() {
     printf '%s/codeferret/run' "$(git rev-parse --absolute-git-dir)"
 }
 
+# Where a caller leaves the token run.sh's two GitHub fetches need, given the run directory.
+#
+# Beside that directory and not inside it: build-prompts.sh deletes the run directory whole
+# before it writes anything, and will not start against one it did not write itself.
+#
+# Every caller and both of the action's steps go through this function, because a token left
+# under one path and looked for under another is a review that reports every earlier comment
+# as new, with one line on stderr to say so.
+token_file() {
+    printf '%s.token' "$1"
+}
+
 # ---- Reaching a containerised toolchain ---------------------------------------------
 
 # Whether `command-prefix` can see a path at the same place the runner has it.

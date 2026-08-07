@@ -161,7 +161,7 @@ describe("destinationOf", () => {
                 GITHUB_REPOSITORY: "pocketarc/codeferret",
                 GITHUB_RUN_ID: "42",
             }),
-        ).toEqual({ kind: "run", url: "https://github.com/pocketarc/codeferret/actions/runs/42", artifact: false });
+        ).toEqual({ kind: "run", url: "https://github.com/pocketarc/codeferret/actions/runs/42" });
     });
 
     test("carries whether the run kept the findings file", () => {
@@ -172,7 +172,7 @@ describe("destinationOf", () => {
                 GITHUB_RUN_ID: "42",
                 ARTIFACT_HAS_FINDINGS: "true",
             }),
-        ).toMatchObject({ artifact: true });
+        ).toEqual({ kind: "artifact", url: "https://github.com/pocketarc/codeferret/actions/runs/42" });
     });
 
     test("is a session outside a run, so nothing links a page that does not exist", () => {
@@ -243,6 +243,22 @@ describe("assemble", () => {
 
         expect(body).toEndWith("### Caveats");
     });
+
+    test("leaves no disclosure control the cut emptied", () => {
+        const filler = Array.from({ length: 400 }, (_, i) => `- lens ${i}: ${"d".repeat(200)}`).join("\n");
+        const { body } = assemble(
+            [
+                "## CodeFerret",
+                `<details>\n<summary>lenses</summary>\n\n${filler}\n</details>`,
+                `<details>\n<summary>2 findings raised before and declined</summary>\n\n- a\n</details>`,
+            ],
+            null,
+            [],
+        );
+
+        expect(body).not.toMatch(/<details>\n(<summary>[^\n]*<\/summary>\n)?<\/details>/);
+        expect((body.match(/<details/g) ?? []).length).toBe((body.match(/<\/details>/g) ?? []).length);
+    });
 });
 
 describe("composeReview", () => {
@@ -253,6 +269,7 @@ describe("composeReview", () => {
         to: { kind: "session" },
         linkable: new Set(),
         dispatched: [],
+        unread: [],
     };
 
     const onARunner = destinationOf({
@@ -509,14 +526,98 @@ describe("composeReview", () => {
     });
 
     test("reports what composed the body, so a log beside it cannot disagree", () => {
-        const merged: Merged = { findings: [finding({ severity: "high" }), finding({ severity: "low" })] };
+        const merged: Merged = {
+            findings: [finding({ severity: "high" }), finding({ severity: "low" })],
+            lens_health: [{ lens: "codeferret:caveman-review", findings_returned: 2, ok: true }],
+        };
         const composed = composeReview(
             merged,
-            { ...quiet, to: onARunner },
+            { ...quiet, to: onARunner, dispatched: ["codeferret:caveman-review"] },
             partition(merged.findings),
         );
 
         expect(composed.listed).toHaveLength(1);
-        expect(composed.broken).toHaveLength(0);
+        expect(composed.warned).toBe(false);
+    });
+
+    test("bounds the suppressed list, which assemble charges against the findings' budget", () => {
+        const many = Array.from({ length: 120 }, (_, i) =>
+            finding({ title: `Seen ${i}`, status: "already-reported" }),
+        );
+        const body = review({ findings: many });
+
+        expect(body).toContain("120 findings raised in an earlier review");
+        expect(body).toMatch(/80 further findings left out for length/);
+        expect(body).not.toContain("Seen 119");
+    });
+
+    test("says what could not be read of the discussion, which is why findings repeat", () => {
+        const body = review({}, { unread: ["the review threads could not be listed."] });
+
+        expect(body).toContain("[!WARNING]");
+        expect(body).toContain("the review threads could not be listed.");
+    });
+
+    test("escapes a heading a title would open at a list item's content column", () => {
+        const body = review({ findings: [finding({ title: "# Fix the parser", status: "already-reported" })] });
+
+        expect(body).toContain("- \\# Fix the parser");
+    });
+
+    test("sends a reader nowhere when the run kept no artifact, rather than to its log", () => {
+        const items = Array.from({ length: 200 }, (_, i) => finding({ title: `T${i}`, body: "x".repeat(2000) }));
+        const body = review({ findings: items }, { to: withNoArtifact });
+
+        expect(body).toContain("the rest were kept nowhere");
+        expect(body).not.toContain("in its log");
+    });
+
+    describe("what the body warns about, which is what makes a quiet run worth posting", () => {
+        function warnedBy(over: Partial<Merged>, posting: Partial<Posting> = {}): boolean {
+            const merged: Merged = { findings: [], ...over };
+
+            return composeReview(merged, { ...quiet, ...posting }, partition(merged.findings)).warned;
+        }
+
+        const healthy = { lens: "codeferret:caveman-review", findings_returned: 0, ok: true };
+
+        test("a run that accounted for none of its lenses", () => {
+            expect(warnedBy({}, { dispatched: ["codeferret:caveman-review"] })).toBe(true);
+        });
+
+        test("a run whose lens_health is missing and whose dispatch list is too", () => {
+            expect(warnedBy({})).toBe(true);
+        });
+
+        test("a lens that ran and reported nothing about itself", () => {
+            expect(
+                warnedBy(
+                    { lens_health: [healthy] },
+                    { dispatched: ["codeferret:caveman-review", "codeferret:writing-review"] },
+                ),
+            ).toBe(true);
+        });
+
+        test("a lens that reported itself broken", () => {
+            expect(
+                warnedBy(
+                    { lens_health: [{ ...healthy, ok: false }] },
+                    { dispatched: ["codeferret:caveman-review"] },
+                ),
+            ).toBe(true);
+        });
+
+        test("a thread the token could not close", () => {
+            expect(
+                warnedBy(
+                    { lens_health: [healthy] },
+                    { dispatched: ["codeferret:caveman-review"], resolveDenied: true, leftOpen: 1 },
+                ),
+            ).toBe(true);
+        });
+
+        test("every dispatched lens reporting normally", () => {
+            expect(warnedBy({ lens_health: [healthy] }, { dispatched: ["codeferret:caveman-review"] })).toBe(false);
+        });
     });
 });

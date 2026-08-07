@@ -8,8 +8,8 @@
  */
 
 import { join } from "node:path";
-import { asExisting, readExisting, survey } from "./existing.ts";
-import type { Located, Surveyed } from "./existing.ts";
+import { readExisting, survey } from "./existing.ts";
+import type { Located, Survey, Surveyed } from "./existing.ts";
 import { reason } from "./json.ts";
 import { filesRaisedBefore } from "./previous.ts";
 
@@ -237,9 +237,14 @@ function raisedBefore(raisedFiles: ReadonlySet<string>, file: string): boolean {
  * When existing.json or previous.json cannot be read, nothing can be traced and every
  * suppression resting on it is reopened. That costs a comment somebody has already answered,
  * and the other way costs a finding nobody sees.
+ *
+ * The discussion arrives already walked. Taking `unknown` and calling `survey(asExisting(…))`
+ * here re-narrowed a value that already carried the guarantee, and walked it a second time
+ * after post-review.ts had walked it for its linkable urls, which is exactly the double walk
+ * `survey` exists to prevent.
  */
-export function vetSuppression(findings: Finding[], existing: unknown, previous: unknown = {}): Vetted {
-    const { comments } = survey(asExisting(existing));
+export function vetSuppression(findings: Finding[], discussion: Survey, previous: unknown = {}): Vetted {
+    const { comments } = discussion;
     const raisedFiles = filesRaisedBefore(previous);
     let untraceable = 0;
     let unrelated = 0;
@@ -331,6 +336,8 @@ export async function readMerged(path: string, hint?: string): Promise<Merged> {
 export interface Vetting extends Vetted {
     /** What the vetting was decided against, which post-review.ts also reads its threads from. */
     existing: Surveyed;
+    /** The one walk over it, which the review body reads its linkable urls from. */
+    survey: Survey;
 }
 
 /** The previous run's findings, or `{}` with a line saying they could not be read. */
@@ -362,8 +369,9 @@ async function readPrevious(path: string): Promise<unknown> {
 export async function vetAgainstExisting(findings: Finding[], buildDir: string): Promise<Vetting> {
     const existing = await readExisting(buildDir, (line) => console.error(line));
     const previous = await readPrevious(join(buildDir, "previous.json"));
+    const walked = survey(existing);
 
-    return { existing, ...vetSuppression(findings, existing, previous) };
+    return { existing, survey: walked, ...vetSuppression(findings, walked, previous) };
 }
 
 /**

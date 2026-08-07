@@ -122,6 +122,36 @@ interface Segment {
     text: string;
 }
 
+/** How long the run of backticks starting at `at` is. Zero where none starts there. */
+function runAt(text: string, at: number): number {
+    let length = 0;
+    while (text[at + length] === "`") length += 1;
+
+    return length;
+}
+
+/**
+ * Where a run of `run` backticks closes, at or after `from`, or -1.
+ *
+ * CommonMark ends a code span at a backtick run of exactly the opener's length, and a run is
+ * the whole unbroken sequence, so a run of three does not close an opener of two. `indexOf`
+ * matched two backticks inside a run of three instead: the stretch came back as a span,
+ * `escapeOutsideCode` left it alone, `outsideCode` dropped it, and a `<details>` a lens
+ * quoted reached the page as live markup with nothing counting it.
+ */
+function closingRun(text: string, from: number, run: number): number {
+    for (let at = from; at < text.length; at += 1) {
+        const length = runAt(text, at);
+
+        if (length === 0) continue;
+        if (length === run) return at;
+
+        at += length - 1;
+    }
+
+    return -1;
+}
+
 /**
  * The text split into what a code span covers and what it does not.
  *
@@ -148,11 +178,8 @@ function segments(text: string): Segment[] {
             continue;
         }
 
-        let run = 0;
-        while (text[i + run] === "`") run += 1;
-
-        const fence = "`".repeat(run);
-        const close = text.indexOf(fence, i + run);
+        const run = runAt(text, i);
+        const close = closingRun(text, i + run, run);
 
         flush();
 
@@ -162,7 +189,7 @@ function segments(text: string): Segment[] {
             continue;
         }
 
-        out.push({ kind: "unclosed", text: fence });
+        out.push({ kind: "unclosed", text: "`".repeat(run) });
         i += run;
     }
 

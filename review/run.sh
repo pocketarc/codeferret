@@ -30,7 +30,10 @@
 #                     under PREFIX, and what they need there is git and docker, so leave
 #                     TOOLS empty where the prefix has neither.
 #   RESOLVE_THREADS   0 to close no threads. Use 0 everywhere except CI.
-#   GITHUB_TOKEN, GITHUB_REPOSITORY   needed when PR is set.
+#   GITHUB_TOKEN_FILE a file holding the token the GitHub fetches use, which this script
+#                     reads and deletes. Needed with GITHUB_REPOSITORY when PR is set. A
+#                     file rather than a variable: the block that reads it has why.
+#   GITHUB_REPOSITORY the owner/name the fetches ask about.
 #   INCLUDE_WORKING_TREE  1 to review uncommitted work as well.
 set -euo pipefail
 
@@ -70,6 +73,76 @@ BUILD=$BUILD_DIR
 
 prefix_reaches "$ACTION"
 
+# The two GitHub fetches below need a token that can read the pull request. The
+# orchestrator must not have it: every lens it dispatches carries Bash, and
+# `printenv GITHUB_TOKEN` is the whole attack.
+#
+# So the value never enters this script's environment, because `unset` cannot take a value
+# out of one. A process's environment block is written at execve, and /proc/<pid>/environ
+# holds that block for as long as the process lives, whatever the shell unsets afterwards.
+# A lens runs as the same user, so `tr '\0' '\n' </proc/$PPID/environ` reads back what the
+# shell above it was started with, and the same read against each ancestor's pid reaches the
+# rest. Measured in a Linux container: after `unset -v GITHUB_TOKEN` the shell's own
+# /proc/self/environ still carried the value, and a grandchild whose own environment was
+# clean read it out of the parent's.
+#
+# The caller leaves the token in a file instead and names it here. Its mode keeps other
+# users out; what keeps a lens out is that the file is deleted now, long before anything
+# starts an agent. The value spends the rest of the run in this shell's memory, which a
+# descendant cannot read without ptrace on an ancestor.
+#
+# The unset comes first because assigning to a name the caller exported leaves it exported,
+# which would put the token straight into the orchestrator's environment under the holding
+# name.
+unset -v token
+token=""
+
+if [ -n "${GITHUB_TOKEN_FILE:-}" ] && [ -f "$GITHUB_TOKEN_FILE" ]; then
+    token=$(cat "$GITHUB_TOKEN_FILE")
+    rm -f "$GITHUB_TOKEN_FILE"
+fi
+
+# Everything below is weaker than the file, and it is here for the credentials this script
+# does not own. A caller's job may declare GITHUB_TOKEN of its own, and the runner puts
+# ACTIONS_RUNTIME_TOKEN into every step's environment, so both arrive at execve and /proc
+# keeps them whatever happens here. What the unset does is take them out of the environment
+# every child is started with, which is what `printenv` in a lens reads. Like the WebFetch
+# and WebSearch denials, it raises the cost rather than closing the channel.
+#
+# The rest of the list is the files a job step writes its own results to. Those files are
+# not read-only: a line appended to GITHUB_PATH or GITHUB_ENV lands in every later step of
+# the job, and the next one runs post-review.ts with a token of its own. The action's
+# `emit_output` helper and summary.ts both run in the parent shell after this script has
+# returned, which keeps its own copy of the environment, so removing them here costs nothing.
+#
+# Removing those names is not the same as putting the files out of reach. The runner creates
+# them under `$RUNNER_TEMP/_runner_file_commands` before the job starts, and the orchestrator
+# is handed build paths under `RUNNER_TEMP` anyway, so a lens with Bash can list the
+# directory and append to a `set_env_` file whatever this shell exports. The toolchain is a
+# second route to the same place: `install: auto` runs `npm install -g` as this user, so the
+# `bun` the posting step resolves through PATH is a file the review session can overwrite.
+#
+# Both end in the next step of this job running code a lens chose, holding the token that
+# posts. What would close it is posting from a job that never runs the agent, and a composite
+# action has steps rather than jobs, so that is a change for whoever installs this to make,
+# not one available here.
+#
+# This is a denylist and a denylist is the weaker shape: an allowlist would need the full
+# set of variables the Claude Code CLI reads to start, and a missing one fails the run
+# twenty minutes in. So a variable the orchestrator should not see has to be named here.
+unset -v GITHUB_TOKEN GH_TOKEN GITHUB_TOKEN_FILE \
+    ACTIONS_RUNTIME_TOKEN ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL \
+    NPM_TOKEN NODE_AUTH_TOKEN \
+    GITHUB_ENV GITHUB_PATH GITHUB_OUTPUT GITHUB_STATE GITHUB_STEP_SUMMARY
+
+# Whether a composite action's inputs reach its `run:` steps as INPUT_<NAME> is undocumented
+# and has changed before. Where they do, both tokens are in scope a second time under names
+# the list above does not mention. Nothing below reads one: every value this script needs
+# arrives as an argument or under its own name.
+for name in $(compgen -e | grep '^INPUT_' || true); do
+    unset -v "$name"
+done
+
 # PREFIX goes with it because build-prompts.sh runs bun too, to render an agent for a lens
 # the action does not bundle, and because the build directory's own reachability is checked
 # in there: it does not exist until that script creates it, and the first `$PREFIX bun`
@@ -88,53 +161,6 @@ printf '%s\n' "$LENSES" |
 # take the workspace as an argument.
 ACTION=$(cd "$ACTION" && pwd)
 cd "$BUILD"
-
-# fetch-existing.ts needs the GitHub token. The orchestrator must not have it: every lens
-# it dispatches carries Bash, and `printenv GITHUB_TOKEN` is the whole attack. Hold the
-# value here and hand it to the one command that needs it.
-#
-# The unset comes first because assigning to a name the caller exported leaves it
-# exported, which would put the token straight back into the orchestrator's environment
-# under the holding name.
-#
-# The rest of the list is every other credential a runner or a shell puts in scope that
-# nothing below needs, and the files a job step writes its own results to. Those files are
-# not read-only: a line appended to GITHUB_PATH or GITHUB_ENV lands in every later step of
-# the job, and the next one runs post-review.ts with the token this block just removed. The
-# action's own `emit_output` helper and summary.ts both run in the parent shell after this
-# script has returned, which keeps its own copy of the environment, so removing them here
-# costs nothing.
-#
-# Removing those names is not the same as putting the files out of reach. The runner creates
-# them under `$RUNNER_TEMP/_runner_file_commands` before the job starts, and the orchestrator
-# is handed build paths under `RUNNER_TEMP` anyway, so a lens with Bash can list the
-# directory and append to a `set_env_` file whatever this shell exports. The toolchain is a
-# second route to the same place: `install: auto` runs `npm install -g` as this user, so the
-# `bun` the posting step resolves through PATH is a file the review session can overwrite.
-#
-# Both end in the next step of this job running code a lens chose, holding the token this
-# block just removed. Like the WebFetch and WebSearch denials, the unset raises the cost
-# rather than closing the channel. What would close it is posting from a job that never runs
-# the agent, and a composite action has steps rather than jobs, so that is a change for
-# whoever installs this to make, not one available here.
-#
-# This is a denylist and a denylist is the weaker shape: an allowlist would need the full
-# set of variables the Claude Code CLI reads to start, and a missing one fails the run
-# twenty minutes in. So a variable the orchestrator should not see has to be named here.
-unset -v token
-token=${GITHUB_TOKEN:-}
-unset -v GITHUB_TOKEN GH_TOKEN \
-    ACTIONS_RUNTIME_TOKEN ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL \
-    NPM_TOKEN NODE_AUTH_TOKEN \
-    GITHUB_ENV GITHUB_PATH GITHUB_OUTPUT GITHUB_STATE GITHUB_STEP_SUMMARY
-
-# Whether a composite action's inputs reach its `run:` steps as INPUT_<NAME> is undocumented
-# and has changed before. Where they do, both tokens are in scope a second time under names
-# the list above does not mention. Nothing below reads one: every value this script needs
-# arrives as an argument or under its own name.
-for name in $(compgen -e | grep '^INPUT_' || true); do
-    unset -v "$name"
-done
 
 # An empty file costs duplicate comments, so the failure is written down here: nothing
 # downstream can tell a pull request nobody has commented on from one whose comments
@@ -166,6 +192,13 @@ fetch_existing() {
 }
 
 if [ -n "${PR:-}" ]; then
+    # Reported apart from the two `||` messages below, because both scripts fail the same way
+    # whether the token was wrong or never staged at all, and a caller who moved the file
+    # would otherwise read the empty result as a pull request nobody had commented on.
+    if [ -z "$token" ]; then
+        echo "no token was staged for pull request #$PR, so its comments cannot be read." >&2
+    fi
+
     fetch_existing
 
     # What the last run raised is in its own findings file, which needs `actions: read` to
@@ -270,7 +303,25 @@ done
             --no-session-persistence \
             --disallowed-tools Edit Write NotebookEdit WebFetch WebSearch \
             --plugin-dir "$OUT"
-) >"$BUILD/run.json" || status=$?
+) >"$PRISTINE/run.json" || status=$?
+
+# Not into the build directory, which findings.json is derived from and which the session
+# knows: its dispatch prompt names `build/diff-args`. The shell holds the redirect, so a lens
+# cannot corrupt the bytes claude is writing, but anything appended past the end survives and
+# extract-findings.ts reads exactly that. Trailing bytes fail the whole-file parse, the
+# line-by-line fallback runs, and the last line whose `type` is `result` becomes the merged
+# findings the review is built from, posted under the account that holds `pull-requests:
+# write`. Deleting findings.json below covers the file the review is built from; this covers
+# the file that one is extracted from.
+#
+# `$PRISTINE` is a fresh mktemp directory named in no prompt. Like the copies taken into it
+# above, that raises the cost rather than closing the channel: a lens with Bash runs as this
+# user and can look.
+#
+# Not fatal. A session killed before it wrote a byte already reaches the `-f` test below, and
+# dying here instead would lose the cost and the refusals that run wrote.
+cp "$PRISTINE/run.json" "$BUILD/run.json" ||
+    echo "the run log could not be put beside the findings. Nothing will be extracted from it." >&2
 
 # The orchestrator ran with Bash under bypassPermissions and knows this directory: its
 # dispatch prompt names `build/diff-args`, and build-prompts.sh puts the two json paths into

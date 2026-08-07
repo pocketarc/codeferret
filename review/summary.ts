@@ -22,9 +22,22 @@ if (!buildDir) {
 
 const dir: string = buildDir;
 
+/**
+ * One of the numbers a run wrote, or nothing.
+ *
+ * An empty read counts as nothing, not as an empty string. Every reader treats an absent file
+ * as `unknown` (`run-files.ts`), and a killed or out-of-disk run leaves the file there and
+ * empty: `??` does not catch `""`, so Cost rendered as a bare `$`, Findings as a blank cell,
+ * and `count` turned `Number("")` into a 0 that reads as a measurement.
+ */
 async function value(name: string): Promise<string | null> {
     const file = Bun.file(join(dir, name));
-    return (await file.exists()) ? (await file.text()).trim() : null;
+
+    if (!(await file.exists())) return null;
+
+    const text = (await file.text()).trim();
+
+    return text === "" ? null : text;
 }
 
 /** A figure a run wrote, or nothing: the scripts writing these also write `unknown`. */

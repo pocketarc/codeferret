@@ -128,6 +128,14 @@ describe("escapeInline", () => {
     test("escapes an at sign, which would notify whoever owns that name", () => {
         expect(escapeInline("bump @types/bun")).toBe("bump \\@types/bun");
     });
+
+    test("does not close a shorter opener on a longer run, which left a tag unescaped", () => {
+        expect(escapeInline("``<details>``` a `")).toBe("\\`\\`\\<details>\\`\\`\\` a \\`");
+    });
+
+    test("closes a span on the next run of the opener's length, past the runs between", () => {
+        expect(escapeInline("``x``` <img> ```y``")).toBe("``x``` <img> ```y``");
+    });
 });
 
 describe("escapeBlocks", () => {

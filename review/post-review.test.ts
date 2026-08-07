@@ -55,7 +55,7 @@ afterEach(() => {
 
 interface Written {
     findings: Array<Record<string, unknown>>;
-    posted?: { url?: string; pr?: string };
+    posted?: { url?: string | null; pr?: string };
 }
 
 /** Post one run for real against the stub, and hand back the file it left behind. */
@@ -64,12 +64,14 @@ async function post(
     existing: Record<string, unknown>,
     over: Record<string, unknown> = {},
     env: Record<string, string> = {},
+    dispatched: string[] = [],
 ): Promise<{ written: Written; stderr: string }> {
     const findingsPath = join(dir, "findings.json");
     const preloadPath = join(dir, "stub-fetch.js");
 
     await Bun.write(findingsPath, `${JSON.stringify({ summary: "a run", findings, ...over }, null, 2)}\n`);
     await Bun.write(join(dir, "existing.json"), `${JSON.stringify(existing, null, 2)}\n`);
+    await Bun.write(join(dir, "lens-list.txt"), dispatched.map((lens) => `- \`${lens}\`\n`).join(""));
     await Bun.write(preloadPath, PRELOAD);
 
     const run = Bun.spawnSync(["bun", "--preload", preloadPath, SCRIPT, findingsPath, "deadbeef", "1"], {
@@ -125,6 +127,33 @@ describe("post-review: the statuses written back to the findings file", () => {
 
         expect(written.posted?.url).toBe(REVIEW_URL);
         expect(written.posted?.pr).toBe("1");
+    });
+});
+
+describe("post-review: what a run with nothing new still posts", () => {
+    const clean = { threads: [], conversation: [] };
+    const healthy = { lens: "codeferret:caveman-review", findings_returned: 0, ok: true };
+
+    /** The URL is the discriminator: a run that posts nothing records `null` and stops. */
+    test("posts nothing when every dispatched lens reported normally", async () => {
+        const { written } = await post([], clean, { lens_health: [healthy] }, {}, ["codeferret:caveman-review"]);
+
+        expect(written.posted?.url).toBeNull();
+    });
+
+    test("posts the warning when the run accounted for none of its lenses", async () => {
+        const { written } = await post([], clean, {}, {}, ["codeferret:caveman-review"]);
+
+        expect(written.posted?.url).toBe(REVIEW_URL);
+    });
+
+    test("posts the warning when a dispatched lens said nothing about itself", async () => {
+        const { written } = await post([], clean, { lens_health: [healthy] }, {}, [
+            "codeferret:caveman-review",
+            "codeferret:writing-review",
+        ]);
+
+        expect(written.posted?.url).toBe(REVIEW_URL);
     });
 });
 

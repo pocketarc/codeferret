@@ -147,6 +147,19 @@ export function survey(existing: Surveyed): Survey {
     return { comments, linkable };
 }
 
+/**
+ * What the fetch could not read, in the words `fetch-existing.ts` wrote.
+ *
+ * Half the fetch can fail on its own, and the file is still valid JSON: it carries the half
+ * that came back and names the half that did not. Nothing read those two fields, so the run
+ * vetted every suppression resting on the missing half and reopened it, which is the safe
+ * direction, and the reader of the pull request got a review repeating findings they had
+ * answered with nothing on the page saying the discussion was half read.
+ */
+export function unreadOf(existing: Surveyed): string[] {
+    return [existing.error, existing.conversation_error].filter((line): line is string => Boolean(line));
+}
+
 /** The threads an earlier run of this tool opened, which are the only ones it may resolve. */
 export function ownThreads(existing: Surveyed): Set<string> {
     const mine = new Set<string>();

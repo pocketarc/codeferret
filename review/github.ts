@@ -13,6 +13,17 @@ export async function tokenFromStdinOrEnv(): Promise<string> {
 }
 
 /**
+ * GitHub's grammar for an owner or a repository name.
+ *
+ * The same bar `requirePullNumber` holds its value to, and for the same reason: the whole
+ * string is interpolated into REST paths, each with a bearer token attached. `fetch`
+ * normalises dot segments before the request goes out, so `../x` as the owner took
+ * `/repos/../x/actions/artifacts` to `/x/actions/artifacts`, and a `?` or a `#` would turn
+ * the rest of the path into a query string or a fragment instead.
+ */
+const REPOSITORY_PART = /^[A-Za-z0-9._-]+$/;
+
+/**
  * `GITHUB_REPOSITORY` split, or null when it is not `owner/name`.
  *
  * Checked rather than left to whatever reads it: the halves become GraphQL variables,
@@ -24,6 +35,10 @@ export function splitRepository(repo: string | undefined): { owner: string; name
     const [owner, name] = parts;
 
     if (parts.length !== 2 || !owner || !name) return null;
+    if (!REPOSITORY_PART.test(owner) || !REPOSITORY_PART.test(name)) return null;
+
+    // Legal under the pattern above and still a path segment rather than a name.
+    if ([owner, name].some((part) => part === "." || part === "..")) return null;
 
     return { owner, name };
 }

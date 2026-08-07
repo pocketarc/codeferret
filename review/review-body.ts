@@ -9,7 +9,7 @@
  */
 
 import { brokenLenses, isListed, lensLabel, LISTED, silentLenses } from "./findings.ts";
-import type { Finding, LensHealth, Merged, Partitioned } from "./findings.ts";
+import type { Finding, LensHealth, Merged, Partitioned, Vetted } from "./findings.ts";
 import {
     clamp,
     closeOpenDetails,
@@ -42,6 +42,46 @@ export function lenses(n: number): string {
     return n === 1 ? "1 lens" : `${n} lenses`;
 }
 
+/**
+ * Why suppressions were reopened, in the words a reader gets, one line per kind that applies.
+ *
+ * Here for the reason `caveatOf` is: `Vetted` is findings.ts's shape and these are sentences,
+ * which that module keeps out on purpose. Written out at the posting path alone, they were
+ * four copies of one `if (n > 0) console.error(...)`, and `print-findings.ts` ran the same
+ * vetting and printed none of them, so a session reopened a suppression in silence while a
+ * posted run explained it.
+ *
+ * The second line is counted apart from the first because it is the half of the rule a
+ * maintainer feels: a decline they meant, reopened because the comment behind it named
+ * nothing.
+ */
+export function reopenedReasons(vetted: Vetted): string[] {
+    const cases: Array<[number, string]> = [
+        [
+            vetted.untraceable,
+            `${plural(vetted.untraceable, "decline")} cited no comment from an owner, member or collaborator,` +
+                " and no resolved thread. Reporting them as new.",
+        ],
+        [
+            vetted.unrelated,
+            `${plural(vetted.unrelated, "decline")} cited a comment that says nothing about the file the` +
+                " finding is in. Reporting them as new.",
+        ],
+        [
+            vetted.unreported,
+            `${plural(vetted.unreported, "finding")} came back as already raised, citing a comment that is not` +
+                " on this pull request or says nothing about the file. Reporting them as new.",
+        ],
+        [
+            vetted.unmatched,
+            `${plural(vetted.unmatched, "finding")} came back as already raised, citing no comment and naming a` +
+                " file the previous review did not. Reporting them as new.",
+        ],
+    ];
+
+    return cases.filter(([count]) => count > 0).map(([, said]) => said);
+}
+
 // The orchestrator writes both the summary and the notes, and nothing bounds what a model
 // produces. Left unbounded, a runaway summary eats the length the findings need.
 export const MAX_PROSE = 4000;
@@ -68,11 +108,20 @@ export const MAX_FINDING_BODY = 4000;
  */
 export const MAX_TITLE = 200;
 
-/** Where this review is being posted. `listedIn` reads it to bound what the body carries. */
-export type Destination = { kind: "run"; url: string; artifact: boolean } | { kind: "session" };
+/**
+ * Where this review is being posted. `listedIn` reads it to bound what the body carries.
+ *
+ * Three states and three variants. As two variants and an `artifact` boolean, no reader read
+ * the boolean: each folded it back into "is there a run holding the rest" and then asked
+ * `kind` as well to tell the remaining two apart, so the one question took two answers.
+ */
+export type Destination =
+    | { kind: "artifact"; url: string }
+    | { kind: "run"; url: string }
+    | { kind: "session" };
 
 /**
- * Which of the two this run is, and whether it kept the findings file.
+ * Which of the three this run is.
  *
  * Answered once, at the boundary: five branches over the same three environment variables
  * is five chances for the body and the log beside it to describe different reviews.
@@ -89,16 +138,9 @@ export function destinationOf(env: Record<string, string | undefined>): Destinat
 
     if (!server || !repo || !id) return { kind: "session" };
 
-    return {
-        kind: "run",
-        url: `${server}/${repo}/actions/runs/${id}`,
-        artifact: env.ARTIFACT_HAS_FINDINGS === "true",
-    };
-}
+    const url = `${server}/${repo}/actions/runs/${id}`;
 
-/** The run whose artifact holds the findings this body leaves out, where there is one. */
-function deferredTo(to: Destination): string | null {
-    return to.kind === "run" && to.artifact ? to.url : null;
+    return env.ARTIFACT_HAS_FINDINGS === "true" ? { kind: "artifact", url } : { kind: "run", url };
 }
 
 /**
@@ -114,7 +156,7 @@ function deferredTo(to: Destination): string | null {
  * and a log line that contradicts the body it describes is worse than no log line.
  */
 export function listedIn(fresh: Finding[], to: Destination): Finding[] {
-    return deferredTo(to) ? fresh.filter(isListed) : fresh;
+    return to.kind === "artifact" ? fresh.filter(isListed) : fresh;
 }
 
 /**
@@ -151,15 +193,26 @@ export function bullet(f: Finding): string {
 }
 
 /**
- * A finding's title as one bounded line.
+ * A model's one-line field, as one bounded line safe at a list item's content column.
  *
  * Escaped before the cut, for the reason `lensDetail` gives: the marker `clamp` appends is
  * markdown of its own and must not be escaped and shown as underscores. Flattened again
  * after it, because that marker carries newlines, and one inside `bullet`'s strong emphasis
  * closes it and leaves a literal `**` on the page.
+ *
+ * `escapeBlockStart` because `mention` and the resolved list both put one of these where a
+ * `- ` item's content starts, and `escapeInline` leaves `#` and `>` alone: a title of
+ * `# Fix the parser` rendered an h1 in the middle of the suppressed list. Inside `bullet`
+ * the same string sits between two asterisks where neither opens anything, and the escape
+ * costs a backslash the renderer takes back off.
  */
+function oneLine(text: string, limit: number): string {
+    return flatten(clamp(escapeBlockStart(escapeInline(flatten(text))), limit));
+}
+
+/** A finding's title as one bounded line. */
 function title(f: Finding): string {
-    return flatten(clamp(escapeInline(flatten(f.title)), MAX_TITLE));
+    return oneLine(f.title, MAX_TITLE);
 }
 
 /**
@@ -360,11 +413,32 @@ export function assemble(head: string[], listing: Listing | null, tail: string[]
  *
  * The reserve is for the closers, and overrunning it costs nothing: `MAX_BODY` already sits
  * under GitHub's limit.
+ *
+ * The cut lands on a line boundary because `details` writes its markup one element to a line,
+ * and a character offset lands inside the `<summary>`: the reader got a disclosure control
+ * labelled with a word fragment, or, two characters earlier, one whose `<summ` GitHub's
+ * sanitiser drops, leaving the browser's own "Details" triangle over nothing.
+ * `closeOpenDetails` counts `<details>` against `</details>` and repairs neither.
  */
 function fit(body: string): string {
     const notice = "\n\n_(this review was cut for length)_";
+    const limit = MAX_BODY - notice.length - 200;
+    const boundary = body.lastIndexOf("\n", limit);
+    const kept = dropEmptyDetails(body.slice(0, boundary > 0 ? boundary : limit));
 
-    return `${closeOpenDetails(closeOpenFence(body.slice(0, MAX_BODY - notice.length - 200)))}${notice}`;
+    return `${closeOpenDetails(closeOpenFence(kept))}${notice}`;
+}
+
+/**
+ * A trailing disclosure the cut left with nothing under it.
+ *
+ * On a line boundary the summary is whole or absent, so what is left of a half-cut block is
+ * an opening tag and at most its label. `closeOpenDetails` would close it into a control that
+ * opens onto nothing, at the foot of the review, where a reader takes it for content somebody
+ * hid.
+ */
+function dropEmptyDetails(body: string): string {
+    return body.replace(/\n?<details(?: open)?>(?:\n<summary>[^\n]*<\/summary>)?\s*$/, "");
 }
 
 /** Everything about this posting that is not the findings themselves. */
@@ -378,6 +452,15 @@ export interface Posting {
     /** Every comment url the pull request carries, which is what `mention` may link. */
     linkable: ReadonlySet<string>;
     /**
+     * What the comment fetch could not read, from `unreadOf`.
+     *
+     * A half-failed fetch reopens every suppression resting on the half that did not come
+     * back, which is the safe direction and looks to a reader like a review repeating
+     * findings they already answered. The job log carries it and the person the caveats are
+     * for never opens the job log.
+     */
+    unread: string[];
+    /**
      * The lenses this run dispatched, from the list build-prompts.sh wrote.
      *
      * The body's whole account of coverage is otherwise the orchestrator's own `lens_health`,
@@ -389,13 +472,21 @@ export interface Posting {
     dispatched: string[];
 }
 
-/** A body and the two views of the run it was built from, for the log line beside it. */
+/** A body and the two views of the run it was built from, for the caller that posts it. */
 export interface Composed {
     body: string;
     /** The findings the body printed in full, with whatever did not fit dropped. */
     listed: Finding[];
-    /** The lenses it flagged as needing attention. */
-    broken: LensHealth[];
+    /**
+     * Whether the body says anything about its own coverage that a reader has to see.
+     *
+     * The one thing a run with nothing new must not swallow. Zero findings and a lens that
+     * never reported is the shape of a review that did not happen, and posting nothing leaves
+     * the pull request reading as clean. Every warning is composed here, so a caller deciding
+     * for itself would answer for some of the conditions and post a clean pull request on the
+     * rest.
+     */
+    warned: boolean;
 }
 
 /**
@@ -414,16 +505,32 @@ export interface Composed {
 export function composeReview(merged: Merged, posting: Posting, parts: Partitioned): Composed {
     const health = merged.lens_health ?? [];
     const broken = brokenLenses(health);
+    const silent = silentLenses(
+        health.map((h) => h.lens),
+        posting.dispatched,
+    );
+
     const { listing, notice } = listingOf(parts.fresh, posting.to);
     const tail = tailOf(merged, parts, posting);
 
     const { body, printed } = assemble(
-        headOf(merged, parts, health, broken, posting.dispatched),
+        headOf(merged, parts, health, broken, silent, posting.unread),
         listing,
         notice === null ? tail : [notice, ...tail],
     );
 
-    return { body, listed: printed, broken };
+    // Every condition under which something below writes a `[!WARNING]`. An empty
+    // `lens_health` is one of them on its own: with no dispatch list to compare against,
+    // `silent` is empty too, and a run that accounted for none of its lenses would read as
+    // one with nothing to declare.
+    const warned =
+        health.length === 0 ||
+        broken.length > 0 ||
+        silent.length > 0 ||
+        posting.unread.length > 0 ||
+        posting.resolveDenied;
+
+    return { body, listed: printed, warned };
 }
 
 /**
@@ -435,15 +542,12 @@ function headOf(
     parts: Partitioned,
     health: LensHealth[],
     broken: LensHealth[],
-    dispatched: string[],
+    silent: string[],
+    unread: string[],
 ): string[] {
     const { fresh, suppressed, declined } = parts;
 
     const limited = health.filter((h) => caveatOf(h));
-    const silent = silentLenses(
-        health.map((h) => h.lens),
-        dispatched,
-    );
 
     const counts = [`**${plural(fresh.length, "new finding")}**`];
     if (suppressed.length > 0) counts.push(`${suppressed.length} raised in an earlier review`);
@@ -457,6 +561,16 @@ function headOf(
     // run into each other. Past one, they are a list.
     const [onlyCount] = counts;
     head.push(counts.length === 1 && onlyCount ? onlyCount : counts.map((c) => `- ${c}`).join("\n"));
+
+    // Above the lens block, because it is about the counts directly above it rather than
+    // about coverage of the diff: a finding this review repeats is one whose answer went
+    // unread, and without this the reader has only the repetition to go on.
+    if (unread.length > 0) {
+        head.push(
+            `> [!WARNING]\n> Part of the discussion on this pull request could not be read, so anything answered` +
+                ` there is raised again: ${escapeInline(flatten(unread.join(" ")))}`,
+        );
+    }
 
     if (health.length === 0) {
         // Everything a reader has for how much of this review to trust hangs off
@@ -528,6 +642,33 @@ function headOf(
 }
 
 /**
+ * How many lines one of the tail's three lists prints before it says what it left out.
+ *
+ * `assemble` charges the whole tail against the budget before it measures a single finding
+ * bullet, on the stated premise that everything but the listing is short. These three were
+ * the exception: one line per suppressed finding, per declined finding and per resolved
+ * thread, and a long-lived pull request accumulates all three. Unbounded they push the budget
+ * negative before the first bullet, so the findings section renders as a heading over nothing
+ * but its own omission line, and `fit` then cuts from the end, which is where the caveats are.
+ *
+ * Forty of each at roughly a hundred characters a line is around 12k of a 60k body, which
+ * leaves the listing the rest. The count above each block stays the true one: it is the
+ * `<details>` heading, which is built from the whole list.
+ */
+const MAX_MENTIONS = 40;
+
+/** One of those lists, cut to `MAX_MENTIONS` with a line saying how many went. */
+function bounded(items: string[], noun: string): string {
+    if (items.length <= MAX_MENTIONS) return items.join("\n");
+
+    const missing = items.length - MAX_MENTIONS;
+
+    return [...items.slice(0, MAX_MENTIONS), `- _${plural(missing, `further ${noun}`)} left out for length._`].join(
+        "\n",
+    );
+}
+
+/**
  * Everything below the findings: what was suppressed, what was declined, what was closed,
  * and the run's own caveats.
  */
@@ -541,7 +682,10 @@ function tailOf(merged: Merged, parts: Partitioned, posting: Posting): string[] 
         tail.push(
             details(
                 `${plural(suppressed.length, "finding")} raised in an earlier review`,
-                suppressed.map((f) => mention(f, "earlier comment", linkable)).join("\n"),
+                bounded(
+                    suppressed.map((f) => mention(f, "earlier comment", linkable)),
+                    "finding",
+                ),
             ),
         );
     }
@@ -550,7 +694,10 @@ function tailOf(merged: Merged, parts: Partitioned, posting: Posting): string[] 
         tail.push(
             details(
                 `${plural(declined.length, "finding")} raised before and declined`,
-                declined.map((f) => mention(f, "thread", linkable)).join("\n"),
+                bounded(
+                    declined.map((f) => mention(f, "thread", linkable)),
+                    "finding",
+                ),
             ),
         );
     }
@@ -559,7 +706,10 @@ function tailOf(merged: Merged, parts: Partitioned, posting: Posting): string[] 
         tail.push(
             details(
                 `${plural(resolved.length, "thread")} resolved`,
-                resolved.map((r) => `- ${escapeInline(flatten(r.reason))}`).join("\n"),
+                bounded(
+                    resolved.map((r) => `- ${oneLine(r.reason, MAX_TITLE)}`),
+                    "thread",
+                ),
             ),
         );
     }
@@ -590,7 +740,7 @@ function tailOf(merged: Merged, parts: Partitioned, posting: Posting): string[] 
  */
 function listingOf(fresh: Finding[], to: Destination): { listing: Listing | null; notice: string | null } {
     const offered = listedIn(fresh, to);
-    const artifact = deferredTo(to);
+    const artifact = to.kind === "artifact" ? to.url : null;
 
     if (offered.length > 0) {
         return {
@@ -619,12 +769,25 @@ function listingOf(fresh: Finding[], to: Destination): { listing: Listing | null
     return { listing: null, notice: null };
 }
 
-/** Where to read a finding the listing had no room for. */
+/**
+ * Where to read a finding the listing had no room for.
+ *
+ * The `run` branch used to send the reader to the job log. Nothing prints a finding there:
+ * extract-findings.ts logs counts, costs and lens health, check-findings.ts logs repairs, and
+ * print-findings.ts is only ever run by local-print.sh. The findings file is written under
+ * `$RUNNER_TEMP` and torn down with the runner, so on that configuration the rest were kept
+ * nowhere, and the sentence has to say so rather than cost a reader a trip through a
+ * twenty-minute log.
+ */
 function omissionFor(to: Destination): string {
-    if (deferredTo(to)) return "Every one of them is in the findings file.";
-    if (to.kind === "run") return "This run kept no artifact, so the rest are in its log and nowhere else.";
-
-    return "This review was posted from a session, so ask whoever ran it for the rest.";
+    switch (to.kind) {
+        case "artifact":
+            return "Every one of them is in the findings file.";
+        case "run":
+            return "This run kept no artifact, so the rest were kept nowhere. Set `artifact-path` to `findings.json`.";
+        case "session":
+            return "This review was posted from a session, so ask whoever ran it for the rest.";
+    }
 }
 
 /**

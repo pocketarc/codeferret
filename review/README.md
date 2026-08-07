@@ -550,6 +550,10 @@ a failure.
 
 A review is posted even when nothing survives. Zero findings and a failed lens is the shape
 of a review that never happened, and posting nothing leaves a pull request looking clean.
+The test is the body rather than the failure: `composeReview` returns `warned` for every
+condition it writes a `[!WARNING]` under, and a run with nothing new posts whenever that is
+set. A lens missing from `lens_health` and a `lens_health` that is absent altogether both
+count, and the earlier condition of a failed lens alone was true for neither.
 
 ### The reviewed tree does not configure the session
 
@@ -682,6 +686,34 @@ every comment on it. A Claude Code session holds an editor, a shell, and whateve
 has connected over MCP. Untrusted text and that set of tools in one context is the whole of
 prompt injection, so `run.sh` spends a second process keeping them apart. The session reads
 `findings.json` back and nothing else.
+
+### The GitHub token never enters the step that runs the agent
+
+`run.sh` fetches `existing.json` and `previous.json` before the session and fetches
+`existing.json` again after it, so it needs a token that can read the pull request. It used
+to take that token out of its own environment with `unset`, which is not something `unset`
+can do. A process's environment block is written once, at `execve`, and `/proc/<pid>/environ`
+holds that block for as long as the process lives. A lens runs as the same user and has
+`Bash`.
+
+Measured in a Linux container against the two step bodies as `action.yml` shipped them: the
+agent's own environment was clean, and `tr '\0' '\n' </proc/$PPID/environ` from the agent
+returned `GITHUB_TOKEN=<value>` out of `run.sh`'s, and again out of the step shell's above it.
+
+So the value never enters that environment. A step of its own writes it to
+`$RUNNER_TEMP/codeferret.token` at mode 0600, the review step is given the path,
+and `run.sh` reads the file and deletes it before it starts anything. `token_file` in
+`lib.sh` is the one place either path is built, and `local-run.sh` does the same with the
+`gh` credential and drops the variable before it `exec`s. Over the fixed shape the same
+measurement came back empty: no ancestor's environment held the token, and no file under
+`RUNNER_TEMP` did either.
+
+What is left is worth naming. The token spends the run in `run.sh`'s shell memory, and
+reading that takes ptrace on an ancestor, which is off under Yama's default scope. The runner
+puts `ACTIONS_RUNTIME_TOKEN` into every step's environment itself, so it is in `/proc` before
+this action runs at all and nothing here can take it out. And the posting step still holds a
+token, so the routes the `run.sh` comment already names (a line appended to `GITHUB_ENV`, or
+overwriting the `bun` on `PATH`) reach it as they did.
 
 ### Which permissions a lens gets is an argument
 

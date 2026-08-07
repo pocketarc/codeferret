@@ -145,6 +145,13 @@ inputs:
             The prefix must put both binaries on PATH and start in the repository root,
             because the review reads the working tree and runs `git diff`.
 
+            It must also authenticate Claude itself. `docker compose exec` starts a process
+            with the container's environment and not the step's, so
+            `claude-code-oauth-token` is not set inside it: put the credentials in the image
+            or the compose file. Everything else the session needs arrives as an argument,
+            which the prefix passes through. Without the credentials the run fails at the
+            orchestrator, which is after the whole tool stage.
+
             It must also mount three paths at the same absolute location they have on the
             runner. The checkout. `$GITHUB_ACTION_PATH`, which holds every script the
             prefix runs. And `$RUNNER_TEMP/codeferret`, which holds the run's plugin, the
@@ -296,17 +303,40 @@ runs:
                       echo "artifact-path must stay inside the build directory: $ARTIFACT_PATH" >&2
                       exit 1
                       ;;
+                  # A `.` segment past the front. `$build` is prepended below, so every
+                  # segment of what upload-artifact receives is past the front, and it
+                  # refuses the pattern. A leading one is stripped instead, just below.
+                  */./* | */.)
+                      echo "artifact-path must name no '.' directory: $ARTIFACT_PATH" >&2
+                      exit 1
+                      ;;
                   *"$newline"*)
                       # upload-artifact reads `path` as a newline-separated list, so a second
                       # line is another path uploaded, and nothing in the run would say so.
                       echo "artifact-path must be a single path" >&2
                       exit 1
                       ;;
+              esac
+
+              # `./x` and `x` name the same file, so this has to answer the same for both.
+              # Both branches below matched `./findings.json` before this: it was read as
+              # keeping the findings, and the path it built carried a `.` segment
+              # upload-artifact refuses, so the review linked an artifact nothing had
+              # uploaded and left every finding below high out of the body. Stripped here
+              # rather than listed again in each branch: listing it twice is how the two came
+              # to disagree.
+              #
+              # `?*` so a bare `./` is left to the branch that reads it as the whole directory.
+              case "$ARTIFACT_PATH" in
+                  ./?*) ARTIFACT_PATH=${ARTIFACT_PATH#./} ;;
+              esac
+
+              case "$ARTIFACT_PATH" in
                   . | ./)
                       path="$build"
                       keeps_findings=true
                       ;;
-                  findings.json | ./findings.json)
+                  findings.json)
                       path="$build/$ARTIFACT_PATH"
                       keeps_findings=true
                       ;;
@@ -433,6 +463,29 @@ runs:
               emit_output pr "${PR_NUMBER:-$DEFAULT_PR}"
               emit_output head "${HEAD_SHA:-$DEFAULT_HEAD}"
 
+        # A step of its own, and it must stay one. A value in a step's `env:` is in the
+        # environment every process that step starts was execve'd with, and
+        # /proc/<pid>/environ holds that block for the life of the process, whatever the
+        # shell unsets afterwards. A lens runs as the same user with Bash, so `github-token`
+        # in the environment of the step that execs the agent is a token a lens can read.
+        # The step below is given the path instead, and run.sh reads the file and deletes it
+        # before it starts anything.
+        - name: Leave the token the review's fetches need
+          if: steps.target.outputs.pr != ''
+          shell: bash
+          env:
+              GITHUB_TOKEN: ${{ inputs.github-token }}
+          run: |
+              # shellcheck source=review/lib.sh
+              . "$GITHUB_ACTION_PATH/review/lib.sh"
+
+              file=$(token_file "$(runner_run_dir)")
+
+              # 0600 keeps another account on the runner out. What keeps a lens out is the
+              # file being gone before the review session starts.
+              rm -f "$file"
+              (umask 077 && printf '%s' "$GITHUB_TOKEN" >"$file")
+
         - name: Run the review
           id: review
           shell: bash
@@ -441,8 +494,10 @@ runs:
           # the checkout: run.sh takes it as an argument.
           working-directory: ${{ runner.temp }}
           env:
+              # No GITHUB_TOKEN. The step above leaves it in a file for run.sh, because
+              # this is the step that execs the agent and an environment cannot be emptied
+              # once a process has been started with it.
               CLAUDE_CODE_OAUTH_TOKEN: ${{ inputs.claude-code-oauth-token }}
-              GITHUB_TOKEN: ${{ inputs.github-token }}
               GITHUB_REPOSITORY: ${{ github.repository }}
               PREFIX: ${{ inputs.command-prefix }}
               MODEL: ${{ inputs.model }}
@@ -461,6 +516,11 @@ runs:
 
               run_dirs "$(runner_run_dir)"
               out="$BUILD_DIR"
+
+              # A path and not a credential, so it may sit in this step's environment. The
+              # step above wrote the file and run.sh deletes it.
+              GITHUB_TOKEN_FILE=$(token_file "$(runner_run_dir)")
+              export GITHUB_TOKEN_FILE
 
               status=0
               bash "$GITHUB_ACTION_PATH/review/run.sh" \

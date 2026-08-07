@@ -81,6 +81,21 @@ if [ -n "$PR" ]; then
     OWN_LOGIN=$(gh api user --jq .login 2>/dev/null || true)
     export OWN_LOGIN
     gh_credentials
+
+    # run.sh must not be started with the token in its environment. /proc/<pid>/environ
+    # holds what a process was execve'd with for as long as it lives, and a lens runs as
+    # this user with Bash, so it can read its ancestors'. Here that is somebody's own `gh`
+    # credential rather than a disposable runner's. So the value goes into a file run.sh
+    # reads and deletes, and the variable is dropped before the exec below builds the
+    # environment run.sh starts with.
+    GITHUB_TOKEN_FILE=$(token_file "$RUN_DIR")
+    export GITHUB_TOKEN_FILE
+
+    mkdir -p "$(dirname "$GITHUB_TOKEN_FILE")"
+    rm -f "$GITHUB_TOKEN_FILE"
+    (umask 077 && printf '%s' "$GITHUB_TOKEN" >"$GITHUB_TOKEN_FILE")
+
+    unset -v GITHUB_TOKEN
 fi
 
 exec bash "$PLUGIN/review/run.sh" "$BASE" "$PLUGIN" "$RUN_DIR" "$TOPLEVEL"

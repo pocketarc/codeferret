@@ -18,7 +18,7 @@
 import { dirname } from "node:path";
 import { brokenLenses, lensLabel, partition, readMerged, silentLenses, vetAgainstExisting } from "./findings.ts";
 import type { Finding } from "./findings.ts";
-import { caveatOf, plural, where } from "./review-body.ts";
+import { caveatOf, plural, reopenedReasons, where } from "./review-body.ts";
 import { readDispatched } from "./run-files.ts";
 
 const [findingsPath] = process.argv.slice(2);
@@ -35,6 +35,11 @@ const merged = await readMerged(findingsFile);
 // reports as settled a finding a posted review would raise.
 const vetted = await vetAgainstExisting(merged.findings, dirname(findingsFile));
 const { fresh, suppressed, declined } = partition(vetted.findings);
+
+// The same sentences the posted path writes. Without them a session reopened a suppression
+// and printed nothing about it, so whoever ran it read a finding they had already answered
+// as one nobody had.
+for (const said of reopenedReasons(vetted)) console.error(said);
 
 /** By file, then by line within it, which is the order a reader opens them in. */
 function byPosition(a: Finding, b: Finding): number {

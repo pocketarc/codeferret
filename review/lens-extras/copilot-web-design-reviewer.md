@@ -8,7 +8,10 @@ Its workflow does not.
 - Skip Step 2's visual inspection, Step 4's re-verification and the viewport sweep. Apply
   the Step 2.2 checklists to the changed markup and styles by reading them: spacing scale,
   type scale, whether a focus state is declared at all, and the responsive rules the CSS
-  actually contains.
+  actually contains. Anything else readable from the source is in scope whether or not it is
+  named here: alternative text, a declared fixed width on a fluid container, a block with no
+  `overflow-wrap` or `text-overflow` around text that cannot wrap, and a font or a colour
+  that matches no other in the change.
 - Report a contrast ratio only where the diff declares both colours, and a target size only
   where one rule fixes the box and its padding. A ratio is a property of a colour against
   whatever paints behind it after cascade, inheritance, opacity and any theme layer, so a

@@ -25,7 +25,7 @@
 import { dirname, join } from "node:path";
 import { applyRules, readSchema, selfCheck } from "./finding-rules.ts";
 import { reason, record } from "./json.ts";
-import { dispatchedFrom, LENS_LIST_FILE, RUN_FILES } from "./run-files.ts";
+import { readDispatched, RUN_FILES } from "./run-files.ts";
 
 const args = process.argv.slice(2);
 const wantsSelfCheck = args.includes("--self-check");
@@ -107,21 +107,10 @@ if (!Array.isArray(merged.findings)) {
 
 const runDir = dirname(path);
 
-/**
- * The lenses this run dispatched, from the list build-prompts.sh wrote beside the findings.
- *
- * Read out of the run directory, because it is already there and a second argument is a
- * second thing to keep in step. Absent for a by-hand check of an old file.
- */
-async function dispatched(): Promise<string[]> {
-    const file = Bun.file(join(runDir, LENS_LIST_FILE));
-
-    if (!(await file.exists())) return [];
-
-    return dispatchedFrom(await file.text());
-}
-
-const checked = applyRules(schema, merged, await dispatched());
+// The lenses this run dispatched, read out of the run directory because it is already there
+// and a second argument is a second thing to keep in step. `readDispatched` has what an empty
+// answer means.
+const checked = applyRules(schema, merged, await readDispatched(runDir));
 
 for (const r of checked.repairs) console.warn(`FIXED ${r}`);
 for (const c of checked.coverage) console.warn(`WARN ${c}`);
