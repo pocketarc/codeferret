@@ -205,6 +205,14 @@ describe("vetSuppression: naming a file by its basename", () => {
         expect(vetSuppression([declined("cmd/id")], said("the id is meant to be like that")).unrelated).toBe(1);
         expect(vetSuppression([declined("cmd/id")], said("cmd/id is meant to be like that")).unrelated).toBe(0);
     });
+
+    test("a root-level file too short to be more than prose settles nothing", () => {
+        expect(vetSuppression([declined("id")], said("the id column is fine")).unrelated).toBe(1);
+    });
+
+    test("a whole path inside a longer one does not settle it either", () => {
+        expect(vetSuppression([declined("src/a.ts")], said("see apps/web/src/a.ts.bak")).unrelated).toBe(1);
+    });
 });
 
 describe("vetSuppression: whether the comment is about the finding", () => {

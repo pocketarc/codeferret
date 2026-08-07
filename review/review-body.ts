@@ -8,7 +8,7 @@
  * `markdown.ts`.
  */
 
-import { brokenLenses, isListed, LISTED } from "./findings.ts";
+import { brokenLenses, isListed, lensLabel, LISTED, silentLenses } from "./findings.ts";
 import type { Finding, LensHealth, Merged, Partitioned } from "./findings.ts";
 import {
     clamp,
@@ -135,9 +135,17 @@ export function listedIn(fresh: Finding[], to: Destination): Finding[] {
 export function bullet(f: Finding): string {
     const body = escapeBlocks(closeOpenFence(clamp(f.body, MAX_FINDING_BODY)).split("\n")).join("\n  ");
 
+    // Flattened for the reason `title` is: the field is asked for as one line and checked
+    // only for being a string, and a newline in it ends the list item, putting whatever
+    // follows at column zero where a `#` opens a heading in the middle of the review.
+    // Checked for being a string as well, because the rule that keeps a finding with a bad
+    // category tolerates whatever the model sent: a number here reaches `escapeInline`,
+    // comes back empty, and leaves a bare `__` on a line of its own.
+    //
     // check-findings.ts keeps a finding whose category is missing rather than dropping it,
     // so this line is omitted. Rendering it anyway puts the word "undefined" under the body.
-    const category = f.category ? `\n\n  _${escapeInline(f.category)}_` : "";
+    const label = typeof f.category === "string" ? escapeInline(flatten(f.category)) : "";
+    const category = label === "" ? "" : `\n\n  _${label}_`;
 
     return `- ${code(where(f))}: **${title(f)}**\n\n  ${body}${category}`;
 }
@@ -222,12 +230,18 @@ function lensDetail(detail: string): string {
  * naming a capability the session does not have gets a sentence saying so. Written down
  * because this map and that file are edited apart, and a lens left out of the map is the one
  * whose gap nothing reports.
+ *
+ * The sentence has to keep saying what that file rules out, and the two have drifted before:
+ * this one said motion was unevaluated while the brief puts the source half of 2.2.2 and
+ * 2.3.3 in scope, so a review that carried a lens's finding about motion also said motion was
+ * not evaluated. `validate-repo.ts` checks that every key here has a brief and nothing more;
+ * the words are a reading.
  */
 export const STANDING_DETAIL: ReadonlyMap<string, string> = new Map([
     [
         "anthropic-accessibility-review",
         "No page was rendered, so contrast, focus order, target size, reflow, text spacing," +
-            " timing and motion were not evaluated.",
+            " timing limits and what an assistive technology announces were not evaluated.",
     ],
     ["copilot-web-design-reviewer", "No browser was available, so nothing was judged from a rendered page."],
     [
@@ -254,6 +268,20 @@ export function caveatOf(h: LensHealth): string | undefined {
     return both.length > 0 ? both.join(" ") : undefined;
 }
 
+/** The joined body, and which findings actually reached it. */
+export interface Assembled {
+    body: string;
+    /**
+     * The findings whose bullets went in.
+     *
+     * The set offered to the listing is not the set printed: a finding too long for what is
+     * left is skipped, and nothing outside `assemble` can tell which ones went. `post-review.ts`
+     * logs this count as what the body carried, and a log line that contradicts the body it
+     * describes is worse than no log line.
+     */
+    printed: Finding[];
+}
+
 /** A heading, a reason, and findings listed under it. The one section that can run long. */
 export interface Listing {
     heading: string;
@@ -277,10 +305,11 @@ export interface Listing {
  * stopping at the first one that does not fit would let a verbose critical finding at the
  * top empty the whole section.
  */
-export function assemble(head: string[], listing: Listing | null, tail: string[]): string {
+export function assemble(head: string[], listing: Listing | null, tail: string[]): Assembled {
     let budget = MAX_BODY - [...head, ...tail].reduce((total, s) => total + s.length + 2, 0);
 
     const rendered = [...head];
+    const printed: Finding[] = [];
 
     if (listing) {
         const heading = listing.lead ? `### ${listing.heading}\n\n${listing.lead}` : `### ${listing.heading}`;
@@ -293,6 +322,7 @@ export function assemble(head: string[], listing: Listing | null, tail: string[]
             const text = bullet(finding);
             if (text.length + 2 > budget) continue;
             kept.push(text);
+            printed.push(finding);
             budget -= text.length + 2;
         }
 
@@ -309,7 +339,7 @@ export function assemble(head: string[], listing: Listing | null, tail: string[]
 
     const body = rendered.join("\n\n");
 
-    return body.length > MAX_BODY ? fit(body) : body;
+    return { body: body.length > MAX_BODY ? fit(body) : body, printed };
 }
 
 /**
@@ -321,6 +351,13 @@ export function assemble(head: string[], listing: Listing | null, tail: string[]
  * reader would get a review that appears to stop, with the notice saying it was cut sealed
  * inside a collapsed disclosure.
  *
+ * It never lands inside a finding, and that is what makes `closeOpenFence` sound here.
+ * `assemble` reaches this only with the budget already negative, which is to say with no
+ * bullet rendered. A bullet's body is indented two columns into the list item, so a fence at
+ * its own indent 2 sits at absolute 4: still a fence to a renderer measuring from the item's
+ * content column, and an indented code block to the absolute bound `fenceMap` applies.
+ * Cutting inside one of those would leave a block neither closer can see.
+ *
  * The reserve is for the closers, and overrunning it costs nothing: `MAX_BODY` already sits
  * under GitHub's limit.
  */
@@ -328,11 +365,6 @@ function fit(body: string): string {
     const notice = "\n\n_(this review was cut for length)_";
 
     return `${closeOpenDetails(closeOpenFence(body.slice(0, MAX_BODY - notice.length - 200)))}${notice}`;
-}
-
-/** The plugin namespace is an implementation detail, so it is dropped for display. */
-export function lensLabel(lens: string): string {
-    return lens.replace(/^[^:]+:/, "");
 }
 
 /** Everything about this posting that is not the findings themselves. */
@@ -345,12 +377,22 @@ export interface Posting {
     to: Destination;
     /** Every comment url the pull request carries, which is what `mention` may link. */
     linkable: ReadonlySet<string>;
+    /**
+     * The lenses this run dispatched, from the list build-prompts.sh wrote.
+     *
+     * The body's whole account of coverage is otherwise the orchestrator's own `lens_health`,
+     * and an entry it left out takes three things with it at once: the lens goes from the
+     * list, the heading calls a smaller set "all reporting", and its `STANDING_DETAIL`
+     * sentence never reaches the body, so a pull request full of interface changes comes back
+     * as though the interface had been reviewed.
+     */
+    dispatched: string[];
 }
 
 /** A body and the two views of the run it was built from, for the log line beside it. */
 export interface Composed {
     body: string;
-    /** The findings the body printed in full. */
+    /** The findings the body printed in full, with whatever did not fit dropped. */
     listed: Finding[];
     /** The lenses it flagged as needing attention. */
     broken: LensHealth[];
@@ -370,12 +412,38 @@ export interface Composed {
  * run with no findings worth posting anyway), and a second derivation is a second answer.
  */
 export function composeReview(merged: Merged, posting: Posting, parts: Partitioned): Composed {
-    const { fresh, suppressed, declined } = parts;
-    const { resolved, resolveDenied, leftOpen, to, linkable } = posting;
-
     const health = merged.lens_health ?? [];
     const broken = brokenLenses(health);
+    const { listing, notice } = listingOf(parts.fresh, posting.to);
+    const tail = tailOf(merged, parts, posting);
+
+    const { body, printed } = assemble(
+        headOf(merged, parts, health, broken, posting.dispatched),
+        listing,
+        notice === null ? tail : [notice, ...tail],
+    );
+
+    return { body, listed: printed, broken };
+}
+
+/**
+ * Everything above the findings: the summary, the counts, and what the run says about its
+ * own coverage.
+ */
+function headOf(
+    merged: Merged,
+    parts: Partitioned,
+    health: LensHealth[],
+    broken: LensHealth[],
+    dispatched: string[],
+): string[] {
+    const { fresh, suppressed, declined } = parts;
+
     const limited = health.filter((h) => caveatOf(h));
+    const silent = silentLenses(
+        health.map((h) => h.lens),
+        dispatched,
+    );
 
     const counts = [`**${plural(fresh.length, "new finding")}**`];
     if (suppressed.length > 0) counts.push(`${suppressed.length} raised in an earlier review`);
@@ -408,7 +476,10 @@ export function composeReview(merged: Merged, posting: Posting, parts: Partition
         // for the reason the counts above are a list.
         const items = health
             .map((h) => {
-                const name = escapeInline(lensLabel(h.lens));
+                // Flattened for the reason `lensDetail` beside it is: a newline in a name
+                // the model wrote ends this item, and the rest of the lens list then lands
+                // outside the block it belongs to.
+                const name = escapeInline(flatten(lensLabel(h.lens)));
                 const flag = h.ok ? "" : ", **needs attention**";
                 const caveat = caveatOf(h);
                 const detail = caveat ? lensDetail(caveat) : "";
@@ -423,6 +494,16 @@ export function composeReview(merged: Merged, posting: Posting, parts: Partition
         // without opening it: a reader takes a review of an interface change for an
         // accessibility pass unless something names the criteria nothing evaluated. The
         // alert syntax is what the job summary uses for the same class of warning.
+        //
+        // A lens missing from `lens_health` comes first, because the two counts under it are
+        // both drawn from that same list and so fall short by exactly the lenses named here.
+        if (silent.length > 0) {
+            head.push(
+                `> [!WARNING]\n> ${escapeInline(silent.join(", "))} ran and reported nothing about` +
+                    " themselves, so the coverage below leaves each one out.",
+            );
+        }
+
         if (broken.length > 0) {
             head.push(
                 `> [!WARNING]\n> ${broken.length} of ${lenses(health.length)} did not report normally,` +
@@ -442,6 +523,17 @@ export function composeReview(merged: Merged, posting: Posting, parts: Partition
 
         head.push(details(heading, items, broken.length > 0));
     }
+
+    return head;
+}
+
+/**
+ * Everything below the findings: what was suppressed, what was declined, what was closed,
+ * and the run's own caveats.
+ */
+function tailOf(merged: Merged, parts: Partitioned, posting: Posting): string[] {
+    const { suppressed, declined } = parts;
+    const { resolved, resolveDenied, leftOpen, linkable } = posting;
 
     const tail: string[] = [];
 
@@ -482,32 +574,49 @@ export function composeReview(merged: Merged, posting: Posting, parts: Partition
 
     if (merged.notes) tail.push(`### Caveats\n\n${prose(merged.notes, MAX_PROSE)}`);
 
-    // `assemble` bounds the listing whichever branch this takes, and says how many findings
-    // did not fit.
-    const listed = listedIn(fresh, to);
+    return tail;
+}
+
+/**
+ * The findings section, or the line that stands in for it.
+ *
+ * `notice` is what a run with findings but nothing worth listing says instead. It goes at
+ * the top of the tail rather than under a heading of its own, because a heading is a promise
+ * of something under it and the count is already above.
+ *
+ * `assemble` bounds the listing whichever branch this takes, and says how many findings did
+ * not fit. `offered` is what the section leads with, so it stays the count the lead sentence
+ * quotes; what came back out of `assemble` is what `Composed.listed` reports.
+ */
+function listingOf(fresh: Finding[], to: Destination): { listing: Listing | null; notice: string | null } {
+    const offered = listedIn(fresh, to);
     const artifact = deferredTo(to);
 
-    let listing: Listing | null = null;
-
-    if (listed.length > 0) {
-        listing = {
-            heading: artifact ? listingHeading(listed) : "Findings",
-            lead: artifact
-                ? `${listed.length} of ${plural(fresh.length, "finding")}.` +
-                  ` \`findings.json\` in the \`codeferret-run\` artifact of [this run](${artifact}) holds every one.`
-                : "",
-            omission: omissionFor(to),
-            items: listed,
+    if (offered.length > 0) {
+        return {
+            listing: {
+                heading: artifact ? listingHeading(offered) : "Findings",
+                lead: artifact
+                    ? `${offered.length} of ${plural(fresh.length, "finding")}.` +
+                      ` \`findings.json\` in the \`codeferret-run\` artifact of [this run](${artifact}) holds every one.`
+                    : "",
+                omission: omissionFor(to),
+                items: offered,
+            },
+            notice: null,
         };
-    } else if (fresh.length > 0 && artifact) {
-        // A heading is a promise of something under it, and the count is already above.
-        tail.unshift(
-            `No finding is critical or high.` +
-                ` \`findings.json\` in the \`codeferret-run\` artifact of [this run](${artifact}) holds every one.`,
-        );
     }
 
-    return { body: assemble(head, listing, tail), listed, broken };
+    if (fresh.length > 0 && artifact) {
+        return {
+            listing: null,
+            notice:
+                `No finding is critical or high.` +
+                ` \`findings.json\` in the \`codeferret-run\` artifact of [this run](${artifact}) holds every one.`,
+        };
+    }
+
+    return { listing: null, notice: null };
 }
 
 /** Where to read a finding the listing had no room for. */

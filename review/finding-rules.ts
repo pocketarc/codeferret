@@ -19,8 +19,8 @@
  */
 
 import { join } from "node:path";
+import { silentLenses } from "./findings.ts";
 import { record } from "./json.ts";
-import { lensLabel } from "./review-body.ts";
 
 export interface JsonSchema {
     type?: string;
@@ -81,16 +81,23 @@ interface Enums {
  *
  * `tolerated` is the wide case. A dropped finding is in neither the comment, nor the
  * findings file, nor the next run's `previous.json`, so nothing records that it existed.
- * Only the fields that leave nothing to render are fatal: `file`, `title` and `body`.
+ * Only the fields that leave nothing to render are fatal, and `FATAL_FIELDS` names them.
  * `found_by` and `in_diff` are never read; a finding with no usable `line` is listed under
  * its file alone; a `severity` nothing recognises is listed in full rather than left out;
- * and a missing `category` is a cosmetic `_undefined_`. A key this table does not name is
- * ignored by everything downstream, which reads the fields it needs by name.
+ * and a missing `category` costs the italic line under the body and nothing else. A key this
+ * table does not name is ignored by everything downstream, which reads the fields it needs by
+ * name.
+ *
+ * Every field of a finding needs an entry here or a place in `FATAL_FIELDS`, and `selfCheck`
+ * fails on one with neither. Without that, a field added to the schema is fatal by default:
+ * `existing_comment_url` arrived that way, and an empty one (which is what a model writes
+ * when told to leave the field out) dropped the whole finding.
  */
 const POLICY: Record<string, Policy> = {
     summary: { repair: proseOrNothing },
     notes: { repair: proseOrNothing },
     "findings[].found_by": { tolerated: true },
+    "findings[].found_by[]": { tolerated: true },
     "findings[].in_diff": { tolerated: true },
     "findings[].line": { check: positive, tolerated: true },
     "findings[].end_line": { check: positive, tolerated: true },
@@ -98,6 +105,10 @@ const POLICY: Record<string, Policy> = {
     "findings[].status": { repair: knownStatus, tolerated: true },
     "findings[].severity": { repair: knownSeverity, tolerated: true },
     "findings[].category": { tolerated: true },
+    // `mention` links this only when the pull request carries the url, so a bad one costs
+    // nothing but the link. Removed rather than tolerated, because the empty string a model
+    // writes for "leave this out" would otherwise be reported on every finding in the run.
+    "findings[].existing_comment_url": { repair: urlOrNothing },
     "resolve[]": { renderable: (entry) => typeof entry.thread_id === "string" && typeof entry.reason === "string" },
     // Every entry that is an object at all is kept. It carries `detail`, which is the one
     // place a lens's account of what it could not check is written down, and the body
@@ -111,6 +122,14 @@ const POLICY: Record<string, Policy> = {
     // Optional, so one that is not prose is dropped and the lens keeps its line.
     "lens_health[].detail": { repair: proseOrNothing },
 };
+
+/**
+ * The fields of a finding with no tolerated form: without one there is no claim on the page.
+ *
+ * Written down so `selfCheck` can tell a field deliberately left fatal from one nobody has
+ * decided about yet.
+ */
+const FATAL_FIELDS: ReadonlySet<string> = new Set(["findings[].file", "findings[].title", "findings[].body"]);
 
 const UNKNOWN_KEY = /^has an unknown key /;
 
@@ -130,6 +149,20 @@ function proseOrNothing(value: unknown): Repaired | null {
     if (value === undefined || typeof value === "string") return null;
 
     return { note: `${JSON.stringify(value)} is not prose, so it was removed` };
+}
+
+/**
+ * A url the body may link, or the field goes.
+ *
+ * The model is told, in `orchestrator.md`, to leave this out where a finding was matched
+ * against the previous run rather than against a thread, and what a model writes for that is
+ * `""`. Read as a value it is an empty string where the schema requires a url, which took the
+ * whole finding down with it before this rule existed.
+ */
+function urlOrNothing(value: unknown): Repaired | null {
+    if (value === undefined || (typeof value === "string" && value.trim() !== "")) return null;
+
+    return { note: `${JSON.stringify(value)} is no url, so it was removed` };
 }
 
 /**
@@ -354,6 +387,8 @@ export interface SelfCheck {
     rules: number;
     /** Rule keys naming a field the schema has not got, which are rules that stopped running. */
     stray: string[];
+    /** Fields of a finding with neither a `POLICY` entry nor a place in `FATAL_FIELDS`. */
+    unruled: string[];
     /** Enums read out of the schema by name that came back empty, so their repair is off. */
     enumsLost: string[];
 }
@@ -365,6 +400,11 @@ export interface SelfCheck {
  * findings file that rule would have caught is still reported `shape valid`. A rename in the
  * schema, or a typo in the table, is a problem with this repository and is answerable
  * without running a review, which is why `--self-check` is what fails on it.
+ *
+ * The walk runs both ways. A field of a finding with no entry either way is fatal by
+ * default, because the walk reports it and nothing tolerates the report, and that is a
+ * decision nobody took: it drops the whole finding for a fault in a field the body may not
+ * even render.
  *
  * The two enums are read out of the schema by name, and a rename empties them without
  * emptying `POLICY`, so the key check alone cannot catch it. An empty set means the status
@@ -381,6 +421,9 @@ export function selfCheck(schema: JsonSchema): SelfCheck {
     return {
         rules: rules.length,
         stray: rules.filter((key) => !known.has(key)),
+        unruled: [...known].filter(
+            (path) => path.startsWith("findings[].") && !POLICY[path] && !FATAL_FIELDS.has(path),
+        ),
         enumsLost: [
             ...(enums.statuses.size === 0 ? ["status"] : []),
             ...(enums.severities.size === 0 ? ["severity"] : []),
@@ -420,25 +463,16 @@ export interface Checked {
  * same for one lens. Neither is fatal, because the findings are still worth posting; both
  * are loud, because nothing downstream can tell an absent entry from a lens that did not run.
  *
- * Both sides go through `lensLabel`. `dispatched` is namespaced, because that is how
- * build-prompts.sh writes the lens list, and what the orchestrator puts in `lens_health` is
- * a plain string as far as the schema is concerned. Compared as written, an orchestrator that
- * dropped the namespace would put every lens that ran into this list at once, which is how a
- * coverage alarm becomes one people skip.
+ * `silentLenses` is the comparison, shared with the review body so that the job log and the
+ * posted review cannot name different lenses.
  */
 function coverageOf(health: unknown[], dispatched: string[]): string[] {
     if (health.length === 0) {
         return ["lens_health: no entry, so the review says nothing about which lenses ran or what they missed"];
     }
 
-    const named = new Set(
-        health
-            .map((entry) => record(entry)?.lens)
-            .filter((lens) => typeof lens === "string")
-            .map(lensLabel),
-    );
-
-    const silent = dispatched.map(lensLabel).filter((lens) => !named.has(lens));
+    const reported = health.map((entry) => record(entry)?.lens).filter((lens) => typeof lens === "string");
+    const silent = silentLenses(reported, dispatched);
 
     if (silent.length === 0) return [];
 

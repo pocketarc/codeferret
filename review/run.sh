@@ -227,17 +227,26 @@ set +f
 status=0
 
 # Copied before the session and put back after it, for the reason the block below the
-# orchestrator gives. Each decides something once the review has ended: reviewed-commit.ts
-# reads `diff-args` for the commit local-post.sh refuses to post against, check-findings.ts
-# reads `lens-list.txt` for the one check that notices a lens that ran and reported nothing
-# about itself, and `vetSuppression` reads `previous.json` for whether the last review raised
+# orchestrator gives. Each decides something once the review has ended: `diff.sh` and
+# `diff-args` are between them the diff every lens read, and reviewed-commit.ts takes from
+# the second the commit local-post.sh refuses to post against; check-findings.ts reads
+# `lens-list.txt` for the one check that catches a lens that ran and reported nothing about
+# itself; and `vetSuppression` reads `previous.json` for whether the last review raised
 # anything in the file of a finding this run says was raised before. None of them can move
 # out of the build directory (diff.sh reads its arguments from beside itself, and the prompts
 # name every path), so a copy is what there is. A lens with Bash could find this one too;
 # what it buys is that a rewritten file is reported instead of believed.
+#
+# One list, used twice. Copied without comparing, tampering with a file goes unreported;
+# compared without copying, `cmp` and then `cp` both fail against a file that is not there
+# and `set -e` kills the job after the review has been paid for.
+PINNED=(diff-args diff.sh lens-list.txt previous.json)
 PRISTINE=$(mktemp -d)
 trap 'rm -rf "$PRISTINE"' EXIT
-cp "$BUILD/diff-args" "$BUILD/lens-list.txt" "$BUILD/previous.json" "$PRISTINE/"
+
+for pinned in "${PINNED[@]}"; do
+    cp "$BUILD/$pinned" "$PRISTINE/"
+done
 
 # WebFetch and WebSearch are denied for the reason scripts/build-lens-agents.ts gives for
 # leaving them off every lens. Agent has to stay: STEP 1 of the orchestrator prompt
@@ -283,7 +292,7 @@ cp "$BUILD/diff-args" "$BUILD/lens-list.txt" "$BUILD/previous.json" "$PRISTINE/"
 rm -f "$BUILD/findings.json" "$BUILD/findings-checked" "$BUILD/existing.json"
 empty_existing "$BUILD/existing.json"
 
-for pinned in diff-args lens-list.txt previous.json; do
+for pinned in "${PINNED[@]}"; do
     if ! cmp -s "$PRISTINE/$pinned" "$BUILD/$pinned"; then
         echo "$pinned changed during the review. The lenses did not all read the same diff." >&2
     fi
@@ -295,7 +304,11 @@ if [ -n "${PR:-}" ]; then
     fetch_existing
 fi
 
-if [ -s "$BUILD/run.json" ]; then
+# `-f` and not `-s`: a session killed before it wrote a byte leaves this file empty, and that
+# is the run extract-findings.ts writes `none reported` and `unknown` for. Skip it and the run
+# files are never written at all, and the action's `findings-count` output comes back as an
+# empty string, which action.yml documents as `none reported`.
+if [ -f "$BUILD/run.json" ]; then
     extracted=0
     $PREFIX bun --config=/dev/null "$ACTION/review/extract-findings.ts" \
         "$BUILD/run.json" "$BUILD/findings.json" || extracted=$?

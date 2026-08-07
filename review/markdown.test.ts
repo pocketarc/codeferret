@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { clamp, closeOpenDetails, closeOpenFence, escapeBlocks, escapeInline, fenceMap } from "./markdown.ts";
+import { clamp, closeOpenDetails, closeOpenFence, escapeBlocks, escapeInline, fenceMap, prose } from "./markdown.ts";
 
 describe("fenceMap", () => {
     test("marks the delimiters as fenced, so a caller mapping the rest leaves them alone", () => {
@@ -161,6 +161,20 @@ describe("escapeBlocks", () => {
     test("escapes a mention in prose, which would notify an account on every push", () => {
         expect(escapeBlocks(["the @param tag"])).toEqual(["the \\@param tag"]);
     });
+
+    test("escapes a markdown image, which renders without a click", () => {
+        expect(escapeBlocks(["![alt](https://example.test/x.png)"])).toEqual(["\\![alt](https://example.test/x.png)"]);
+    });
+
+    test("leaves an ordinary exclamation mark and an ordinary link alone", () => {
+        expect(escapeBlocks(["it fails! see [the docs](https://example.test)"])).toEqual([
+            "it fails! see [the docs](https://example.test)",
+        ]);
+    });
+
+    test("leaves an image inside a code span alone, which renders as code", () => {
+        expect(escapeBlocks(["write `![alt](url)` for an image"])).toEqual(["write `![alt](url)` for an image"]);
+    });
 });
 
 describe("clamp", () => {
@@ -184,5 +198,33 @@ describe("clamp", () => {
 
     test("falls back to a word rather than cutting one in half", () => {
         expect(clamp("alpha beta gamma delta", 14)).toBe("alpha beta\n\n_(cut for length)_");
+    });
+});
+
+describe("prose", () => {
+    test("closes a fence the text left open, so the sections below it are not code", () => {
+        expect(prose("Here is the risk:\n\n```ts\nconst x = 1;", 4000)).toEndWith("const x = 1;\n```");
+    });
+
+    test("closes with the delimiter the block was opened with", () => {
+        expect(prose("~~~\nsample", 4000)).toEndWith("sample\n~~~");
+    });
+
+    test("adds no second closer on the cutting path, where clamp has already closed it", () => {
+        const cut = prose("```\ncode line one\n\nmore\n\ntail", 22);
+
+        expect(cut).toBe("```\ncode line one\n```\n\n_(cut for length)_");
+    });
+
+    test("leaves a balanced block alone", () => {
+        const text = "before\n\n```sh\nx\n```\n\nafter";
+
+        expect(prose(text, 4000)).toBe(text);
+    });
+
+    test("escapes a tag outside the fence and leaves the sample inside it alone", () => {
+        expect(prose("wrap it in a <div>\n\n```html\n<div>\n```", 4000)).toBe(
+            "wrap it in a \\<div>\n\n```html\n<div>\n```",
+        );
     });
 });

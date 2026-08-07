@@ -81,7 +81,7 @@ if [ -n "$DECLINE" ]; then
     echo "will not delete '$PLUGIN': it $DECLINE" >&2
 
     if [ -d "$PLUGIN/build" ]; then
-        echo "it looks like a run directory from before this check existed." >&2
+        echo "it has the shape of a run directory, so an earlier run probably left it." >&2
         echo "delete it yourself and run again: rm -rf '$PLUGIN'" >&2
     fi
 
@@ -93,13 +93,15 @@ rm -rf "$PLUGIN"
 # Agents and skills must share one plugin to share a namespace.
 mkdir -p "$BUILD" "$PLUGIN/.claude-plugin" "$PLUGIN/agents" "$PLUGIN/skills"
 
-# Here rather than beside run.sh's own call: the directory does not exist until the line
+# Before anything that can exit, so a run that dies halfway leaves a directory the next run
+# may clear. `prefix_reaches` below exits 1, and without the marker already down that exit
+# leaves a plugin directory every later run refuses to touch.
+: >"$MARKER"
+
+# Here rather than beside run.sh's own call: the directory does not exist until the mkdir
 # above, and the first `$PREFIX bun` below would create it inside the container and leave
 # `test -d` answering yes about a path only the container has.
 prefix_reaches "$BUILD"
-
-# Written first, so a run that dies halfway leaves a directory the next run may clear.
-: >"$MARKER"
 
 # The shipped manifest points `skills` at the repository's own layout, which is not this
 # one. Only the name matters here.
@@ -159,9 +161,14 @@ done <<<"${EXCLUDE_PATHS:-}"
 
 for lens in "${LENSES[@]}"; do
     if [ -f "$ACTION/lenses/skills/$lens/SKILL.md" ]; then
+        # Copied, not rendered, though `--one` below would render the same file. A bundled
+        # lens's agent is its system prompt, and a checked-in one is a file somebody reviewed
+        # rather than something a CI job wrote for itself. validate-repo.ts fails on one that
+        # is missing or no longer matches its generator, so nothing reaches this branch from a
+        # tree that passed it.
         if [ ! -f "$ACTION/agents/$lens.md" ]; then
             echo "lens '$lens' is bundled but has no agent." >&2
-            echo "run: bun scripts/build-lens-agents.ts" >&2
+            echo "run: bun --config=/dev/null scripts/build-lens-agents.ts" >&2
             exit 1
         fi
 

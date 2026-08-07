@@ -40,8 +40,9 @@ it again, and nobody ever sees it. Bias every close call towards keeping.
 ## Write the comment the tool could not
 
 For each finding you keep, say what is actually wrong in this code and what to do about
-it. `sqli.audit.tainted-sql-string` is not a review comment. What reaches the author
-should name the input, the path it takes to the query, and the fix.
+it. `python.lang.security.audit.formatted-sql-query.formatted-sql-query` is not a review
+comment. What reaches the author should name the input, the path it takes to the query,
+and the fix.
 
 Name the tool and the rule in `category`, as `<tool>:<rule>`. That is the evidence for
 your judgement, and it lets somebody check it.

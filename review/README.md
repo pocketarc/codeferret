@@ -15,16 +15,18 @@ orchestrator session  ──dispatch──>  one subagent per lens (parallel)
 ```
 
 A run is one orchestrator and N lens subagents. The orchestrator merges the findings.
-`post-review.ts` renders them into one review body and posts it.
+`post-review.ts` renders them into one review body and posts it, and the run uploads the
+findings file it wrote as an artifact, which is what the next run reads to know what has
+already been said.
 
-Every lens reads source and nothing else. Two of the bundled lenses were written for more
-than that: `anthropic-accessibility-review` and `copilot-web-design-reviewer` assume a
-session holding a browser, and a review has none.
-`review/lens-extras/anthropic-accessibility-review.md` sets out, criterion by criterion,
-what that puts out of reach, and it is also the file the lens itself reads. `lens_health` in
-the posted review holds what each lens reported it could not check, and `review-body.ts`
-adds a standing sentence for those two lenses, so a review says what it did not reach even
-when a lens forgets to.
+Every lens reads source and nothing else. Some of the bundled lenses were written for more
+than that, and assume a browser or a running application the session does not have. Each one
+has a file under `review/lens-extras/` setting out what the gap puts out of reach, and that
+file is also what the lens itself reads.
+`review/lens-extras/anthropic-accessibility-review.md` does it criterion by criterion.
+`lens_health` in the posted review holds what each lens reported it could not check, and
+`review-body.ts` adds a standing sentence for each lens in `STANDING_DETAIL`, so a review
+says what it did not reach even when a lens forgets to.
 
 There are two ways in, and both call `run.sh`, which is the whole sequence: build the
 prompts, read what has already been said, run the orchestrator, check what comes back.
@@ -87,8 +89,8 @@ bundled lens, and marks a lens written here as `(first-party)`.
 
 ### What vendoring rewrites
 
-A vendored skill is not used the way its author intended, so `vendor-lens.sh` rewrites
-five frontmatter fields:
+A vendored skill is not used the way its author intended, so `vendor-lens.sh` rewrites the
+frontmatter fields below:
 
 - `name` becomes the local directory name. All bundled lenses share one plugin namespace,
   and more than one upstream ships a skill called `security-review`.
@@ -718,11 +720,13 @@ dispatch whenever it changes.
    itself permissions, so the calling workflow must declare it. Without it, the posting
    step fails with 403.
 
-   Add `contents: write` as well to let CodeFerret resolve finished threads.
-   `resolveReviewThread` requires repository write access, which `pull-requests: write`
-   does not give. Weigh it: the review agent runs with `bypassPermissions` and Bash, so a
-   token that can write contents is a token that can push. Without it everything else
-   works and nothing tries to close a thread.
+   To let CodeFerret resolve finished threads, add `contents: write` and set
+   `resolve-threads: 'true'` on the step. Both are needed: `resolveReviewThread` requires
+   repository write access, which `pull-requests: write` does not give, and without the input
+   set the run neither judges a thread finished nor asks to close one. Granting the
+   permission alone buys a token that can push and closes nothing. Weigh it: the review agent
+   runs with `bypassPermissions` and Bash, so a token that can write contents is a token that
+   can push. Without either, everything else works and nothing tries to close a thread.
 
    `actions: read` is what stops every finding being posted again on every push, and the
    template grants it. "The previous run's findings come out of its artifact" above says

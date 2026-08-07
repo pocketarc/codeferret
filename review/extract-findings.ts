@@ -72,17 +72,35 @@ const results = messages.map(record).filter((m) => m !== null && m.type === "res
 const last = results[results.length - 1];
 const dir = dirname(outPath);
 
+/** Every run file this script owns. `findingsChecked` is run.sh's and is not written here. */
+type Reported = Exclude<(typeof RUN_FILES)[keyof typeof RUN_FILES], typeof RUN_FILES.findingsChecked>;
+
+/**
+ * The numbers a run reports, written together.
+ *
+ * The set is the contract, not any one name. To every reader an absent file is
+ * indistinguishable from a zero, and `unknown` is what a killed session writes, so a file
+ * added on one path and forgotten on the other is taken for a killed session on a run that
+ * worked. Taking the whole record makes the compiler require every name on both paths.
+ */
+async function writeRunFiles(values: Record<Reported, string>): Promise<void> {
+    for (const [file, value] of Object.entries(values)) {
+        await Bun.write(join(dir, file), value);
+    }
+}
+
 if (!last) {
     console.error("no result message in the run log. The session produced no terminal output.");
 
-    // Every file is still written. To every reader an absent file is indistinguishable from
-    // a zero, and a killed session is exactly the run whose numbers somebody wants, so each
-    // is written with what is known rather than left out to read as none.
-    await Bun.write(join(dir, RUN_FILES.findingsCount), "none reported");
-    await Bun.write(join(dir, RUN_FILES.cost), "unknown");
-    await Bun.write(join(dir, RUN_FILES.outputTokens), "unknown");
-    await Bun.write(join(dir, RUN_FILES.durationMs), "unknown");
-    await Bun.write(join(dir, RUN_FILES.permissionDenials), "unknown");
+    // A killed session is exactly the run whose numbers somebody wants, so each is written
+    // with what is known rather than left out to read as none.
+    await writeRunFiles({
+        [RUN_FILES.findingsCount]: "none reported",
+        [RUN_FILES.cost]: "unknown",
+        [RUN_FILES.outputTokens]: "unknown",
+        [RUN_FILES.durationMs]: "unknown",
+        [RUN_FILES.permissionDenials]: "unknown",
+    });
 
     process.exit(1);
 }
@@ -134,15 +152,20 @@ const denials = (Array.isArray(last.permission_denials) ? last.permission_denial
     .map(record)
     .filter((d) => d !== null);
 
-await Bun.write(join(dir, RUN_FILES.cost), costUsd === null ? "unknown" : costUsd.toFixed(2));
-await Bun.write(join(dir, RUN_FILES.outputTokens), String(outputTokens));
-await Bun.write(join(dir, RUN_FILES.durationMs), String(durationMs));
-await Bun.write(join(dir, RUN_FILES.permissionDenials), String(denials.length));
-
 const structured = record(last.structured_output);
+const findings = structured && Array.isArray(structured.findings) ? structured.findings : null;
 
-if (!structured || !Array.isArray(structured.findings)) {
-    await Bun.write(join(dir, RUN_FILES.findingsCount), "none reported");
+// Before the findings are looked at, because a run that produced none is the one whose cost
+// and refusals somebody most wants to see.
+await writeRunFiles({
+    [RUN_FILES.findingsCount]: findings === null ? "none reported" : String(findings.length),
+    [RUN_FILES.cost]: costUsd === null ? "unknown" : costUsd.toFixed(2),
+    [RUN_FILES.outputTokens]: String(outputTokens),
+    [RUN_FILES.durationMs]: String(durationMs),
+    [RUN_FILES.permissionDenials]: String(denials.length),
+});
+
+if (!structured || findings === null) {
     console.error("the run produced no structured findings");
     console.error(`result subtype: ${string(last.subtype) ?? "unknown"}`);
     console.error(`it cost ${money} and was refused ${denials.length} tool call(s)`);
@@ -150,7 +173,6 @@ if (!structured || !Array.isArray(structured.findings)) {
 }
 
 await Bun.write(outPath, `${JSON.stringify(structured, null, 2)}\n`);
-await Bun.write(join(dir, RUN_FILES.findingsCount), String(structured.findings.length));
 
 // Guarded like `findings` beside it. This is iterated below, after the findings file is
 // already on disk, so a `lens_health` that is not a list would turn a complete run into a
@@ -158,7 +180,7 @@ await Bun.write(join(dir, RUN_FILES.findingsCount), String(structured.findings.l
 const health: LensHealth[] = Array.isArray(structured.lens_health) ? structured.lens_health : [];
 const broken = health.filter((h) => record(h)?.ok === false);
 
-console.log(`findings: ${structured.findings.length}`);
+console.log(`findings: ${findings.length}`);
 console.log(`lenses reported: ${health.length}`);
 console.log(`cost: ${money}`);
 console.log(`output tokens: ${outputTokens.toLocaleString("en-GB")}`);

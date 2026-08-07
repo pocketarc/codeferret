@@ -38,7 +38,9 @@ fi
 # posting, and one that passed has had whatever post-review.ts cannot render taken out.
 if [ ! -f "$BUILD/findings-checked" ]; then
     echo "$FINDINGS did not pass check-findings.ts, so it is not safe to post." >&2
-    echo "run: bun '$PLUGIN/review/check-findings.ts' '$FINDINGS'" >&2
+    # With the flag, like every other bun a run starts. Whoever reads this line is standing
+    # in the checkout under review, which is the directory bun takes a `bunfig.toml` from.
+    echo "run: bun --config=/dev/null '$PLUGIN/review/check-findings.ts' '$FINDINGS'" >&2
     exit 1
 fi
 

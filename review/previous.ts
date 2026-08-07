@@ -22,6 +22,29 @@ import { reason, record } from "./json.ts";
 export type Previous = Pick<Finding, "file" | "title" | "status" | "existing_comment_url"> &
     Partial<Pick<Finding, "line">>;
 
+/**
+ * The files the previous review raised something in.
+ *
+ * The whole of what `vetSuppression` asks of previous.json, answered once where the file is
+ * read rather than once per finding: the answer is the same for every finding in the run.
+ * The same boundary `asExisting` gives existing.json, and for the same reason: without it, a
+ * null, an array or a missing key comes back as `undefined` deep inside the vetting, and the
+ * suppression it decides is wrong with nothing saying so.
+ */
+export function filesRaisedBefore(value: unknown): ReadonlySet<string> {
+    const entries = record(value)?.findings;
+
+    if (!Array.isArray(entries)) return new Set();
+
+    return new Set(
+        entries.flatMap((entry) => {
+            const file = record(entry)?.file;
+
+            return typeof file === "string" && file !== "" ? [file] : [];
+        }),
+    );
+}
+
 export interface WorkflowRun {
     id?: number;
     head_branch?: string;
@@ -174,10 +197,7 @@ export async function firstPosted(
     let opened = 0;
 
     for (const artifact of list) {
-        if (opened >= limit) {
-            say(`previous findings: gave up after opening ${opened} artifacts, none of them posted`);
-            return null;
-        }
+        if (opened >= limit) break;
 
         opened += 1;
 
@@ -193,6 +213,15 @@ export async function firstPosted(
         } catch (error) {
             say(`previous findings: artifact ${artifact.id}: ${reason(error)}`);
         }
+    }
+
+    // After the loop, not on the iteration that would have exceeded the limit: with exactly
+    // `limit` candidates and none posted, the loop runs out, and the caller then
+    // reports "no posted artifact for this branch", which means there were none. Stopping at
+    // the search's own limit is a different fact, and the one that explains a review
+    // repeating itself.
+    if (opened >= limit) {
+        say(`previous findings: gave up after opening ${opened} artifacts, none of them posted`);
     }
 
     return null;

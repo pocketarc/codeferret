@@ -182,8 +182,12 @@ function segments(text: string): Segment[] {
  * Text ending in one is worse, since `bullet` wraps a title in `**`, and the trailing
  * backslash then escapes the first closing asterisk and the emphasis runs on into the body.
  * Windows paths, regexes and LaTeX fragments all reach a title.
+ *
+ * `also` is a second pass over the same prose runs, for a rule a set of characters cannot
+ * state. It runs in the same walk, so it cannot disagree with the escaping about which
+ * stretch of text is a code span.
  */
-function escapeOutsideCode(text: string, set: string): string {
+function escapeOutsideCode(text: string, set: string, also?: (prose: string) => string): string {
     return segments(text)
         .map((segment) => {
             if (segment.kind === "span") return segment.text;
@@ -193,7 +197,9 @@ function escapeOutsideCode(text: string, set: string): string {
             // renders everything between the two as code.
             if (segment.kind === "unclosed") return "\\`".repeat(segment.text.length);
 
-            return [...segment.text].map((char) => (set.includes(char) ? `\\${char}` : char)).join("");
+            const escaped = [...segment.text].map((char) => (set.includes(char) ? `\\${char}` : char)).join("");
+
+            return also ? also(escaped) : escaped;
         })
         .join("");
 }
@@ -243,9 +249,15 @@ export function escapeInline(text: string): string {
  * and a reader clicks it on the strength of that label. Prose is the model's own sentence,
  * and bounding the links in it would buy nothing: GFM autolinks a bare `https://` run, so
  * the same destination reaches the same page with no link syntax at all.
+ *
+ * An image is the exception, and it is why the `!` goes. That argument turns on the reader
+ * choosing to click; GitHub loads an image on sight, from a url the model chose, into a
+ * comment posted under the account this review goes out as. `<img>` is already escaped, and
+ * this is the other spelling of the same element. Only the `!` that opens one is escaped, so
+ * a sentence keeps its exclamation marks.
  */
 function escapeTags(text: string): string {
-    return escapeOutsideCode(text, "\\<@");
+    return escapeOutsideCode(text, "\\<@", (prose) => prose.replace(/!(?=\[)/g, "\\!"));
 }
 
 /**
@@ -356,9 +368,20 @@ export function clamp(text: string, limit: number): string {
     return cut(window);
 }
 
-/** Prose a model wrote, cut to length, with the blocks and tags it would open escaped. */
+/**
+ * Prose a model wrote, cut to length, with the blocks and tags it would open escaped.
+ *
+ * The fence is closed for the reason `bullet` in review-body.ts closes one, and for a second
+ * reason of its own. Each section of the body is escaped against its own `fenceMap`, and
+ * GitHub parses the sections joined: a fence left open at the end of one is closed by the
+ * next delimiter below it, which is the opening fence of some finding's code sample. From
+ * there the two readings are inverted, and the lines this function skipped as fenced reach
+ * the page as live markdown. Balancing every section before the join is what stops the two
+ * readings disagreeing. `clamp` has already closed the fence on the truncating path, and
+ * closing a closed fence adds nothing.
+ */
 export function prose(text: string, limit: number): string {
-    return escapeBlocks(clamp(text, limit).split("\n")).join("\n");
+    return escapeBlocks(closeOpenFence(clamp(text, limit)).split("\n")).join("\n");
 }
 
 /**

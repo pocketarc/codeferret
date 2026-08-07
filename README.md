@@ -6,9 +6,10 @@ CodeFerret reviews a diff through several independent code review skills at once
 merges their findings into a single review comment. Each finding records which lenses found
 it, so agreement between them stays visible.
 
-Every lens reads source. The accessibility and web design lenses have no browser and no
-rendered page, so any criterion that needs a rendered page, contrast and focus order among
-them, goes unchecked. Which criteria those are is written out one by one in
+Every lens reads source. The accessibility, web design and Next.js lenses have no browser,
+no running application and no rendered page, so any criterion that needs one of those,
+contrast and focus order among them, goes unchecked. Which criteria those are is written out
+one by one in
 [`review/lens-extras/anthropic-accessibility-review.md`](review/lens-extras/anthropic-accessibility-review.md),
 and every review says what each lens could not check, in that lens's own words.
 

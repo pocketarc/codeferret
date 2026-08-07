@@ -9,8 +9,9 @@
 
 import { join } from "node:path";
 import { asExisting, readExisting, survey } from "./existing.ts";
-import type { Existing, Located } from "./existing.ts";
+import type { Located, Surveyed } from "./existing.ts";
 import { reason } from "./json.ts";
+import { filesRaisedBefore } from "./previous.ts";
 
 export interface Finding {
     found_by?: string[];
@@ -85,6 +86,36 @@ export function brokenLenses(health: LensHealth[]): LensHealth[] {
     return health.filter((h) => !h.ok);
 }
 
+/**
+ * A lens's name without the plugin namespace `build-prompts.sh` gives it.
+ *
+ * A fact about how a lens is named rather than about how one is rendered, which is why it
+ * sits here: finding-rules.ts matches dispatched lenses against reported ones and needs
+ * nothing else from the rendering.
+ */
+export function lensLabel(lens: string): string {
+    return lens.replace(/^[^:]+:/, "");
+}
+
+/**
+ * The dispatched lenses with no account of themselves in `lens_health`.
+ *
+ * Both sides go through `lensLabel`. `dispatched` is namespaced, because that is how
+ * build-prompts.sh writes the lens list, and what the orchestrator puts in `lens_health` is
+ * a plain string as far as the schema is concerned. Compared as written, an orchestrator
+ * that dropped the namespace would report every lens as silent at once, which is how an
+ * alarm becomes one people skip.
+ *
+ * `reported` is the names as they arrived rather than the entries, so check-findings.ts can
+ * ask this of a file whose shape has not been checked and the body can ask it of one whose
+ * shape has.
+ */
+export function silentLenses(reported: string[], dispatched: string[]): string[] {
+    const named = new Set(reported.map(lensLabel));
+
+    return dispatched.map(lensLabel).filter((lens) => !named.has(lens));
+}
+
 export interface Partitioned {
     all: Finding[];
     /** The ones this review posts. */
@@ -143,7 +174,12 @@ function namesFile(text: string, base: string): boolean {
 function isAbout(comment: Located, file: string): boolean {
     if (!file) return false;
     if (comment.file !== "" && comment.file === file) return true;
-    if (comment.text.includes(file)) return true;
+
+    // The full path goes through `namesFile` too, and clears the same minimum length the
+    // basename does. A bare `includes` skipped both: a root-level file has no directory, so
+    // its whole path is its basename, and "the id column is fine" settled every finding in
+    // `id`.
+    if (file.length >= MIN_BASENAME && namesFile(comment.text, file)) return true;
 
     const base = file.slice(file.lastIndexOf("/") + 1);
 
@@ -176,17 +212,8 @@ export interface Vetted {
  * in will bear out any suppression this run makes in it. What it still catches is a
  * suppression with nothing at all behind it, which is what this path had before.
  */
-function raisedBefore(previous: unknown, file: string): boolean {
-    if (!file) return false;
-
-    const parsed = typeof previous === "object" && previous !== null ? (previous as Previous) : {};
-
-    return (parsed.findings ?? []).some((entry) => entry?.file === file);
-}
-
-/** The previous run's findings, as `fetch-previous.ts` writes them. */
-interface Previous {
-    findings?: Array<{ file?: string }>;
+function raisedBefore(raisedFiles: ReadonlySet<string>, file: string): boolean {
+    return file !== "" && raisedFiles.has(file);
 }
 
 /**
@@ -213,6 +240,7 @@ interface Previous {
  */
 export function vetSuppression(findings: Finding[], existing: unknown, previous: unknown = {}): Vetted {
     const { comments } = survey(asExisting(existing));
+    const raisedFiles = filesRaisedBefore(previous);
     let untraceable = 0;
     let unrelated = 0;
     let unreported = 0;
@@ -251,7 +279,7 @@ export function vetSuppression(findings: Finding[], existing: unknown, previous:
             // where the entry has one, so most suppressions arrive with nothing cited. Left
             // to fall through, they were the one status decided by the orchestrator alone
             // and re-decided nowhere, and the status carries into every later run.
-            if (raisedBefore(previous, f.file)) return f;
+            if (raisedBefore(raisedFiles, f.file)) return f;
 
             unmatched += 1;
             return reopen(f);
@@ -302,7 +330,7 @@ export async function readMerged(path: string, hint?: string): Promise<Merged> {
 
 export interface Vetting extends Vetted {
     /** What the vetting was decided against, which post-review.ts also reads its threads from. */
-    existing: Existing;
+    existing: Surveyed;
 }
 
 /** The previous run's findings, or `{}` with a line saying they could not be read. */

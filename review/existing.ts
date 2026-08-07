@@ -13,6 +13,7 @@
  */
 
 import { join } from "node:path";
+import { record } from "./json.ts";
 
 /** One comment, whoever wrote it. */
 export interface Commenter {
@@ -46,31 +47,42 @@ export interface Existing {
     conversation_error?: string;
 }
 
-/** The parsed file, or one that says nothing, without trusting what is on disk. */
-export function asExisting(value: unknown): Existing {
-    if (typeof value !== "object" || value === null) return {};
+/**
+ * The same file with both lists guaranteed, which is what every reader here is handed.
+ *
+ * Apart from `Existing` because that is the shape on disk, where either list may be missing.
+ * Read back as `Existing`, the file hides the guarantee `asExisting` makes, so every caller
+ * defends against it again with a `?? []` that never applies, and the one that forgets reads
+ * `undefined` in silence.
+ */
+export interface Surveyed extends Existing {
+    threads: Threaded[];
+    conversation: Commenter[];
+}
 
-    const parsed = value as Existing;
+/** The parsed file, or one that says nothing, without trusting what is on disk. */
+export function asExisting(value: unknown): Surveyed {
+    const parsed = record(value);
 
     return {
-        threads: Array.isArray(parsed.threads) ? parsed.threads : [],
-        conversation: Array.isArray(parsed.conversation) ? parsed.conversation : [],
-        ...(typeof parsed.error === "string" ? { error: parsed.error } : {}),
-        ...(typeof parsed.conversation_error === "string" ? { conversation_error: parsed.conversation_error } : {}),
+        threads: Array.isArray(parsed?.threads) ? parsed.threads : [],
+        conversation: Array.isArray(parsed?.conversation) ? parsed.conversation : [],
+        ...(typeof parsed?.error === "string" ? { error: parsed.error } : {}),
+        ...(typeof parsed?.conversation_error === "string" ? { conversation_error: parsed.conversation_error } : {}),
     };
 }
 
 /** The file beside a run's findings, or one that says nothing. */
-export async function readExisting(buildDir: string, absent: (line: string) => void): Promise<Existing> {
+export async function readExisting(buildDir: string, absent: (line: string) => void): Promise<Surveyed> {
     const file = Bun.file(join(buildDir, "existing.json"));
 
-    if (!(await file.exists())) return {};
+    if (!(await file.exists())) return asExisting({});
 
     try {
         return asExisting(JSON.parse(await file.text()));
     } catch {
         absent("existing.json could not be read, so no thread is resolved and every suppression is reopened.");
-        return {};
+        return asExisting({});
     }
 }
 
@@ -105,7 +117,7 @@ export interface Survey {
  *
  * Built twice in two modules before this, with the difference above unstated in either.
  */
-export function survey(existing: Existing): Survey {
+export function survey(existing: Surveyed): Survey {
     const comments = new Map<string, Located>();
     const linkable = new Set<string>();
 
@@ -121,31 +133,25 @@ export function survey(existing: Existing): Survey {
         });
     };
 
-    for (const thread of existing.threads ?? []) {
+    for (const thread of existing.threads) {
         const closed = thread?.resolved === true;
         const file = typeof thread?.file === "string" ? thread.file : "";
 
         if (thread?.url) linkable.add(thread.url);
 
-        // A thread whose own url names no comment still stands for the file it is anchored
-        // to, and the loop below overwrites this the moment the root comment carries it.
-        if (closed && thread?.url && file) {
-            comments.set(thread.url, { file, text: "", association: "", onClosedThread: true });
-        }
-
         for (const comment of thread?.comments ?? []) take(comment, file, closed);
     }
 
-    for (const comment of existing.conversation ?? []) take(comment, "", false);
+    for (const comment of existing.conversation) take(comment, "", false);
 
     return { comments, linkable };
 }
 
 /** The threads an earlier run of this tool opened, which are the only ones it may resolve. */
-export function ownThreads(existing: Existing): Set<string> {
+export function ownThreads(existing: Surveyed): Set<string> {
     const mine = new Set<string>();
 
-    for (const thread of existing.threads ?? []) {
+    for (const thread of existing.threads) {
         if (thread?.mine === true && typeof thread.thread_id === "string") mine.add(thread.thread_id);
     }
 

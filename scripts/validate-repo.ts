@@ -20,7 +20,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { reason } from "../review/json.ts";
 import { STANDING_DETAIL } from "../review/review-body.ts";
-import { RUN_FILE_NAMES } from "../review/run-files.ts";
+import { dispatchedFrom, LENS_LIST_FILE, RUN_FILE_NAMES, RUN_FILES } from "../review/run-files.ts";
 
 process.chdir(join(import.meta.dir, ".."));
 
@@ -472,6 +472,12 @@ async function checkStandingDetail(): Promise<Failures> {
         if (!bundled.has(lens)) {
             fail(list, file, `STANDING_DETAIL names '${lens}', which is not a lens under lenses/skills/`);
         }
+
+        // Membership is "its brief opens by naming a capability the session does not have",
+        // so a key with no brief has nothing behind the sentence it prints into every review.
+        if (!existsSync(`review/lens-extras/${lens}.md`)) {
+            fail(list, file, `STANDING_DETAIL names '${lens}', which has no review/lens-extras/${lens}.md`);
+        }
     }
 
     if (list.length === 0) {
@@ -508,7 +514,111 @@ async function checkRunFiles(): Promise<Failures> {
         }
     }
 
+    // `findings-checked` is the one run file no TypeScript writes, so the shell is its only
+    // other home. Drift here is the quietest failure the action has: the marker goes down
+    // under a name the posting step's condition does not test, so a review is produced, paid
+    // for, and never posted, with nothing red anywhere.
+    for (const script of ["review/run.sh", "review/local-post.sh"]) {
+        if (!(await Bun.file(script).text()).includes(RUN_FILES.findingsChecked)) {
+            fail(list, script, `never names '${RUN_FILES.findingsChecked}', which is what the action posts on`);
+        }
+    }
+
     if (list.length === 0) console.log(`OK run-files: ${named.length} step output(s) name a file the run writes`);
+
+    return list;
+}
+
+/**
+ * Every `bun` a review starts, against the flag that keeps the reviewed tree out of it.
+ *
+ * Bun runs the `preload` script named by the `bunfig.toml` in its working directory, before
+ * the script on the command line. A review stands in the checkout it is reviewing, and the
+ * orchestrator has `Bash` under `bypassPermissions` and knows every other directory a run
+ * uses, so moving out of the tree only moves the problem. `--config=/dev/null` is the whole
+ * control, and it is one flag to forget in a job holding `CLAUDE_CODE_OAUTH_TOKEN` and a
+ * token that can write to pull requests.
+ *
+ * A printed hint counts. Whoever pastes one is standing where the run left them.
+ *
+ * Not lint.yml or lefthook.yml: both run over a checkout of this repository, and lint.yml's
+ * fork job holds no secrets and no write permissions, which is why it may run a fork's tests
+ * at all.
+ */
+async function checkBunConfig(): Promise<Failures> {
+    const list: Failures = [];
+    const files = [...readdirSync("review").filter((f) => f.endsWith(".sh")).map((f) => `review/${f}`), "action.yml"];
+    let invocations = 0;
+
+    for (const file of files) {
+        const text = await Bun.file(file).text();
+
+        for (const [, flags, script] of text.matchAll(/\bbun\b([^\n]*?)([\w$"'{}/.-]*\.ts)\b/g)) {
+            invocations += 1;
+
+            if (!String(flags).includes("--config=")) {
+                fail(list, file, `runs \`bun ... ${script}\` with no --config=/dev/null`);
+            }
+        }
+    }
+
+    if (list.length === 0) console.log(`OK bun-config: ${invocations} bun invocation(s) name a config`);
+
+    return list;
+}
+
+/**
+ * The lens list build-prompts.sh writes, against the pattern that reads it back.
+ *
+ * Two languages, one line format, and drift is silent in the direction that matters: a
+ * changed line leaves `dispatchedFrom` returning nothing, `coverageOf` stops reporting a
+ * lens that ran and said nothing about itself, and check-findings.ts goes on printing
+ * `shape valid`.
+ *
+ * The shell's own line is run rather than matched, because a format matched by a second
+ * pattern is a third spelling to keep in step.
+ */
+async function checkLensList(): Promise<Failures> {
+    const list: Failures = [];
+    const script = "review/build-prompts.sh";
+    const shell = await Bun.file(script).text();
+    const writes = new RegExp(`^\\s*printf\\s.*>>"\\$BUILD/${LENS_LIST_FILE}"$`, "m");
+    const line = shell.match(writes)?.[0];
+
+    if (!line) {
+        fail(list, script, `appends nothing to ${LENS_LIST_FILE}, so nothing records which lenses ran`);
+        return list;
+    }
+
+    const dir = mkdtempSync(join(tmpdir(), "codeferret-lens-list-"));
+
+    try {
+        const run = Bun.spawnSync(["bash", "-c", `set -eu\n${line}`], {
+            env: { ...process.env, NAMESPACE: "codeferret", lens: "example-lens", BUILD: dir },
+        });
+
+        if (run.exitCode !== 0) {
+            fail(list, script, `its ${LENS_LIST_FILE} line does not run: ${run.stderr.toString().trim()}`);
+            return list;
+        }
+
+        const written = await Bun.file(join(dir, LENS_LIST_FILE)).text();
+        const read = dispatchedFrom(written);
+
+        if (read.length !== 1 || read[0] !== "codeferret:example-lens") {
+            fail(
+                list,
+                "review/run-files.ts",
+                `LENS_LIST_LINE reads ${JSON.stringify(read)} out of ${JSON.stringify(written)},` +
+                    ` which is what ${script} writes`,
+            );
+            return list;
+        }
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+
+    console.log(`OK lens-list: ${script} and review/run-files.ts agree on the line format`);
 
     return list;
 }
@@ -667,6 +777,8 @@ const CHECKS: Array<[string, () => Promise<Failures>]> = [
     ["generated", checkGenerated],
     ["finding-rules", checkFindingRules],
     ["run-files", checkRunFiles],
+    ["lens-list", checkLensList],
+    ["bun-config", checkBunConfig],
     ["retention", checkRetention],
     ["standing-detail", checkStandingDetail],
     ["prompts", checkPrompts],

@@ -16,9 +16,10 @@
  */
 
 import { dirname } from "node:path";
-import { brokenLenses, partition, readMerged, vetAgainstExisting } from "./findings.ts";
+import { brokenLenses, lensLabel, partition, readMerged, silentLenses, vetAgainstExisting } from "./findings.ts";
 import type { Finding } from "./findings.ts";
-import { caveatOf, lensLabel, plural, where } from "./review-body.ts";
+import { caveatOf, plural, where } from "./review-body.ts";
+import { readDispatched } from "./run-files.ts";
 
 const [findingsPath] = process.argv.slice(2);
 
@@ -62,6 +63,18 @@ if (older > 0) {
 
 const health = merged.lens_health ?? [];
 const broken = brokenLenses(health);
+
+// For the reason the posted body says it: a lens the orchestrator left out of `lens_health`
+// is a lens this listing has nothing at all to say about, and silence here is taken for a
+// lens that had nothing to report.
+const silent = silentLenses(
+    health.map((h) => h.lens),
+    await readDispatched(dirname(findingsFile)),
+);
+
+if (silent.length > 0) {
+    out.push(`${silent.join(", ")} ran and reported nothing about themselves, so this leaves each one out.`);
+}
 
 for (const h of broken) {
     out.push(`${lensLabel(h.lens)} did not report normally: ${caveatOf(h) ?? "no detail given"}`);

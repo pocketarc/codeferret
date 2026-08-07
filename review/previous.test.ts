@@ -223,6 +223,35 @@ describe("firstPosted", () => {
         expect(said.join(" ")).toContain("gave up after opening 3 artifacts");
     });
 
+    test("says it stopped at its own limit when the candidates run out on it exactly", async () => {
+        const said: string[] = [];
+
+        const found = await firstPosted(
+            Array.from({ length: 3 }, (_, i) => artifact({ id: i + 1 })),
+            "7",
+            async () => posted({ posted: undefined }),
+            3,
+            (line) => said.push(line),
+        );
+
+        expect(found).toBeNull();
+        expect(said.join(" ")).toContain("gave up after opening 3 artifacts");
+    });
+
+    test("says nothing about a limit it did not reach", async () => {
+        const said: string[] = [];
+
+        await firstPosted(
+            [artifact({ id: 1 })],
+            "7",
+            async () => posted({ posted: undefined }),
+            3,
+            (line) => said.push(line),
+        );
+
+        expect(said.join(" ")).not.toContain("gave up");
+    });
+
     test("is null when there is nothing to open", async () => {
         expect(await firstPosted([], "7", async () => posted(), 10, () => {})).toBeNull();
     });

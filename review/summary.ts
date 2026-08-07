@@ -11,6 +11,7 @@
 import { join } from "node:path";
 import { record } from "./json.ts";
 import { RUN_FILES } from "./run-files.ts";
+import { TOOL_REPORT_GLOB, toolFromReportName } from "./tools/report.ts";
 
 const [buildDir, exitStatus] = process.argv.slice(2);
 
@@ -56,9 +57,9 @@ async function toolsRan(): Promise<{ names: string[]; egress: string[] }> {
     const names: string[] = [];
     const egress: string[] = [];
 
-    for await (const file of new Bun.Glob("tool-*.json").scan({ cwd: dir })) {
+    for await (const file of new Bun.Glob(TOOL_REPORT_GLOB).scan({ cwd: dir })) {
         const parsed = record(await Bun.file(join(dir, file)).json().catch(() => null));
-        const tool = typeof parsed?.tool === "string" ? parsed.tool : file.slice(5, -5);
+        const tool = typeof parsed?.tool === "string" ? parsed.tool : toolFromReportName(file);
 
         if (parsed?.ran !== true) {
             names.push(`${tool} (skipped)`);

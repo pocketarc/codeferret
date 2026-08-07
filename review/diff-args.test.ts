@@ -45,7 +45,7 @@ describe("readDiffArgs", () => {
     });
 
     test("says which file is missing rather than reading an empty range", async () => {
-        expect(readDiffArgs("/nowhere/diff-args")).rejects.toThrow("no /nowhere/diff-args");
+        await expect(readDiffArgs("/nowhere/diff-args")).rejects.toThrow("no /nowhere/diff-args");
     });
 
     test("an empty file names no range, which is not the same as a range of nothing", async () => {
@@ -54,7 +54,7 @@ describe("readDiffArgs", () => {
 
         await Bun.write(file, "");
 
-        expect(readDiffArgs(file)).rejects.toThrow("names no range");
+        await expect(readDiffArgs(file)).rejects.toThrow("names no range");
 
         rmSync(dir, { recursive: true, force: true });
     });

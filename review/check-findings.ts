@@ -25,6 +25,7 @@
 import { dirname, join } from "node:path";
 import { applyRules, readSchema, selfCheck } from "./finding-rules.ts";
 import { reason, record } from "./json.ts";
+import { dispatchedFrom, LENS_LIST_FILE, RUN_FILES } from "./run-files.ts";
 
 const args = process.argv.slice(2);
 const wantsSelfCheck = args.includes("--self-check");
@@ -43,6 +44,14 @@ if (wantsSelfCheck) {
     if (rules.stray.length > 0) {
         console.error(
             `FAIL check-findings.ts keys ${rules.stray.join(", ")}, which merged-schema.json has no field for.`,
+        );
+        process.exit(1);
+    }
+
+    if (rules.unruled.length > 0) {
+        console.error(
+            `FAIL check-findings.ts names no rule for ${rules.unruled.join(", ")}, so a fault there` +
+                " drops the whole finding. Add a POLICY entry, or list it in FATAL_FIELDS.",
         );
         process.exit(1);
     }
@@ -96,6 +105,8 @@ if (!Array.isArray(merged.findings)) {
     process.exit(1);
 }
 
+const runDir = dirname(path);
+
 /**
  * The lenses this run dispatched, from the list build-prompts.sh wrote beside the findings.
  *
@@ -103,11 +114,11 @@ if (!Array.isArray(merged.findings)) {
  * second thing to keep in step. Absent for a by-hand check of an old file.
  */
 async function dispatched(): Promise<string[]> {
-    const file = Bun.file(join(dirname(path ?? ""), "lens-list.txt"));
+    const file = Bun.file(join(runDir, LENS_LIST_FILE));
 
     if (!(await file.exists())) return [];
 
-    return (await file.text()).split("\n").flatMap((line) => line.match(/`([^`]+)`/)?.[1] ?? []);
+    return dispatchedFrom(await file.text());
 }
 
 const checked = applyRules(schema, merged, await dispatched());
@@ -118,7 +129,17 @@ for (const w of checked.warnings) console.warn(`WARN ${w.label}: ${w.message}`);
 for (const p of checked.elsewhere) console.warn(`WARN ${p.label}: ${p.message}`);
 for (const p of checked.dropped) console.error(`DROP ${p.label}: ${p.message}`);
 
-if (checked.changed) await Bun.write(path, `${JSON.stringify(checked.merged, null, 2)}\n`);
+if (checked.changed) {
+    await Bun.write(path, `${JSON.stringify(checked.merged, null, 2)}\n`);
+
+    // extract-findings.ts wrote this count before anything was dropped, and it is the
+    // action's `findings-count` output and the Findings row in the job summary. Left alone,
+    // it is the number that hides the breakage in a partly-broken run. Rewritten only where
+    // the run left one, so a by-hand check of a copied file writes no run files beside it.
+    const count = Bun.file(join(runDir, RUN_FILES.findingsCount));
+
+    if (await count.exists()) await Bun.write(count, String(checked.kept));
+}
 
 if (checked.found > 0 && checked.kept === 0) {
     console.error(`\nnothing usable in ${path}: all ${checked.found} finding(s) were dropped.`);

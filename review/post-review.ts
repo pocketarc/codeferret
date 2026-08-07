@@ -20,12 +20,13 @@
  *        RESOLVE_THREADS=1 to close the threads the orchestrator judged finished.
  */
 
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { ownThreads, survey } from "./existing.ts";
 import { partition, readMerged, vetAgainstExisting } from "./findings.ts";
 import { graphql, graphqlFailure, requirePullNumber, requireRepository, rest, tokenFromStdinOrEnv } from "./github.ts";
 import { reason } from "./json.ts";
 import { composeReview, destinationOf, plural } from "./review-body.ts";
+import { readDispatched } from "./run-files.ts";
 
 const [findingsPath, headSha, prNumber] = process.argv.slice(2);
 const repo = process.env.GITHUB_REPOSITORY;
@@ -43,7 +44,13 @@ requirePullNumber(prNumber);
 const findingsFile: string = findingsPath;
 const buildDir = dirname(findingsFile);
 
-const merged = await readMerged(findingsFile, `check it with: bun check-findings.ts ${findingsFile}`);
+// An absolute path and the flag, because whoever reads this line is standing wherever the
+// run left them, which for a session is the checkout under review, the directory bun takes a
+// `bunfig.toml` from.
+const merged = await readMerged(
+    findingsFile,
+    `check it with: bun --config=/dev/null ${join(import.meta.dir, "check-findings.ts")} ${findingsFile}`,
+);
 
 // The decision is taken again here: the orchestrator held the suppression rules and the
 // comments it judged as text in one context.
@@ -194,7 +201,18 @@ const {
     body: reviewBody,
     listed,
     broken,
-} = composeReview(merged, { resolved, resolveDenied, leftOpen, to, linkable: survey(existing).linkable }, parts);
+} = composeReview(
+    merged,
+    {
+        resolved,
+        resolveDenied,
+        leftOpen,
+        to,
+        linkable: survey(existing).linkable,
+        dispatched: await readDispatched(buildDir),
+    },
+    parts,
+);
 
 console.log(
     `total=${allFindings.length} new=${findings.length} suppressed=${suppressed.length}` +

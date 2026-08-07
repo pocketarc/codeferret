@@ -68,8 +68,8 @@ stop: anything the source settles outright is in scope, whether or not it is nam
 - A `tabindex` above zero.
 - An ARIA attribute on a role that does not take it, and `aria-hidden="true"` on an element
   holding a focusable descendant.
-- A missing `lang` on `<html>`, and a passage in another language carrying none of its own
-  (3.1.2).
+- A missing `lang` on `<html>` (3.1.1, Level A), and a passage in another language carrying
+  none of its own (3.1.2, Level AA).
 - A table without headers.
 - An input whose purpose is one WCAG names and which carries no `autocomplete` token
   (1.3.5).

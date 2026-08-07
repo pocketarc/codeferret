@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { partition } from "./findings.ts";
 import type { Finding, Merged } from "./findings.ts";
+import { closeOpenFence, fenceMap } from "./markdown.ts";
 import {
     assemble,
     bullet,
@@ -86,6 +87,16 @@ describe("bullet", () => {
 
     test("leaves the category line out when the finding has none", () => {
         expect(bullet(finding({ category: "" }))).not.toContain("undefined");
+    });
+
+    test("leaves the category line out for a category that is not a string", () => {
+        expect(bullet(finding({ category: 3 as unknown as string }))).not.toEndWith("__");
+    });
+
+    test("keeps a multi-line category on one line, so it cannot open a heading below the item", () => {
+        const line = bullet(finding({ category: "sql-injection\n\n# Findings" }));
+
+        expect(line).toEndWith("_sql-injection # Findings_");
     });
 
     test("clamps a runaway title, so it is not a wall of bold text", () => {
@@ -175,7 +186,7 @@ describe("assemble", () => {
     }
 
     test("keeps the fixed sections and lists what fits", () => {
-        const body = assemble(
+        const { body } = assemble(
             ["## CodeFerret"],
             listing([finding(), finding({ title: "Second" })]),
             ["### Caveats"],
@@ -188,12 +199,12 @@ describe("assemble", () => {
     });
 
     test("leaves the listing out when there is nothing to list", () => {
-        expect(assemble(["## CodeFerret"], null, [])).toBe("## CodeFerret");
+        expect(assemble(["## CodeFerret"], null, []).body).toBe("## CodeFerret");
     });
 
     test("drops whole findings rather than cutting one, and says how many went", () => {
         const items = Array.from({ length: 200 }, (_, i) => finding({ title: `T${i}`, body: "x".repeat(2000) }));
-        const body = assemble(["## CodeFerret"], listing(items), []);
+        const { body } = assemble(["## CodeFerret"], listing(items), []);
 
         expect(body.length).toBeLessThanOrEqual(MAX_BODY);
         expect(body).toMatch(/further findings? left out for length/);
@@ -201,15 +212,26 @@ describe("assemble", () => {
 
     test("a finding too long for what is left costs only itself", () => {
         const items = [finding({ title: "Huge", body: "x".repeat(3900) }), finding({ title: "Small" })];
-        const body = assemble(["x".repeat(MAX_BODY - 3000)], listing(items), []);
+        const { body } = assemble(["x".repeat(MAX_BODY - 3000)], listing(items), []);
 
         expect(body).not.toContain("Huge");
         expect(body).toContain("Small");
     });
 
+    test("reports the findings it printed, not the ones it was offered", () => {
+        const items = [finding({ title: "Huge", body: "x".repeat(3900) }), finding({ title: "Small" })];
+        const { printed } = assemble(["x".repeat(MAX_BODY - 3000)], listing(items), []);
+
+        expect(printed.map((f) => f.title)).toEqual(["Small"]);
+    });
+
     test("closes a details block the last-resort cut left open, and says so outside it", () => {
         const wide = Array.from({ length: 400 }, (_, i) => `- lens ${i}: ${"d".repeat(200)}`).join("\n");
-        const body = assemble(["## CodeFerret", `<details>\n<summary>lenses</summary>\n\n${wide}\n</details>`], null, []);
+        const { body } = assemble(
+            ["## CodeFerret", `<details>\n<summary>lenses</summary>\n\n${wide}\n</details>`],
+            null,
+            [],
+        );
 
         expect(body).toEndWith("</details>\n\n_(this review was cut for length)_");
         expect((body.match(/<details/g) ?? []).length).toBe((body.match(/<\/details>/g) ?? []).length);
@@ -217,7 +239,7 @@ describe("assemble", () => {
 
     test("the tail survives a listing that would fill the body", () => {
         const items = Array.from({ length: 200 }, (_, i) => finding({ title: `T${i}`, body: "x".repeat(2000) }));
-        const body = assemble(["## CodeFerret"], listing(items), ["### Caveats"]);
+        const { body } = assemble(["## CodeFerret"], listing(items), ["### Caveats"]);
 
         expect(body).toEndWith("### Caveats");
     });
@@ -230,6 +252,7 @@ describe("composeReview", () => {
         leftOpen: 0,
         to: { kind: "session" },
         linkable: new Set(),
+        dispatched: [],
     };
 
     const onARunner = destinationOf({
@@ -312,6 +335,24 @@ describe("composeReview", () => {
         expect(item?.length).toBeLessThan(MAX_LENS_DETAIL + 200);
     });
 
+    test("names a dispatched lens the run reported no health for", () => {
+        const body = review(
+            { lens_health: [{ lens: "codeferret:x", findings_returned: 1, ok: true }] },
+            { dispatched: ["codeferret:x", "codeferret:anthropic-accessibility-review"] },
+        );
+
+        expect(body).toContain("> anthropic-accessibility-review ran and reported nothing about themselves");
+    });
+
+    test("says nothing about silent lenses when every dispatched one reported", () => {
+        const body = review(
+            { lens_health: [{ lens: "codeferret:x", findings_returned: 1, ok: true }] },
+            { dispatched: ["codeferret:x"] },
+        );
+
+        expect(body).not.toContain("reported nothing about themselves");
+    });
+
     test("says so when the run reported no lens health at all, rather than going quiet", () => {
         const body = review({});
 
@@ -392,6 +433,40 @@ describe("composeReview", () => {
         const body = review({ summary: "# Risk\n\nSomething." });
 
         expect(body).toContain("\\# Risk");
+    });
+
+    test("closes a fence the summary left open, so the lens list is not swallowed", () => {
+        const body = review({
+            summary: "The risk:\n\n```ts\nconst x = 1;",
+            lens_health: [{ lens: "codeferret:x", findings_returned: 1, ok: true }],
+        });
+
+        expect(closeOpenFence(body)).toBe(body);
+        expect(body).toContain("```ts\nconst x = 1;\n```");
+        expect(fenceMap(body.split("\n"))[body.split("\n").indexOf("<details>")]).toBe(false);
+    });
+
+    test("closes a fence the caveats left open, so nothing below them is code", () => {
+        const body = review({ notes: "Not checked:\n\n~~~\nthe rendered page" });
+
+        expect(closeOpenFence(body)).toBe(body);
+    });
+
+    test("keeps a finding's own sample fenced when the summary opened a fence above it", () => {
+        // Each section is escaped against its own fence map and GitHub parses the join, so an
+        // unclosed fence above inverts the two readings and the escaping stops matching what
+        // the page shows.
+        const body = review({
+            summary: "The risk:\n\n```ts\nconst x = 1;",
+            findings: [finding({ body: "quoting a lens:\n\n```html\n<details>\n```" })],
+        });
+
+        const lines = body.split("\n");
+        const fenced = fenceMap(lines);
+        const sample = lines.findIndex((line) => line.includes("<details>"));
+
+        expect(sample).toBeGreaterThan(-1);
+        expect(fenced[sample]).toBe(true);
     });
 
     test("lists what was suppressed and what was declined, separately", () => {

@@ -78,11 +78,25 @@ export interface ToolReport {
 }
 
 /**
- * Where a tool's report goes. Named once, because the `static-analysis` lens is pointed at
- * this glob in review/lens-extras/static-analysis.md and `keepRaised` has to stay outside it.
+ * What a tool's report is called, in the pieces the rest of a run needs.
+ *
+ * Named once, because the `static-analysis` lens is pointed at this glob in
+ * review/lens-extras/static-analysis.md and `keepRaised` has to stay outside it. summary.ts
+ * reads the reports back through the glob and the name. Building them by hand, it reported
+ * the wrong tool names into the one surface a maintainer opens to see which tools ran.
  */
+const REPORT_PREFIX = "tool-";
+const REPORT_SUFFIX = ".json";
+
+export const TOOL_REPORT_GLOB = `${REPORT_PREFIX}*${REPORT_SUFFIX}`;
+
 export function reportPath(tool: string, buildDir: string): string {
-    return join(buildDir, `tool-${tool}.json`);
+    return join(buildDir, `${REPORT_PREFIX}${tool}${REPORT_SUFFIX}`);
+}
+
+/** The tool a report filename names, for a report whose own `tool` field is unreadable. */
+export function toolFromReportName(file: string): string {
+    return file.slice(REPORT_PREFIX.length, -REPORT_SUFFIX.length);
 }
 
 /**

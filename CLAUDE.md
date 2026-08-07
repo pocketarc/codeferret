@@ -114,12 +114,11 @@ is in `review/README.md`.
 
 - Do not write a count of what this repository holds into a comment or a document. The
   README led with "fourteen lenses" for a full round after the set became thirteen, and
-  nothing failed, so a check on that one numeral was added rather than the sentence being
-  rewritten. Name the set instead of counting it, and the check goes too. A measurement of
-  something that happened is a different thing and stays: "$1.28 and no findings" is the
-  evidence for the rule beside it, and no later commit can make it wrong. The
-  `comment-review` lens is told, in `review/lens-extras/comment-review.md`, to report the
-  ones that get past this.
+  nothing failed. Name the set instead of counting it. A measurement of something that
+  happened is a different thing and stays: "$1.28 and no findings" is the evidence for the
+  rule beside it, and no later commit can make it wrong. Nothing mechanical catches these, so
+  the `comment-review` lens is told, in `review/lens-extras/comment-review.md`, to report the
+  ones that get through.
 - A lens's `in_diff` field is unreliable, and nothing reads it. On every run that used
   inline comments, a lens reported an out-of-diff finding as in-diff. Nothing anchors to a
   line now, so there is nothing left to be wrong about. Whoever adds the first inline
@@ -160,8 +159,9 @@ is in `review/README.md`.
   that the `bunfig.toml` in its working directory names, before the script on the command
   line, and moving the working directory out of the checkout only moves the problem: the
   orchestrator has `Bash` under `bypassPermissions` and its prompt names `$BUILD`, so it can
-  write that file into every directory a run has left to stand in. Add the flag with the
-  invocation, and `validate-repo.ts` will not have to find it missing.
+  write that file into every directory a run has left to stand in. `validate-repo.ts` reads
+  `review/*.sh` and `action.yml` for a `bun` that names a script without the flag, including
+  the ones inside printed hints, and fails on one.
 - No file the session could have written is evidence about the session. `run.sh` deletes
   the `existing.json` the orchestrator was given and fetches it again, because the
   orchestrator holds that path in the same prompt as the rule `vetSuppression` applies, and

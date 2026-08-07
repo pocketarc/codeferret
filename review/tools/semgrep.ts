@@ -118,8 +118,11 @@ if (files.length === 0) {
     process.exit(0);
 }
 
+/** What the tool scans under when `SEMGREP_CONFIG` names nothing. */
+const DEFAULT_RULESET = "p/default";
+
 /**
- * The ruleset to scan under.
+ * One entry of `SEMGREP_CONFIG`, resolved.
  *
  * A ruleset on disk has to sit inside the repository. On the container path semgrep sees
  * the repository at /src and nothing else, so an absolute host path resolves to nothing
@@ -127,11 +130,7 @@ if (files.length === 0) {
  * repository root. Anything that is not a path on disk is a registry identifier and goes
  * through as written.
  */
-function ruleset(): { config: string; local: boolean } | { refusal: string } {
-    const configured = process.env.SEMGREP_CONFIG;
-
-    if (!configured) return { config: "p/default", local: false };
-
+function entry(configured: string): { config: string; local: boolean } | { refusal: string } {
     const resolved = resolve(root, configured);
 
     if (!existsSync(resolved)) return { config: configured, local: false };
@@ -143,6 +142,40 @@ function ruleset(): { config: string; local: boolean } | { refusal: string } {
                   `SEMGREP_CONFIG is '${configured}', which resolves outside the repository.` +
                   " semgrep sees only the repository, so name a ruleset inside it.",
           };
+}
+
+/**
+ * Every ruleset to scan under.
+ *
+ * `SEMGREP_CONFIG` is read as a list, separated by commas or whitespace. The rules most worth
+ * having here are not in `p/default`: the taint-tracking SQL and injection rules live in packs
+ * of their own, and semgrep takes `--config` once per ruleset rather than as one
+ * comma-separated value. Read as a single value, naming one of those packs dropped the
+ * defaults and everything in them, and no setting got both. `p/default p/sql-injection` now
+ * does.
+ *
+ * The list is the whole of what runs. `p/default` is where an unset variable lands, not a
+ * floor under a list that names something else, because a maintainer setting this to a file
+ * in the repository is closing the registry fetch, and adding the defaults back would reopen
+ * it.
+ */
+function ruleset(): { configs: string[]; remote: string[] } | { refusal: string } {
+    const configured = (process.env.SEMGREP_CONFIG ?? "").split(/[,\s]+/).filter((value) => value !== "");
+    const wanted = configured.length > 0 ? configured : [DEFAULT_RULESET];
+
+    const configs: string[] = [];
+    const remote: string[] = [];
+
+    for (const value of wanted) {
+        const resolved = entry(value);
+
+        if ("refusal" in resolved) return resolved;
+
+        configs.push(resolved.config);
+        if (!resolved.local) remote.push(resolved.config);
+    }
+
+    return { configs, remote };
 }
 
 const chosen = ruleset();
@@ -164,8 +197,7 @@ for (const chunk of chunks) {
     const proc = Bun.spawnSync(
         [
             ...started.argv,
-            "--config",
-            chosen.config,
+            ...chosen.configs.flatMap((config) => ["--config", config]),
             "--json",
             "--quiet",
             "--metrics",
@@ -256,9 +288,13 @@ await write({
     unreadable,
     errors,
     errors_truncated: allErrors.length - errors.length,
-    // A ruleset on disk is read from the bind mount, so nothing here reports an egress a
-    // maintainer closed by setting SEMGREP_CONFIG.
-    egress: chosen.local ? null : `fetched its \`${chosen.config}\` ruleset from semgrep's registry`,
+    // A ruleset on disk is read from the bind mount, so it is left out of this line: what a
+    // maintainer wants from it is what left the runner. With every entry local, nothing did.
+    egress:
+        chosen.remote.length === 0
+            ? null
+            : `fetched its ${chosen.remote.map((config) => `\`${config}\``).join(" and ")}` +
+              ` ruleset${chosen.remote.length === 1 ? "" : "s"} from semgrep's registry`,
     findings,
 });
 
