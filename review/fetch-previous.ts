@@ -163,9 +163,9 @@ async function download(id: number): Promise<Uint8Array> {
 /**
  * The workflow this run belongs to, or null where nothing names one.
  *
- * Null is `/codeferret:review` on somebody's own machine, and `sameWorkflow` then accepts
- * any run, because what a session does with a previous artifact is print it to the person
- * who asked.
+ * Null is `/codeferret:review` on somebody's own machine, and `openArtifact` then refuses
+ * every artifact: with no workflow to compare against, a genuine one and one a throwaway
+ * workflow uploaded read the same. A session prints findings it has shown before instead.
  *
  * A run id that is set and cannot be resolved is a different thing, and it throws. Answering
  * null there would let one transient API error open the single path a forged artifact walks
@@ -200,19 +200,29 @@ async function openArtifact(artifact: Artifact): Promise<unknown> {
     // however its findings file reads.
     const producer = artifact.workflow_run?.id;
 
-    if (own !== null) {
-        // Said here rather than left to the request. Interpolated undefined asks GitHub for
-        // `/runs/undefined`, and the 404 that comes back reads as a run that is not there
-        // when the truth is that the listing named none.
-        if (!Number.isInteger(producer)) {
-            throw new Error(`artifact ${artifact.id} names no producing run`);
-        }
+    // Refused before the request rather than around it. This block used to be wrapped in
+    // `if (own !== null)`, which skipped the guard in exactly the case `sameWorkflow` refuses:
+    // a session names no workflow, so nothing here can tell a genuine artifact from one a
+    // throwaway workflow uploaded and deleted. The wrapper meant the hardened function was
+    // never called on that path at all.
+    //
+    // The cost is that `/codeferret:review` suppresses nothing and prints findings it has
+    // shown before. That is the direction every other refusal in this file goes.
+    if (own === null) {
+        throw new Error(`artifact ${artifact.id} cannot be tied to a workflow, and this run names none`);
+    }
 
-        const producingRun = await restJson(token, `/repos/${repo}/actions/runs/${producer}`);
+    // Said here rather than left to the request. Interpolated undefined asks GitHub for
+    // `/runs/undefined`, and the 404 that comes back reads as a run that is not there
+    // when the truth is that the listing named none.
+    if (!Number.isInteger(producer)) {
+        throw new Error(`artifact ${artifact.id} names no producing run`);
+    }
 
-        if (!sameWorkflow(own, producingRun)) {
-            throw new Error(`artifact ${artifact.id} came from run ${producer}, which is not this workflow`);
-        }
+    const producingRun = await restJson(token, `/repos/${repo}/actions/runs/${producer}`);
+
+    if (!sameWorkflow(own, producingRun)) {
+        throw new Error(`artifact ${artifact.id} came from run ${producer}, which is not this workflow`);
     }
 
     // The shipped workflow uploads the file itself and this repository's own workflow

@@ -227,7 +227,16 @@ status=0
 # compared without copying, `cmp` and then `cp` both fail against a file that is not there
 # and `set -e` kills the job after the review has been paid for.
 PINNED=(diff-args diff.sh lens-list.txt previous.json)
-PRISTINE=$(mktemp -d)
+
+# Beside the build directory rather than under `mktemp -d`. `command-prefix` is asked to
+# mount `$RUN_DIR` and nothing else, so a path outside it is one the container cannot see:
+# extract-findings.ts is handed this directory and read the run log through the prefix, and
+# on that path it was reading a directory that does not exist there. Obscurity is unchanged
+# either way, and it was never the point: a lens with Bash can list either location. What the
+# copy buys is that a rewritten file is reported rather than believed.
+PRISTINE="$RUN_DIR/pristine"
+rm -rf "$PRISTINE"
+mkdir -p "$PRISTINE"
 trap 'rm -rf "$PRISTINE"' EXIT
 
 for pinned in "${PINNED[@]}"; do
