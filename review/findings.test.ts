@@ -286,3 +286,43 @@ describe("vetSuppression: whether the comment is about the finding", () => {
         expect(vet([declined("src/a.ts", conversationUrl)], named).untraceable).toBe(1);
     });
 });
+
+describe("vetSuppression holds a listed severity to the decline bar", () => {
+    const url = "https://github.com/o/r/pull/1#discussion_r1";
+
+    const commented = (association: string) => ({
+        threads: [
+            {
+                thread_id: "T",
+                resolved: false,
+                url,
+                file: "a.ts",
+                mine: false,
+                comments: [{ author: "who", association, url, body: "known issue in a.ts" }],
+            },
+        ],
+        conversation: [],
+    });
+
+    const reported = (severity: string): Finding =>
+        finding({ severity, status: "already-reported", existing_comment_url: url });
+
+    for (const severity of ["critical", "high"]) {
+        test(`a stranger's comment cannot demote a ${severity} finding`, () => {
+            const out = vet([reported(severity)], commented("NONE"));
+
+            expect(out.findings[0]?.status).toBe("new");
+            expect(out.unreported).toBe(1);
+        });
+
+        test(`an owner's comment still settles a ${severity} finding`, () => {
+            expect(vet([reported(severity)], commented("OWNER")).findings[0]?.status).toBe("already-reported");
+        });
+    }
+
+    for (const severity of ["medium", "low"]) {
+        test(`anyone's comment still settles a ${severity} finding`, () => {
+            expect(vet([reported(severity)], commented("NONE")).findings[0]?.status).toBe("already-reported");
+        });
+    }
+});

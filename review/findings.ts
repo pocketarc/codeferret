@@ -272,6 +272,18 @@ export function vetSuppression(findings: Finding[], discussion: Survey, previous
         }
 
         if (f.status === "already-reported") {
+            // A critical or a high is held to the decline bar instead. The lower bar below
+            // rests on the finding keeping its line in the review either way, and for these
+            // two that is not the whole of it: the body prints critical and high in full and
+            // everything else as one line in a collapsed block, so demoting one is the
+            // difference between a reader seeing the defect and seeing its title. On a public
+            // repository anyone can comment, and `isAbout` asks only that the text name the
+            // file. An entitled commenter, or the previous run's own record, is the bar.
+            if (LISTED.has(f.severity) && url && !(cited && entitled(cited))) {
+                unreported += 1;
+                return reopen(f);
+            }
+
             if (url) {
                 if (cited && isAbout(cited, f.file)) return f;
 

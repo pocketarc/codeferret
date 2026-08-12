@@ -35,6 +35,16 @@ Protection list and in its checklist. The parameterisation those examples demons
 right and the projection beside it is not, so do not read a green tick there as permission:
 name the columns, and raise `SELECT *` in the diff on the skill's own rule.
 
+Its N+1 example is the one most likely to reach an author, and its replacement is worse than
+the loop it replaces. The skill offers `SELECT u.*, o.* FROM users u LEFT JOIN orders o ON
+u.id = o.user_id` as the fix for a per-user query loop. There is no `WHERE` and no `LIMIT`,
+so it reads every user and every order to answer a question that was about one page of users,
+and `u.*` repeats once per matching order, so each user is transferred as many times as they
+have orders. The projection is also the `SELECT *` the same skill lists as a defect. The fix
+for an N+1 is one query over the ids the caller already holds, projecting named columns:
+`SELECT o.user_id, o.id, o.total FROM orders o WHERE o.user_id = ANY($1)`, grouped in the
+application. Recommend that shape, and raise the skill's own example if it appears in a diff.
+
 Its Issue Template nests three-backtick blocks inside a three-backtick block, which leaves a
 fence open from there to the end of the file. Everything after it (the output format, the
 scores, the priority actions) is upstream's own reporting shape, and none of it applies:
