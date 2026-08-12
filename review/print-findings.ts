@@ -60,10 +60,17 @@ if (fresh.length === 0) {
     }
 }
 
-const older = suppressed.length + declined.length;
+const older = [...suppressed, ...declined];
 
-if (older > 0) {
-    out.push(`${findingsFile} holds ${plural(older, "finding")} raised before.`);
+// Listed, not counted. The posted body prints each of these with its file and title, and a
+// session that reports only how many there were disagrees with the review it is standing in
+// for: the reader cannot tell whether the thing they are looking at is among them.
+if (older.length > 0) {
+    out.push(`${plural(older.length, "finding")} raised before, in full in ${findingsFile}:`);
+
+    for (const f of [...older].sort(byPosition)) {
+        out.push(`  ${where(f)}: ${f.title}`);
+    }
 }
 
 const health = merged.lens_health ?? [];

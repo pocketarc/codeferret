@@ -118,19 +118,19 @@ describe("mention", () => {
     test("links the thread when there is one", () => {
         expect(
             mention(finding({ existing_comment_url: "https://example.test/1" }), "thread", onThePullRequest),
-        ).toBe("- A title (`a.ts:1`) ([thread](https://example.test/1))");
+        ).toBe("- `a.ts:1`: A title ([thread](https://example.test/1))");
     });
 
     test("names the finding without a link when the previous run left no url", () => {
-        expect(mention(finding(), "thread", onThePullRequest)).toBe("- A title (`a.ts:1`)");
+        expect(mention(finding(), "thread", onThePullRequest)).toBe("- `a.ts:1`: A title");
     });
 
     test("drops a url that is not a link, rather than spilling it into the line", () => {
         expect(mention(finding({ existing_comment_url: "not a url" }), "thread", onThePullRequest)).toBe(
-            "- A title (`a.ts:1`)",
+            "- `a.ts:1`: A title",
         );
         expect(mention(finding({ existing_comment_url: "javascript:alert(1)" }), "thread", onThePullRequest)).toBe(
-            "- A title (`a.ts:1`)",
+            "- `a.ts:1`: A title",
         );
     });
 
@@ -142,7 +142,7 @@ describe("mention", () => {
 
     test("does not link a url no comment on the pull request carries", () => {
         expect(mention(finding({ existing_comment_url: "https://evil.test/x" }), "thread", onThePullRequest)).toBe(
-            "- A title (`a.ts:1`)",
+            "- `a.ts:1`: A title",
         );
     });
 
@@ -561,7 +561,7 @@ describe("composeReview", () => {
     test("escapes a heading a title would open at a list item's content column", () => {
         const body = review({ findings: [finding({ title: "# Fix the parser", status: "already-reported" })] });
 
-        expect(body).toContain("- \\# Fix the parser");
+        expect(body).toContain("`a.ts:1`: \\# Fix the parser");
     });
 
     test("sends a reader nowhere when the run kept no artifact, rather than to its log", () => {

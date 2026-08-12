@@ -247,7 +247,10 @@ export function mention(f: Finding, link: string, linkable: ReadonlySet<string>)
     const target = cited && linkable.has(cited) ? linkTarget(cited) : null;
     const url = target ? ` ([${link}](${target}))` : "";
 
-    return `- ${title(f)} (${code(where(f))})${url}`;
+    // Location first, then the title, matching `bullet`. The two render the same two fields
+    // for the same kind of object, and a reader moving between the listing and this one was
+    // reading them in opposite orders.
+    return `- ${code(where(f))}: ${title(f)}${url}`;
 }
 
 /**

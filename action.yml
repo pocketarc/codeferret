@@ -61,8 +61,13 @@ inputs:
             `.next` and `.vercel` are matched at any depth with nothing given up. The App
             Router's scan skips a dot-prefixed entry, so neither is a name anybody routes
             on. In a monorepo `vercel build` writes to `apps/<app>/.vercel/output/` beside
-            that app's `.next/`. `next-env.d.ts` is a fixed filename that is never a route
-            segment.
+            that app's `.next/`.
+
+            `next-env.d.ts` is deliberately not excluded, though it is generated. Next.js
+            rewrites it on every build and it opens with a line saying not to edit it, so the
+            only way it reaches a pull request is that somebody edited it by hand. The next
+            build silently discards that edit. A generated file in a diff is usually noise;
+            this one is the defect.
         required: false
         default: |
             **/*.lock
@@ -74,7 +79,6 @@ inputs:
             **/vendor/**
             **/.next/**
             **/.vercel/**
-            **/next-env.d.ts
             **/dist/**
             out/**
             build/**
