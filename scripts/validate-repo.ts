@@ -19,7 +19,7 @@ import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { reason, record } from "../review/json.ts";
-import { STANDING_DETAIL } from "../review/review-body.ts";
+import { STANDING_DETAIL } from "../review/standing-detail.ts";
 import { dispatchedFrom, LENS_LIST_FILE, RUN_FILE_NAMES, RUN_FILES } from "../review/run-files.ts";
 
 process.chdir(join(import.meta.dir, ".."));
@@ -467,28 +467,26 @@ async function checkFindingRules(): Promise<Failures> {
  */
 async function checkStandingDetail(): Promise<Failures> {
     const list: Failures = [];
-    const file = "review/review-body.ts";
-    const bundled = bundledLenses();
+    const file = "review/standing-detail.ts";
 
+    // The map is generated from the `standing-detail` frontmatter of the extras files, and
+    // checkGenerated re-runs that generator, so drift between the two is already covered.
+    // What is left is the case the generator cannot see: every lens whose extras open by
+    // naming a capability the session does not have should claim a sentence, and an empty
+    // map means a review promises a caveat nobody wrote.
     if (STANDING_DETAIL.size === 0) {
-        fail(list, file, "declares no STANDING_DETAIL, so no lens carries a caveat it did not write itself");
+        fail(list, file, "holds no caveat, so a review says nothing about what a lens could not reach");
         return list;
     }
 
     for (const lens of STANDING_DETAIL.keys()) {
-        if (!bundled.has(lens)) {
-            fail(list, file, `STANDING_DETAIL names '${lens}', which is not a lens under lenses/skills/`);
-        }
-
-        // Membership is "its brief opens by naming a capability the session does not have",
-        // so a key with no brief has nothing behind the sentence it prints into every review.
-        if (!existsSync(`review/lens-extras/${lens}.md`)) {
-            fail(list, file, `STANDING_DETAIL names '${lens}', which has no review/lens-extras/${lens}.md`);
+        if (!bundledLenses().has(lens)) {
+            fail(list, file, `names '${lens}', which is not a lens under lenses/skills/`);
         }
     }
 
     if (list.length === 0) {
-        console.log(`OK standing-detail: ${STANDING_DETAIL.size} caveat(s) name a bundled lens`);
+        console.log(`OK standing-detail: every caveat names a bundled lens`);
     }
 
     return list;

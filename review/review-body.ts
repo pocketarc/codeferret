@@ -9,6 +9,7 @@
  */
 
 import { brokenLenses, isListed, lensLabel, LISTED, silentLenses } from "./findings.ts";
+import { STANDING_DETAIL } from "./standing-detail.ts";
 import type { Finding, LensHealth, Merged, Partitioned, Vetted } from "./findings.ts";
 import {
     clamp,
@@ -290,18 +291,6 @@ function lensDetail(detail: string): string {
  * not evaluated. `validate-repo.ts` checks that every key here has a brief and nothing more;
  * the words are a reading.
  */
-export const STANDING_DETAIL: ReadonlyMap<string, string> = new Map([
-    [
-        "anthropic-accessibility-review",
-        "No page was rendered, so contrast, focus order, target size, reflow, text spacing," +
-            " timing limits and what an assistive technology announces were not evaluated.",
-    ],
-    ["copilot-web-design-reviewer", "No browser was available, so nothing was judged from a rendered page."],
-    [
-        "vercel-next-best-practices",
-        "No application was running, so nothing was judged from a build, a bundle or a rendered page.",
-    ],
-]);
 
 /**
  * The standing sentence and the lens's own words together, or nothing where there is

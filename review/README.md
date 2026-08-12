@@ -222,7 +222,6 @@ the orchestrator's last turn alone, and undercounted one full run sixtyfold.
 | `markdown.ts` | Where a fenced block starts and stops, and what a model's prose may open in a posted review. `markdown.test.ts` beside it. |
 | `reviewed-commit.ts` | Prints the commit the lenses read, for whoever is about to post against it. |
 | `diff-args.ts` | Reads back what the lenses were told to diff, so nothing builds a second range or pathspec. |
-| `tool-stub.ts` | Writes the report for a tool that died before it could write one itself. |
 | `github.ts` | How these scripts talk to GitHub: the token handshake, the headers, the shape of a failure. |
 | `json.ts` | The two narrowings every script here takes on a value it did not produce. |
 | `lib.sh` | What a shell script must work out or refuse before passing a value on: the guards, the `gh` handshake, the pull request and the base ref. |

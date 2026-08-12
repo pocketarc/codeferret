@@ -1,3 +1,9 @@
+---
+standing-detail: >-
+  No application was running, so nothing was judged from a build, a bundle or a rendered
+  page.
+---
+
 The skill you are about to load assumes a running application. This session has none: no
 dev server, no `/_next/mcp` endpoint, no build output and no bundle to analyse. Read the
 skill for what it knows about Next.js, not for its workflow.

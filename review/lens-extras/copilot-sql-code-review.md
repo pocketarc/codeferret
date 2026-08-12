@@ -14,8 +14,20 @@ Its "Overuse of DISTINCT" example replaces `SELECT DISTINCT u.name` with the sam
 `GROUP BY u.name`, presented as a fix for the join. It is not: the grouping deduplicates the
 same multiplied rows at the same cost, and the join still produces one row per order. For
 "users with at least one order" the fix is a semi-join, which stops at the first match:
-`SELECT u.name FROM users u WHERE EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id)`.
-Recommend that shape, not the `GROUP BY`.
+`SELECT DISTINCT u.name FROM users u WHERE EXISTS (SELECT 1 FROM orders o WHERE o.user_id =
+u.id)`. Recommend that shape, not the `GROUP BY`. Keep the `DISTINCT`: the win comes from the
+semi-join, which leaves at most one row per user instead of one per order, and `u.name` is
+not unique, so dropping it turns two users both called Alice into two rows where the original
+returned one. Dropping `DISTINCT` is safe only once the projection carries a key.
+
+Its N+1 fix is unsound for a second reason and it is the advice most likely to reach an
+author. The "GOOD" replacement for a per-user query loop is `SELECT u.*, o.* FROM users u
+LEFT JOIN orders o ON u.id = o.user_id;`, which has no `WHERE` and no `LIMIT`, so it reads
+every user and every order to answer a question about a bounded page of users, and it repeats
+each user's row once per matching order. It is also `SELECT *` on `users`, the table the
+skill itself uses to illustrate sensitive columns. Recommend a batched fetch on the child
+table keyed by the parent ids already in hand, with the columns named: `SELECT o.user_id,
+o.id, o.total, o.order_date FROM orders o WHERE o.user_id = ANY($1)`.
 
 Its examples under "SECURE" and "GOOD" select `*` from `users`, which is the table the same
 skill uses to illustrate sensitive columns, and which appears as a defect in its own Data

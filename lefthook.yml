@@ -4,7 +4,7 @@ pre-commit:
     parallel: true
     commands:
         repo:
-            tags: manifests static-analysis
+            tags: manifests checks
             run: bun scripts/validate-repo.ts
         typecheck:
             tags: ts types

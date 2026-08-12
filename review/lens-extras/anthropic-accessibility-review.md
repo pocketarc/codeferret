@@ -1,3 +1,9 @@
+---
+standing-detail: >-
+  No page was rendered, so contrast, focus order, target size, reflow, text spacing, timing
+  limits and what an assistive technology announces were not evaluated.
+---
+
 There is no rendered page in this session, and no browser, screen reader or contrast tool
 to point at one. What you have is the source in the diff.
 
@@ -56,13 +62,19 @@ Report the half you can see, and say plainly what you could not judge:
   CSS `:hover` rule that reveals content, and no `onFocus`/`onBlur` or `:focus-within`
   counterpart, is content a keyboard user never reaches. Whether what it reveals is
   dismissible, hoverable and persistent needs the rendered page.
-- 3.2.2, change of context on input. A handler that navigates or submits a form from
-  `onChange` or `onFocus` is a source fact. Whether a subtler change counts as a change of
-  context is not.
-- 2.2.2, moving content. A CSS `animation` or `transition` set to `infinite` starts on its
-  own and runs well past five seconds, and under 2.2.2 Pause, Stop, Hide (Level A) it needs
-  a mechanism to pause, stop or hide it. Whether the source carries one anywhere is a source
-  fact.
+- 3.2.1, change of context on focus (Level A). A handler that navigates or submits a form
+  from `onFocus` is a source fact. Whether a subtler change counts as a change of context is
+  not.
+- 3.2.2, change of context on input (Level A). The same for `onChange`, and for a form
+  submitted when a value changes. Do not file an `onFocus` handler here: focus and input are
+  separate criteria, and the skill's own quick reference names only 3.2.1.
+- 2.2.2, moving content. A CSS `animation` whose declared `animation-duration` multiplied by
+  its `animation-iteration-count` runs past five seconds starts on its own and needs a
+  mechanism to pause, stop or hide it under 2.2.2 Pause, Stop, Hide (Level A). `infinite` is
+  the case where that product is unbounded, and a finite `animation: slide 20s ease-in-out 1`
+  fails the same way. A `transition` has no iteration count and cannot be set to `infinite`,
+  so it is outside this bullet. Whether the source carries a pause mechanism anywhere is a
+  source fact.
 - 2.3.3, motion from interactions. A `@media (prefers-reduced-motion: reduce)` block is
   technique C39, which is sufficient for this criterion under WCAG and not for 2.2.2, so an
   animation with no such block goes here rather than under the bullet above. 2.3.3 is Level

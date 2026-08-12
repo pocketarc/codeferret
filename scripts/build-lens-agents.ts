@@ -67,13 +67,42 @@ if (!namespace) {
 const brief = await Bun.file("review/lens-brief.md").text();
 const schema = (await Bun.file("review/lens-schema.json").text()).trim();
 
-// Text meant for one lens and no other belongs in that lens's own system prompt. Routed
-// through the orchestrator instead, it becomes a line the orchestrator has to hand to the
-// right lens and no one else, every run, and nothing downstream can tell when it gets that
-// wrong.
-async function extrasFor(lens: string): Promise<string> {
+/** What an extras file holds: the sentence a review prints for the lens, and the prose. */
+interface Extras {
+    standingDetail?: string;
+    body: string;
+}
+
+/**
+ * A lens's extras file, split into its frontmatter and its prose.
+ *
+ * `standing-detail` is the sentence a review prints for that lens whatever the lens itself
+ * reports, and it lives here rather than beside the renderer so that a lens's limits are
+ * written once. `review/standing-detail.ts` is generated from these, so the sentence the
+ * lens reads and the sentence a reader gets cannot drift.
+ *
+ * The frontmatter is taken off the prose. Left in, the agent's system prompt carries a
+ * stray `---` and a YAML key in the middle of its instructions, which is what shipped for
+ * one commit.
+ */
+async function extrasFor(lens: string): Promise<Extras> {
     const path = `${EXTRAS_DIR}/${lens}.md`;
-    return existsSync(path) ? `\n${(await Bun.file(path).text()).trim()}\n` : "";
+
+    if (!existsSync(path)) return { body: "" };
+
+    const text = await Bun.file(path).text();
+    const match = text.match(/^---\n([\s\S]*?)\n---\n/);
+
+    if (!match?.[1]) return { body: `\n${text.trim()}\n` };
+
+    const parsed = Bun.YAML.parse(match[1]);
+    const held = typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : {};
+    const detail = held["standing-detail"];
+
+    return {
+        standingDetail: typeof detail === "string" && detail.trim() !== "" ? detail.trim() : undefined,
+        body: `\n${text.slice(match[0].length).trim()}\n`,
+    };
 }
 
 /**
@@ -125,7 +154,7 @@ if (one !== -1) {
         agent(
             lens,
             `CodeFerret's ${lens} lens, from this repository's own .claude/skills/. Dispatched by /codeferret:review; not for general use.`,
-            render(`Load the \`${namespace}:${lens}\` skill and review the diff under it.`, await extrasFor(lens)),
+            render(`Load the \`${namespace}:${lens}\` skill and review the diff under it.`, (await extrasFor(lens)).body),
         ),
     );
 
@@ -134,10 +163,15 @@ if (one !== -1) {
 }
 
 const wanted = new Map<string, string>();
+const standing = new Map<string, string>();
 
 for (const entry of readdirSync("lenses/skills", { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     if (!existsSync(`lenses/skills/${entry.name}/SKILL.md`)) continue;
+
+    const extras = await extrasFor(entry.name);
+
+    if (extras.standingDetail) standing.set(entry.name, extras.standingDetail);
 
     wanted.set(
         `${AGENTS_DIR}/${entry.name}.md`,
@@ -146,11 +180,32 @@ for (const entry of readdirSync("lenses/skills", { withFileTypes: true })) {
             `CodeFerret's ${entry.name} lens. Dispatched by /codeferret:review; not for general use.`,
             render(
                 `Load the \`${namespace}:${entry.name}\` skill and review the diff under it.`,
-                await extrasFor(entry.name),
+                extras.body,
             ),
         ),
     );
 }
+
+// Generated beside the agents from the same read, so the sentence a lens is given and the
+// sentence a review prints for it come out of one file. Written even when empty, because a
+// stale map left on disk would keep printing a caveat for a lens that no longer claims one.
+const STANDING_FILE = "review/standing-detail.ts";
+
+const entries = [...standing]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([lens, detail]) => `    [${JSON.stringify(lens)}, ${JSON.stringify(detail)}],`)
+    .join("\n");
+
+wanted.set(
+    STANDING_FILE,
+    `/**\n` +
+        ` * What a review says a lens could not reach, whatever the lens itself reported.\n` +
+        ` *\n` +
+        ` * Generated from the \`standing-detail\` frontmatter of review/lens-extras/*.md by\n` +
+        ` * scripts/build-lens-agents.ts. Edit the extras file, not this one.\n` +
+        ` */\n\n` +
+        `export const STANDING_DETAIL: ReadonlyMap<string, string> = new Map([\n${entries}\n]);\n`,
+);
 
 let problems = (await writeOrCheck(wanted, check, "bun scripts/build-lens-agents.ts")).problems;
 

@@ -122,13 +122,13 @@ inputs:
             `claude-code-oauth-token` is not set inside it: put the credentials in the image
             or the compose file. Everything else the session needs arrives as an argument,
             which the prefix passes through. Without the credentials the run fails at the
-            orchestrator, which is after the whole tool stage.
+            orchestrator, which is after the prompts are built and both GitHub fetches.
 
             It must also mount three paths at the same absolute location they have on the
             runner. The checkout. `$GITHUB_ACTION_PATH`, which holds every script the
             prefix runs. And `$RUNNER_TEMP/codeferret`, which holds the run's plugin, the
-            diff command each lens is given, and the static analysis reports. The run
-            checks the last two and stops with the path named, because a lens that cannot
+            diff command each lens is given. The run checks the last two and stops with
+            the path named, because a lens that cannot
             reach the build directory reads no diff and returns a review that is empty for
             no stated reason.
         required: false
@@ -205,11 +205,6 @@ inputs:
             put it back. Beside the findings sits run.json, the orchestrator's final
             result object, which is not secret-masked and whose prose quotes the diff.
             Anyone can download an artifact from a public repository.
-
-            Keeping the whole directory is also what it takes to audit the
-            `static-analysis` lens, which may drop a tool finding only because the raw
-            report survives in `tool-*.json`. On the default path nothing uploads those
-            reports, so they are gone when the runner is torn down.
 
             Set it to an empty string to upload nothing. Every finding is then raised
             again on every push.
