@@ -16,8 +16,12 @@ jobs:
             - name: Checkout
               uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+            # Pinned for the reason action.yml pins the same two: this job runs a fork's
+            # code, and an unpinned global install lets whatever `latest` points at that
+            # morning execute first. A stale pin fails loudly; a compromised release does
+            # not. Bump it in the same edit as action.yml's BUN_VERSION.
             - name: Install Bun
-              run: npm install -g bun
+              run: npm install -g bun@1.3.14
 
             - name: Validate the repository
               run: bun scripts/validate-repo.ts

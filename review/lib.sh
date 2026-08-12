@@ -203,8 +203,8 @@ resolve_base() {
 
 # ---- Guards on the values a model pastes into a command line -------------------------
 #
-# /codeferret:review has a model substitute a base ref, a lens name and a tool name into
-# the shell it runs, and the action takes the same three from workflow inputs. Quoting is
+# /codeferret:review has a model substitute a base ref and a lens name into the shell it
+# runs, and the action takes both from workflow inputs. Quoting is
 # no defence: `$(...)`, backticks and `${...}` all expand inside double quotes. So a value
 # that is not a plain ref or a plain name never reaches a command line.
 #
@@ -230,8 +230,8 @@ plain_number() {
     esac
 }
 
-# A lens or tool name. It becomes a path component under two search roots, a `cp -R`
-# destination and a line of a prompt, so no separator and no leading dot.
+# A lens name. It becomes a path component under two search roots, a `cp -R` destination
+# and a line of a prompt, so no separator and no leading dot.
 plain_name() {
     case $1 in
     "" | .* | *[!A-Za-z0-9._-]*) return 1 ;;

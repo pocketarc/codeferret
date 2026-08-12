@@ -121,11 +121,17 @@ the `repo=` value from step 1, and the findings in `findings.json` beside `run.j
 
 ## 5. Print what they found
 
-When the run exited non-zero, there may be no `findings.json` at all: a lens with no
-`SKILL.md`, a run directory the delete check would not touch, or an orchestrator that
-died. Say what the last lines of its output were, and print whatever
-`<git-dir>/codeferret/run/build/` does hold: `cost-usd`, `duration-ms` and
-`permission-denials` are written before the findings are. Then stop.
+A non-zero exit does not mean there is nothing to print. `check-findings.ts` exits 3 when
+it dropped something and the rest is worth posting, and `run.sh` writes
+`build/findings-checked` holding `ok` in exactly that case. The action posts on that marker
+rather than on the exit code, so gate on the same thing here: a session that stopped on the
+exit code threw away a review the action would have posted.
+
+So when `build/findings-checked` holds `ok`, carry on and print, saying that something was
+dropped. Only when it does not is there nothing: a lens with no `SKILL.md`, a run directory
+the delete check would not touch, or an orchestrator that died. Then say what the last lines
+of its output were, print whatever `<git-dir>/codeferret/run/build/` does hold — `cost-usd`,
+`duration-ms` and `permission-denials` are written before the findings are — and stop.
 
 Otherwise print the findings:
 

@@ -700,6 +700,37 @@ async function checkLensList(): Promise<Failures> {
 }
 
 /**
+ * The bun the action installs, against the one the lint workflow installs.
+ *
+ * Both pin it because both run a fork's code with an unpinned global install otherwise, and
+ * a version in two files with a comment asking for one edit is a version that drifts. The
+ * cost of drift is quiet: the tests pass under one bun and the review runs under another.
+ */
+async function checkBunVersion(): Promise<Failures> {
+    const list: Failures = [];
+    const workflow = ".github/workflows/lint.yml";
+
+    const inAction = (await Bun.file("action.yml").text()).match(/^\s*BUN_VERSION=(\S+)$/m)?.[1];
+    const inWorkflow = (await Bun.file(workflow).text()).match(/npm install -g bun@(\S+)$/m)?.[1];
+
+    if (!inAction) {
+        fail(list, "action.yml", "names no BUN_VERSION, so the bun it installs is whatever `latest` is that morning");
+    }
+
+    if (!inWorkflow) {
+        fail(list, workflow, "installs bun without a version, so it runs a fork's code under whatever `latest` is");
+    }
+
+    if (inAction && inWorkflow && inAction !== inWorkflow) {
+        fail(list, workflow, `installs bun@${inWorkflow} and action.yml installs bun@${inAction}`);
+    }
+
+    if (list.length === 0) console.log(`OK bun-version: both install bun@${inAction}`);
+
+    return list;
+}
+
+/**
  * The retention window fetch-previous.ts pages back to, against the one the action asks for.
  *
  * Drift here is quiet in the direction that matters: raise the action's retention and the
@@ -857,6 +888,7 @@ const CHECKS: Array<[string, () => Promise<Failures>]> = [
     ["lens-list", checkLensList],
     ["bun-config", checkBunConfig],
     ["retention", checkRetention],
+    ["bun-version", checkBunVersion],
     ["standing-detail", checkStandingDetail],
     ["prompts", checkPrompts],
     ["workflows", checkWorkflows],
