@@ -48,17 +48,6 @@ PERMISSION_MODE=${PERMISSION_MODE:-bypassPermissions}
 
 : "${LENSES:?no lenses given}"
 
-# Checked here rather than left to the `claude` invocation at the end, which is after
-# build-prompts and both GitHub fetches. A misspelling would otherwise be found by a CLI
-# usage error that names no input, minutes into a run.
-case ${EFFORT:-} in
-"" | low | medium | high | xhigh | max) ;;
-*)
-    echo "effort is '$EFFORT'. It has to be low, medium, high, xhigh or max." >&2
-    exit 1
-    ;;
-esac
-
 # shellcheck source=review/lib.sh
 . "$ACTION/review/lib.sh"
 
@@ -95,6 +84,19 @@ if [ -n "${GITHUB_TOKEN_FILE:-}" ] && [ -f "$GITHUB_TOKEN_FILE" ]; then
     token=$(cat "$GITHUB_TOKEN_FILE")
     rm -f "$GITHUB_TOKEN_FILE"
 fi
+
+# After the file above is consumed, not before. A rejected value exits, and exiting while the
+# caller's credential is still sitting in the run directory leaves it there with nothing left
+# running to clear it: /codeferret:review stages somebody's own `gh` token and then execs, so
+# no trap of its own survives to tidy up. Still ahead of build-prompts, both fetches and the
+# session, which is what keeps a misspelling from being found by a CLI usage error minutes in.
+case ${EFFORT:-} in
+"" | low | medium | high | xhigh | max) ;;
+*)
+    echo "effort is '$EFFORT'. It has to be low, medium, high, xhigh or max." >&2
+    exit 1
+    ;;
+esac
 
 # Everything below is weaker than the file, and it is here for the credentials this script
 # does not own. A caller's job may declare GITHUB_TOKEN of its own, and the runner puts

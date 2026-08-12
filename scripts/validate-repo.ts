@@ -586,11 +586,24 @@ async function checkRunFiles(): Promise<Failures> {
  */
 async function checkBunConfig(): Promise<Failures> {
     const list: Failures = [];
-    const files = [...readdirSync("review").filter((f) => f.endsWith(".sh")).map((f) => `review/${f}`), "action.yml"];
+
+    // Both script directories, not just review/. `scripts/vendor-lens.sh` runs bun too, and
+    // being outside the scanned set is how its invocation went without the flag.
+    const shell = ["review", "scripts"].flatMap((dir) =>
+        readdirSync(dir)
+            .filter((f) => f.endsWith(".sh"))
+            .map((f) => `${dir}/${f}`),
+    );
+
+    const files = [...shell, "action.yml"];
     let invocations = 0;
 
     for (const file of files) {
-        const text = await Bun.file(file).text();
+        // Line continuations joined first. Every long invocation in these scripts is written
+        // over several lines with a trailing backslash, and a per-line match sees the flag
+        // and the script name as two unrelated fragments: `bun \` matched nothing at all, so
+        // the ones most worth checking were the ones being skipped.
+        const text = (await Bun.file(file).text()).replace(/\\\n\s*/g, " ");
 
         for (const [, flags, script] of text.matchAll(/\bbun\b([^\n]*?)([\w$"'{}/.-]*\.ts)\b/g)) {
             invocations += 1;
@@ -599,6 +612,13 @@ async function checkBunConfig(): Promise<Failures> {
                 fail(list, file, `runs \`bun ... ${script}\` with no --config=/dev/null`);
             }
         }
+    }
+
+    // A check that matched nothing has proved nothing. This is the only mechanical guard on
+    // the rule, in a job holding both tokens, so silence here has to be a failure rather than
+    // an OK line: a regex that stops matching would otherwise read exactly like compliance.
+    if (invocations === 0) {
+        fail(list, "scripts/validate-repo.ts", "checkBunConfig matched no bun invocation at all, so it checked nothing");
     }
 
     if (list.length === 0) console.log(`OK bun-config: ${invocations} bun invocation(s) name a config`);

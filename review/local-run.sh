@@ -87,7 +87,14 @@ if [ -n "$PR" ]; then
     rm -f "$GITHUB_TOKEN_FILE"
     (umask 077 && printf '%s' "$GITHUB_TOKEN" >"$GITHUB_TOKEN_FILE")
 
-    unset -v GITHUB_TOKEN
 fi
+
+# Outside the branch above, because the reason holds whether or not this run staged a
+# credential. A developer with GITHUB_TOKEN or GH_TOKEN exported in their own shell hands it
+# to every process they start, and on a branch with no pull request nothing above runs, so
+# the value reached the environment run.sh was execve'd with and stayed readable in /proc for
+# the length of the review. Dropping them here covers both, and costs nothing when neither
+# was set: run.sh takes the token it needs from the file named above.
+unset -v GITHUB_TOKEN GH_TOKEN
 
 exec bash "$PLUGIN/review/run.sh" "$BASE" "$PLUGIN" "$RUN_DIR" "$TOPLEVEL"
