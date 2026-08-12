@@ -118,7 +118,11 @@ is in `review/README.md`.
   happened is a different thing and stays: "$1.28 and no findings" is the evidence for the
   rule beside it, and no later commit can make it wrong. Nothing mechanical catches these, so
   the `comment-review` lens is told, in `review/lens-extras/comment-review.md`, to report the
-  ones that get through.
+  ones that get through. That lens is currently off in this repository's own workflow, along
+  with `writing-review`: `LENSES_THIS_REPO_SKIPS` in `scripts/validate-repo.ts` names both and
+  says why. While they are off, run them by hand over the working tree before a push, or this
+  rule has nothing behind it. The run that first had them off left a stale `tool-stub.ts` row
+  and three descriptions of a deleted stage in the tree, and a person found them.
 - A lens's `in_diff` field is unreliable, and nothing reads it. On every run that used
   inline comments, a lens reported an out-of-diff finding as in-diff. Nothing anchors to a
   line now, so there is nothing left to be wrong about. Whoever adds the first inline
