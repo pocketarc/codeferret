@@ -58,8 +58,9 @@ describe("sameWorkflow", () => {
         expect(sameWorkflow(42, null)).toBe(false);
     });
 
-    test("takes any run in a session, where nothing names a workflow to compare against", () => {
-        expect(sameWorkflow(null, { workflow_id: 99 })).toBe(true);
+    test("refuses every run in a session, where nothing names a workflow to compare against", () => {
+        expect(sameWorkflow(null, { workflow_id: 99 })).toBe(false);
+        expect(sameWorkflow(null, {})).toBe(false);
     });
 });
 

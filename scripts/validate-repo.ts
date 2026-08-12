@@ -391,30 +391,64 @@ async function checkDefaults(): Promise<Failures> {
 }
 
 /**
- * The lenses this repository's own workflow names, against the bundled skills.
+ * The lenses this repository's own workflow names, against the ones the action ships.
  *
  * `lenses` replaces the default rather than adding to it, so a workflow that names them one
- * by one keeps its own list and nothing here reconciles the two. Removing a lens from
- * `action.yml` therefore leaves the workflow naming a skill that is gone, and the run fails
- * at `build-prompts.sh` seconds in. That is how the tool removal broke a run: the workflow
- * still asked for `static-analysis`.
+ * by one keeps its own list and nothing reconciles the two. Both directions are quiet in
+ * their own way. A lens removed from `action.yml` and left here fails `build-prompts.sh`
+ * seconds into a run, which is loud but wastes a job; that is how the tool removal broke one.
+ * A lens *added* to `action.yml` and not here is silent for ever: the review simply covers
+ * less than the shipped default and says nothing about it.
+ *
+ * So the list has to be the default minus exactly the lenses named below, and dropping one
+ * means saying so here.
  */
+const LENSES_THIS_REPO_SKIPS = new Map<string, string>([
+    ["comment-review", "run by hand against the working tree before a push"],
+    ["writing-review", "run by hand against the working tree before a push"],
+]);
+
 async function checkWorkflowLenses(): Promise<Failures> {
     const list: Failures = [];
     const path = ".github/workflows/codeferret.yml";
-    const parsed = record(Bun.YAML.parse(await Bun.file(path).text()));
+    const manifest = await action(list);
+    if (!manifest) return list;
+
+    const parsed = record(await parseYaml(list, path));
     const job = record(record(parsed?.jobs)?.review);
     const steps = Array.isArray(job?.steps) ? job.steps : [];
+    const named = steps.flatMap((step) => lines(record(record(step)?.with)?.lenses));
 
-    for (const step of steps) {
-        for (const lens of lines(record(record(step)?.with)?.lenses)) {
-            if (!existsSync(`lenses/skills/${lens}/SKILL.md`)) {
-                fail(list, path, `names lens '${lens}', which has no bundled skill`);
-            }
+    if (named.length === 0) {
+        console.log(`OK ${path}: names no lenses, so it takes the shipped default`);
+        return list;
+    }
+
+    for (const lens of named) {
+        if (!existsSync(`lenses/skills/${lens}/SKILL.md`)) {
+            fail(list, path, `names lens '${lens}', which has no bundled skill`);
         }
     }
 
-    console.log(`OK ${path}: every lens it names has a bundled skill`);
+    for (const lens of lines(manifest.inputs?.lenses?.default)) {
+        if (named.includes(lens) || LENSES_THIS_REPO_SKIPS.has(lens)) continue;
+
+        fail(
+            list,
+            path,
+            `does not name '${lens}', which action.yml ships by default.` +
+                " Add it, or say here why this repository skips it.",
+        );
+    }
+
+    for (const [lens, why] of LENSES_THIS_REPO_SKIPS) {
+        if (named.includes(lens)) {
+            fail(list, "scripts/validate-repo.ts", `LENSES_THIS_REPO_SKIPS holds '${lens}' (${why}), and ${path} names it`);
+        }
+    }
+
+    if (list.length === 0) console.log(`OK ${path}: the shipped default minus ${LENSES_THIS_REPO_SKIPS.size}`);
+
     return list;
 }
 

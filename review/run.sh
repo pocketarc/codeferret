@@ -310,10 +310,15 @@ fi
 # is the run extract-findings.ts writes `none reported` and `unknown` for. Skip it and the run
 # files are never written at all, and the action's `findings-count` output comes back as an
 # empty string, which action.yml documents as `none reported`.
-if [ -f "$BUILD/run.json" ]; then
+if [ -f "$PRISTINE/run.json" ]; then
     extracted=0
+
+    # Read from the pristine copy, not the one beside the findings. The copy exists so a
+    # maintainer reading the artifact has the log next to what was built from it, and the
+    # session knows that directory: extracting from the copy would put the appendable file
+    # back in the path this whole block exists to keep it out of.
     $PREFIX bun --config=/dev/null "$ACTION/review/extract-findings.ts" \
-        "$BUILD/run.json" "$BUILD/findings.json" || extracted=$?
+        "$PRISTINE/run.json" "$BUILD/findings.json" || extracted=$?
 
     if [ "$status" -eq 0 ]; then
         status=$extracted

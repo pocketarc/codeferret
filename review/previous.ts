@@ -95,11 +95,15 @@ export function fromThisRepository(run: WorkflowRun | undefined): boolean {
  * and be in the diff at merge time; this leaves no trace anywhere a reviewer looks.
  *
  * `own` is null where nothing names a workflow, which is `/codeferret:review` on somebody's
- * own machine, and then any run counts. What a session does with a previous artifact is
- * print it to the person who asked, and they can see what they were shown.
+ * own machine. That used to accept any producing run, on the grounds that a session prints
+ * what it found to the person who asked. It does not: a suppressed finding is one the
+ * session never prints, so the reader sees a shorter review and nothing telling them why.
+ * The same forged artifact therefore works there, and better, because nobody is looking. A
+ * session that cannot name its own workflow suppresses nothing, which costs it a finding it
+ * has already seen rather than hiding one it has not.
  */
 export function sameWorkflow(own: number | null, producingRun: unknown): boolean {
-    if (own === null) return true;
+    if (own === null) return false;
 
     const id = record(producingRun)?.workflow_id;
 
