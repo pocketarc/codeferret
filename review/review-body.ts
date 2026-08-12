@@ -56,31 +56,34 @@ export function lenses(n: number): string {
  * maintainer feels: a decline they meant, reopened because the comment behind it named
  * nothing.
  */
-export function reopenedReasons(vetted: Vetted): string[] {
-    const cases: Array<[number, string]> = [
-        [
-            vetted.untraceable,
-            `${plural(vetted.untraceable, "decline")} cited no comment from an owner, member or collaborator,` +
-                " and no resolved thread. Reporting them as new.",
-        ],
-        [
-            vetted.unrelated,
-            `${plural(vetted.unrelated, "decline")} cited a comment that says nothing about the file the` +
-                " finding is in. Reporting them as new.",
-        ],
-        [
-            vetted.unreported,
-            `${plural(vetted.unreported, "finding")} came back as already raised, citing a comment that is not` +
-                " on this pull request or says nothing about the file. Reporting them as new.",
-        ],
-        [
-            vetted.unmatched,
-            `${plural(vetted.unmatched, "finding")} came back as already raised, citing no comment and naming a` +
-                " file the previous review did not. Reporting them as new.",
-        ],
-    ];
+/** Every counter `Vetted` carries, so a new one cannot be added without a sentence. */
+type Reopening = Exclude<keyof Vetted, "findings">;
 
-    return cases.filter(([count]) => count > 0).map(([, said]) => said);
+/**
+ * Keyed by the counter rather than listed beside it. A `Record` over the counter names makes
+ * a fifth reason a compile error here, where an array of pairs took the fifth counter, said
+ * nothing about it, and left a reader looking at a reopened finding with no line explaining
+ * why it came back.
+ */
+const REOPENING: Record<Reopening, (n: number) => string> = {
+    untraceable: (n) =>
+        `${plural(n, "decline")} cited no comment from an owner, member or collaborator,` +
+        " and no resolved thread. Reporting them as new.",
+    unrelated: (n) =>
+        `${plural(n, "decline")} cited a comment that says nothing about the file the` +
+        " finding is in. Reporting them as new.",
+    unreported: (n) =>
+        `${plural(n, "finding")} came back as already raised, citing a comment that is not` +
+        " on this pull request or says nothing about the file. Reporting them as new.",
+    unmatched: (n) =>
+        `${plural(n, "finding")} came back as already raised, citing no comment and naming a` +
+        " file the previous review did not. Reporting them as new.",
+};
+
+export function reopenedReasons(vetted: Vetted): string[] {
+    const names = Object.keys(REOPENING) as Reopening[];
+
+    return names.filter((name) => vetted[name] > 0).map((name) => REOPENING[name](vetted[name]));
 }
 
 // The orchestrator writes both the summary and the notes, and nothing bounds what a model
@@ -590,8 +593,7 @@ function headOf(
                 // The colon separates the name from its count, so the one bold left in the
                 // list is the exception a reader has to see.
                 return `- ${name}: ${plural(h.findings_returned, "finding")}${flag}${detail}`;
-            })
-            .join("\n");
+            });
 
         // What a lens could not check is the one thing in this block a reader has to see
         // without opening it: a reader takes a review of an interface change for an
@@ -624,7 +626,10 @@ function headOf(
                 ? `${lenses(health.length)} ran, ${broken.length} needing attention`
                 : `${lenses(health.length)} ran, all reporting`;
 
-        head.push(details(heading, items, broken.length > 0));
+        // Open when a lens named a limit, not only when one broke. The note above says "the
+        // list below has each in its own words", and a `<details>` a reader has to click is
+        // not below anything: the sentence promised the words and then hid them.
+        head.push(details(heading, boundedBlock(items, "lens"), broken.length > 0 || limited.length > 0));
     }
 
     return head;
@@ -645,6 +650,33 @@ function headOf(
  * `<details>` heading, which is built from the whole list.
  */
 const MAX_MENTIONS = 40;
+
+/**
+ * The head's lens block, cut to a length rather than a count.
+ *
+ * Every other bounded list here is bounded by how many items it holds, and that is the wrong
+ * measure for this one: `lensDetail` already allows each lens up to `MAX_LENS_DETAIL`, so a
+ * dozen lenses answering in full is a head section larger than most whole reviews. `assemble`
+ * charges the head against `MAX_BODY` before it measures a single finding, so what a lens
+ * said about itself would push out the findings a reader came for.
+ */
+const MAX_LENS_BLOCK = 12_000;
+
+function boundedBlock(items: string[], noun: string): string {
+    const kept: string[] = [];
+    let used = 0;
+
+    for (const item of items) {
+        if (used + item.length + 1 > MAX_LENS_BLOCK) break;
+
+        kept.push(item);
+        used += item.length + 1;
+    }
+
+    if (kept.length === items.length) return kept.join("\n");
+
+    return [...kept, `- _${plural(items.length - kept.length, `further ${noun}`)} left out for length._`].join("\n");
+}
 
 /** One of those lists, cut to `MAX_MENTIONS` with a line saying how many went. */
 function bounded(items: string[], noun: string): string {
