@@ -47,6 +47,17 @@ if ! plain_ref "$BASE"; then
     exit 1
 fi
 
+# The shape is not the same question as whether it is there. `action.yml` verifies the ref
+# it works out, and nothing did on the path /codeferret:review and a by-hand run.sh take, so
+# a base that does not resolve reached `git diff` and the run failed with git's own message
+# after the prompts were built. `--end-of-options` and not `--`: rev-parse reads a bare `--`
+# as the separator between revisions and paths, so the ref would land on the path side and
+# no revision would be verified at all.
+if ! git -C "$WORKSPACE" rev-parse --verify --quiet --end-of-options "$BASE" >/dev/null; then
+    echo "base ref '$BASE' does not resolve in $WORKSPACE" >&2
+    exit 1
+fi
+
 NAMESPACE=codeferret
 MANIFEST="$ACTION/.claude-plugin/plugin.json"
 

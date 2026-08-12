@@ -177,7 +177,12 @@ await Bun.write(outPath, `${JSON.stringify(structured, null, 2)}\n`);
 // Guarded like `findings` beside it. This is iterated below, after the findings file is
 // already on disk, so a `lens_health` that is not a list would turn a complete run into a
 // bare stack trace.
-const health: LensHealth[] = Array.isArray(structured.lens_health) ? structured.lens_health : [];
+// The elements too, not just the container. `Array.isArray` says nothing about what is in
+// the list, and a `null` entry reaches `h.ok` below and throws — after the findings file has
+// been written, so a complete review dies on its own summary line.
+const health: LensHealth[] = (Array.isArray(structured.lens_health) ? structured.lens_health : []).filter(
+    (h): h is LensHealth => record(h) !== null,
+);
 const broken = health.filter((h) => record(h)?.ok === false);
 
 console.log(`findings: ${findings.length}`);
