@@ -272,14 +272,24 @@ export function vetSuppression(findings: Finding[], discussion: Survey, previous
         }
 
         if (f.status === "already-reported") {
-            // A critical or a high is held to the decline bar instead. The lower bar below
-            // rests on the finding keeping its line in the review either way, and for these
-            // two that is not the whole of it: the body prints critical and high in full and
-            // everything else as one line in a collapsed block, so demoting one is the
-            // difference between a reader seeing the defect and seeing its title. On a public
-            // repository anyone can comment, and `isAbout` asks only that the text name the
-            // file. An entitled commenter, or the previous run's own record, is the bar.
-            if (LISTED.has(f.severity) && url && !(cited && entitled(cited))) {
+            // A critical or a high is held to the decline bar instead, whether or not a
+            // comment is cited. The lower bar below rests on the finding keeping its line in
+            // the review either way, and for these two that is not the whole of it: the body
+            // prints critical and high in full and everything else as one line in a collapsed
+            // block, so demoting one is the difference between a reader seeing the defect and
+            // seeing its title.
+            //
+            // Citing nothing is not the weaker case, it is the emptier one. Gated on a url
+            // being present, omitting the url skipped the bar and fell through to
+            // `raisedBefore`, which asks only whether the previous review raised anything at
+            // all in that file, at any severity. A low finding in the same file would then
+            // settle a critical. So the bar is the same either way: an owner, a member or a
+            // collaborator says so, or the finding is printed.
+            //
+            // The cost is a critical that was genuinely reported before and never commented
+            // on, printed in full again on every push. Criticals are rare and that is the
+            // direction to be wrong in.
+            if (LISTED.has(f.severity) && !(cited && entitled(cited))) {
                 unreported += 1;
                 return reopen(f);
             }

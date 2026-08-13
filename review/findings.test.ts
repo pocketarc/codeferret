@@ -326,3 +326,24 @@ describe("vetSuppression holds a listed severity to the decline bar", () => {
         });
     }
 });
+
+describe("vetSuppression: a listed severity citing no comment at all", () => {
+    const raised = { findings: [{ file: "a.ts", title: "something low, worded otherwise" }] };
+
+    for (const severity of ["critical", "high"]) {
+        test(`a ${severity} is reopened, because the previous file record says nothing about severity`, () => {
+            const out = vet([finding({ severity, status: "already-reported" })], {}, raised);
+
+            expect(out.findings[0]?.status).toBe("new");
+            expect(out.unreported).toBe(1);
+        });
+    }
+
+    for (const severity of ["medium", "low"]) {
+        test(`a ${severity} still rests on the previous review having raised that file`, () => {
+            expect(vet([finding({ severity, status: "already-reported" })], {}, raised).findings[0]?.status).toBe(
+                "already-reported",
+            );
+        });
+    }
+});

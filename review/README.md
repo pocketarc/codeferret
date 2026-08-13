@@ -391,8 +391,10 @@ window, the endpoint lists it ahead of every genuine one, and the next review ma
 those findings `already-reported`. Changing `fetch-previous.ts` would do the same thing and
 be in the diff a reviewer reads; this leaves nothing behind. So `fetch-previous.ts` reads
 its own run's `workflow_id` and requires the producing run to name the same one. In a
-session nothing names a workflow and any run counts, because what a session does with a
-previous artifact is print it to the person who asked for it.
+session nothing names a workflow, and then nothing counts: with none to compare against, a
+genuine artifact and a forged one read alike, so `/codeferret:review` suppresses nothing and
+prints findings it has shown before. That guard used to be wrapped in a test for the run id
+being set, which skipped it in exactly the case it refuses.
 
 Reading an artifact needs `actions: read`, which the shipped workflow grants and a consumer
 can decline. So every failure is a line on stderr and a file holding no findings. No
