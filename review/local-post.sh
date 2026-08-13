@@ -84,6 +84,11 @@ if [ "$REMOTE_HEAD" != "$REVIEWED_HEAD" ]; then
     exit 1
 fi
 
+# Read back here rather than in the run that produced the findings: run.sh leaves the file
+# empty on purpose, and lib.sh has why. A failure leaves the empty file, which reopens every
+# suppression, so the review repeats itself rather than going quiet.
+printf '%s' "$GITHUB_TOKEN" | fetch_existing "$PLUGIN" "$BUILD" "$PR"
+
 cd "$BUILD"
 
 # A local review posts as whoever is at the keyboard, so `mine` cannot tell this run's

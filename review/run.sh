@@ -12,6 +12,8 @@
 #
 # Env:
 #   LENSES            newline-separated lens names. Required.
+#   EXCLUDE_LENSES    newline-separated lens names to drop from LENSES, for a caller who
+#                     wants the set minus one without restating the rest.
 #   EXCLUDE_PATHS     newline-separated globs kept out of the diff.
 #   MODEL             defaults to opus.
 #   PERMISSION_MODE   defaults to bypassPermissions, which suits a disposable runner.
@@ -71,8 +73,9 @@ prefix_reaches "$ACTION"
 #
 # The caller leaves the token in a file instead and names it here. Its mode keeps other
 # users out; what keeps a lens out is that the file is deleted now, long before anything
-# starts an agent. The value spends the rest of the run in this shell's memory, which a
-# descendant cannot read without ptrace on an ancestor.
+# starts an agent. The value then lives in this shell's memory until both fetches below are
+# done, which a descendant cannot read without ptrace on an ancestor, and it is dropped
+# before the session rather than kept for the rest of the run.
 #
 # The unset comes first because assigning to a name the caller exported leaves it exported,
 # which would put the token straight into the orchestrator's environment under the holding
@@ -139,11 +142,47 @@ for name in $(compgen -e | grep '^INPUT_' || true); do
     unset -v "$name"
 done
 
+# Subtraction, so that a caller wanting the shipped set minus one need not restate the rest.
+# A restated list is a copy, and a copy goes stale the day a lens is added to the default,
+# with the only symptom a review covering less than it says it does.
+#
+# A name that matched nothing is reported on stderr rather than failed on. The list it
+# subtracts from is somebody else's to change, and a lens dropped upstream would otherwise
+# fail every job that had asked not to run it. Running one lens more than intended is noisier,
+# not quieter, which is the direction to be wrong in here.
+#
+# `plain_name` first: these become path components and prompt lines downstream, and this one
+# comes from a workflow input like every other.
+#
+# Both sides are trimmed before they meet, because the match has to be a whole line and
+# build-prompts.sh reads its own list with `read`, which trims. Without the trim an indented
+# name would pass through here and be used there, and the run would report the exclusion as
+# matching nothing while the lens ran.
+trim() {
+    sed 's/^[[:blank:]]*//; s/[[:blank:]]*$//' | grep -v '^$' || true
+}
+
+kept=$(printf '%s\n' "$LENSES" | trim)
+
+while read -r drop; do
+    if ! plain_name "$drop"; then
+        echo "exclude-lenses holds '$drop', which is not a plain lens name." >&2
+        exit 1
+    fi
+
+    before=$kept
+    kept=$(printf '%s\n' "$kept" | grep -vxF "$drop" || true)
+
+    if [ "$before" = "$kept" ]; then
+        echo "exclude-lenses names '$drop', which this run was not going to use anyway." >&2
+    fi
+done <<<"$(printf '%s\n' "${EXCLUDE_LENSES:-}" | trim)"
+
 # PREFIX goes with it because build-prompts.sh runs bun too, to render an agent for a lens
 # the action does not bundle, and because the build directory's own reachability is checked
 # in there: it does not exist until that script creates it, and the first `$PREFIX bun`
 # after that would create it inside the container and hide the answer.
-printf '%s\n' "$LENSES" |
+printf '%s\n' "$kept" |
     PREFIX="$PREFIX" bash "$ACTION/review/build-prompts.sh" "$BASE" "$ACTION" "$OUT" "$WORKSPACE"
 
 # Every `bun` a review starts is given `--config=/dev/null`. Without it, bun reads the
@@ -170,23 +209,8 @@ cd "$BUILD"
 # Nothing else crosses that boundary: `docker compose exec` starts a process with the
 # container's environment and not this shell's. Both scripts exit 2 without
 # GITHUB_REPOSITORY, and the `||` below would report that as a pull request nobody had
-# commented on, so the two values they read go across as arguments to `env`. Neither is
+# commented on, so every value they read goes across as an argument to `env`. None of them is
 # secret; the token is the one that stays off an argument list.
-across=(env "GITHUB_REPOSITORY=${GITHUB_REPOSITORY:-}" "GITHUB_RUN_ID=${GITHUB_RUN_ID:-}")
-
-# Half the fetch can fail on its own. fetch-existing.ts writes the half that came back and
-# names the half that did not, and the orchestrator treats only the named half as unread, so
-# the message below is true either way, where reporting the whole file as empty would not be.
-#
-# A function because this runs twice: once for the orchestrator to read, and again after it
-# has exited, for the two scripts that re-decide what it settled.
-fetch_existing() {
-    printf '%s' "$token" |
-        $PREFIX "${across[@]}" bun --config=/dev/null "$ACTION/review/fetch-existing.ts" \
-            "$PR" "$BUILD/existing.json" ${OWN_LOGIN:+"$OWN_LOGIN"} ||
-        echo "could not read all of this pull request's comments. Whatever went unread counts as new." >&2
-}
-
 if [ -n "${PR:-}" ]; then
     # Reported apart from the two `||` messages below, because both scripts fail the same way
     # whether the token was wrong or never staged at all, and a caller who moved the file
@@ -195,17 +219,35 @@ if [ -n "${PR:-}" ]; then
         echo "no token was staged for pull request #$PR, so its comments cannot be read." >&2
     fi
 
-    fetch_existing
+    # Half the fetch can fail on its own. fetch-existing.ts writes the half that came back
+    # and names the half that did not, and the orchestrator treats only the named half as
+    # unread, so the message `fetch_existing` prints is true either way, where reporting the
+    # whole file as empty would not be.
+    printf '%s' "$token" | fetch_existing "$ACTION" "$BUILD" "$PR" "${OWN_LOGIN:-}"
 
     # What the last run raised is in its own findings file, which needs `actions: read` to
     # read back. The shipped workflow grants it and a consumer can decline it, so this is
     # allowed to come back empty. fetch-previous.ts reports its own failures, so the `||`
     # is for a failure before it can.
     printf '%s' "$token" |
-        $PREFIX "${across[@]}" bun --config=/dev/null "$ACTION/review/fetch-previous.ts" \
+        $PREFIX env "GITHUB_REPOSITORY=${GITHUB_REPOSITORY:-}" "GITHUB_RUN_ID=${GITHUB_RUN_ID:-}" \
+            bun --config=/dev/null "$ACTION/review/fetch-previous.ts" \
             "$PR" "$BUILD/previous.json" ||
         echo "could not read the previous run's findings. Every finding will count as new." >&2
 fi
+
+# Both fetches are done, and nothing this script runs from here on needs a credential. The
+# reason is what comes after the session: `install: auto` puts `bun` on PATH with `npm
+# install -g` under a prefix this user owns, and the action path holds the scripts a `bun` is
+# pointed at, so a session with Bash has the length of a review to replace either one.
+# Handing a token to one of them afterwards is handing it to code a lens chose. The refetch
+# that used to happen here is the posting step's and the printing script's now, each of which
+# holds a credential already, and the value goes out of this shell before an agent starts.
+#
+# What is left over is written down in "The GitHub token never enters the step that runs the
+# agent" in review/README.md. Moving the refetch narrows where the credential goes; it does
+# not make the runner safe to hand one to twice.
+token=""
 
 # The exit code is kept and returned at the end rather than stopping the script here,
 # because extract-findings.ts writes what the run cost and what it was refused before it
@@ -293,10 +335,11 @@ cp "$PRISTINE/run.json" "$BUILD/run.json" ||
 #
 # findings.json and findings-checked are what the action posts on. post-review.ts and
 # print-findings.ts re-decide every suppression and every thread closure against
-# existing.json, and the orchestrator could have written the copy it was handed. So the file
-# is fetched again from GitHub, and the fresh copy has whatever was said during the twenty
-# minutes the review took. The empty file is written first, so a fetch that fails before it
-# writes leaves nothing traced and every suppression reopened.
+# existing.json, and the orchestrator could have written the copy it was handed. So it is
+# replaced with the empty form, which reopens every suppression, and the first of the two to
+# run calls `fetch_existing` for a copy the session had no hand in. The fetch is theirs rather
+# than this script's because the token would have to come back into this shell to be used
+# here, and lib.sh has the rest of that argument.
 #
 # The rest cannot be re-derived here without running build-prompts.sh again or paying for
 # another artifact download, so the copies taken before the session go back instead. A
@@ -312,10 +355,6 @@ for pinned in "${PINNED[@]}"; do
 
     cp "$PRISTINE/$pinned" "$BUILD/$pinned"
 done
-
-if [ -n "${PR:-}" ]; then
-    fetch_existing
-fi
 
 # `-f` and not `-s`: a session killed before it wrote a byte leaves this file empty, and that
 # is the run extract-findings.ts writes `none reported` and `unknown` for. Skip it and the run

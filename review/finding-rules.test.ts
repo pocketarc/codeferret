@@ -3,22 +3,9 @@
 
 import { describe, expect, test } from "bun:test";
 import { applyRules, readSchema, selfCheck } from "./finding-rules.ts";
+import { rawFinding as finding } from "./test-fixtures.ts";
 
 const schema = await readSchema();
-
-function finding(over: Record<string, unknown> = {}): Record<string, unknown> {
-    return {
-        found_by: ["caveman-review"],
-        file: "a.ts",
-        line: 4,
-        severity: "high",
-        category: "correctness",
-        title: "A title",
-        body: "A body.",
-        status: "new",
-        ...over,
-    };
-}
 
 const check = (merged: Record<string, unknown>, dispatched: string[] = []) =>
     applyRules(schema, structuredClone(merged), dispatched);

@@ -149,7 +149,13 @@ async function restOfThread(id: string, from: string): Promise<GqlComment[]> {
         };
 
         const next = data?.node?.comments;
-        if (!next) break;
+
+        // Thrown rather than truncated. `graphql` already throws on a GraphQL error, so this
+        // is a 200 whose `node` was null or reshaped, and the pages still to come are the
+        // newest comments: the ones a decline lives in. The caller's `try` turns this into
+        // `threadError`, which counts the threads as unread, and a list cut short in silence
+        // would read as a short thread instead.
+        if (!next) throw new Error(`thread ${id} returned no comments after ${page - 1} more page(s)`);
 
         all.push(...next.nodes);
         cursor = next.pageInfo.hasNextPage ? next.pageInfo.endCursor : null;

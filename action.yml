@@ -16,6 +16,16 @@ inputs:
             bundled with this action or to one in the calling repository's own
             .claude/skills/, so a repository can add its own lens without forking this
             action.
+
+            Naming a lens from .claude/skills/ puts that directory inside the CI trust
+            boundary. The directory is read from the tree under review, so anyone who can
+            push a branch writes the instructions for an agent that has Bash and runs in the
+            job holding the tokens. A bundled lens is vendored at a pinned commit, so pushing
+            a branch cannot change it.
+
+            To drop a lens from the default rather than add one, use `exclude-lenses`. This
+            input replaces the default rather than adding to it, so a list written here to
+            lose one lens loses every lens added later too.
         required: false
         default: |
             caveman-review
@@ -30,6 +40,17 @@ inputs:
             anthropic-accessibility-review
             comment-review
             writing-review
+    exclude-lenses:
+        description: |
+            Newline-separated lens names to drop from `lenses`, one per line. This is how to
+            run the shipped set minus one, without restating the rest: a list that restates
+            them goes stale the day a lens is added, and the only symptom is a review
+            covering less than it says it does.
+
+            A name here that the run was not going to use anyway is reported on stderr and
+            otherwise ignored, so a lens removed upstream does not fail anybody's job.
+        required: false
+        default: ''
     exclude-paths:
         description: |
             Newline-separated globs to keep out of the review, one per line. These become
@@ -348,19 +369,16 @@ runs:
           if: inputs.install != 'skip' && inputs.command-prefix == ''
           shell: bash
           run: |
-              # Pinned, because this step installs the binaries the rest of the run
-              # executes into a job holding CLAUDE_CODE_OAUTH_TOKEN and a token that can
-              # write to pull requests, and `npm install -g` with no version takes whatever
-              # the registry serves that minute. Everything else a run executes is pinned the
-              # same way: actions by commit, tool images by digest, vendored lenses by
-              # upstream commit. Bump these with those. A caller who wants a different
-              # revision has `install: 'skip'` and a step of their own.
+              # The two versions live in one file the lint workflow reads as well, because
+              # both install bun and a version in two places drifts. That file has why they
+              # are pinned at all. A caller who wants a different revision has
+              # `install: 'skip'` and a step of their own.
               #
               # Not `--ignore-scripts`. Both packages download their platform binary from a
               # postinstall script, and bun installed without it fails the first call with
               # "Bun's postinstall script was not run".
-              BUN_VERSION=1.3.14
-              CLAUDE_CODE_VERSION=2.1.224
+              # shellcheck source=review/versions.sh
+              . "$GITHUB_ACTION_PATH/review/versions.sh"
 
               need=""
               command -v bun >/dev/null 2>&1 || need="$need bun@$BUN_VERSION"
@@ -474,6 +492,7 @@ runs:
               MODEL: ${{ inputs.model }}
               EFFORT: ${{ inputs.effort }}
               LENSES: ${{ inputs.lenses }}
+              EXCLUDE_LENSES: ${{ inputs.exclude-lenses }}
               EXCLUDE_PATHS: ${{ inputs.exclude-paths }}
               BASE: ${{ steps.target.outputs.base }}
               PR: ${{ steps.target.outputs.pr }}
@@ -535,6 +554,10 @@ runs:
               PREFIX: ${{ inputs.command-prefix }}
               PR: ${{ steps.target.outputs.pr }}
               HEAD: ${{ steps.target.outputs.head }}
+              # For the refetch below, which marks a thread `mine` the way the fetch before
+              # the session did. A different value here would hand post-review.ts a set of
+              # threads the orchestrator never judged.
+              OWN_LOGIN: ${{ inputs.own-login }}
               # Whether a finding may be left out of the body with a pointer to the
               # artifact, and whether a thread may be closed. An input that names what a
               # review may do has to reach the code that does it.
@@ -565,6 +588,14 @@ runs:
                   echo "every line a finding names is a line of $reviewed." >&2
                   echo "pass head-sha, or drop checkout: skip, to make the two agree." >&2
               fi
+
+              # The discussion post-review.ts vets every suppression against. run.sh leaves
+              # the file empty because it must not still hold a credential once the session
+              # it started has run; this step holds one already, so the fetch is here.
+              # lib.sh has the argument. A failure leaves the empty file and every
+              # suppression reopened.
+              printf '%s' "$POST_TOKEN" | fetch_existing \
+                  "$GITHUB_ACTION_PATH" "$BUILD_DIR" "$PR" "$OWN_LOGIN"
 
               # `docker compose exec` starts a process with the container's environment and
               # not this shell's, so under a command prefix every value post-review.ts reads

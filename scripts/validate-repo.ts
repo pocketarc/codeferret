@@ -3,11 +3,15 @@
  * Every check on this repository that needs no findings file to run.
  *
  * Each manifest the action and the plugin depend on is parsed and its shape checked, along
- * with the values two files have to agree on: the plugin namespace, the shipped version,
- * the defaults, the standing caveats, the artifact retention window, and
- * everything generated. Both generators are re-run with `--check`, and action.yml's `run:`
- * blocks go through shellcheck, being the only shell in the repository that lives as a
- * string inside YAML.
+ * with the values two files have to agree on: the plugin namespace, the shipped version, the
+ * defaults, the standing caveats, and everything generated. Both generators are re-run with
+ * `--check`, and action.yml's `run:` blocks go through shellcheck, being the only shell in
+ * the repository that lives as a string inside YAML.
+ *
+ * A value with one authority belongs in a generator instead, and two of these checks were
+ * deleted by moving one value there. What is left is the pairs where neither side can be
+ * derived from the other: a literal in shell against a literal in JSON, a version in prose
+ * against the manifest.
  *
  * Nothing upstream catches any of this before somebody feels it. "Before you push" in
  * CLAUDE.md has what a broken manifest costs and what to do about it.
@@ -19,6 +23,7 @@ import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { reason, record } from "../review/json.ts";
+import { closeOpenFence } from "../review/markdown.ts";
 import { STANDING_DETAIL } from "../review/standing-detail.ts";
 import { dispatchedFrom, LENS_LIST_FILE, RUN_FILE_NAMES, RUN_FILES } from "../review/run-files.ts";
 
@@ -342,6 +347,55 @@ async function checkBundledSkills(): Promise<Failures> {
     return list;
 }
 
+/**
+ * That every vendored markdown file's fences balance.
+ *
+ * A closing fence may be indented up to three spaces and need not match its opener's length,
+ * so a nested sample closes the template it is nested in. From there the reading is inverted:
+ * what was meant as the template renders as live markdown, and the delimiter meant to close
+ * it opens a block nothing closes, so the rest of the page is one grey box. Two of the
+ * bundled skills arrived that way and neither was noticed for as long as it took a lens to
+ * read one.
+ *
+ * The rendering is the smaller half. `rewrite-markdown.ts` skips every line `fenceMap` calls
+ * fenced, so a swallowed tail is a region `stripDeadLinks` and `substitutePlaceholders` never
+ * reach, and a `../` link or a `$ARGUMENTS` there survives into the lens's own instructions.
+ *
+ * Refused rather than repaired. A repair has to guess which delimiter was meant as the
+ * closer, and an attempt at it settled one of these two files onto the wrong opener and
+ * swallowed the whole document. What the fix takes is raising the enclosing fence, and a
+ * person with the upstream page in front of them can see which one that is. So the
+ * correction is a deliberate edit to the vendored file, and this check is what stops a
+ * re-vendor dropping it in silence.
+ */
+async function checkSkillFences(): Promise<Failures> {
+    const list: Failures = [];
+    const root = "lenses/skills";
+    let checked = 0;
+
+    for (const entry of readdirSync(root, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+
+        for (const name of readdirSync(join(root, entry.name), { recursive: true }) as string[]) {
+            if (!name.endsWith(".md")) continue;
+
+            const file = join(root, entry.name, name);
+            const text = await Bun.file(file).text();
+            checked += 1;
+
+            // `closeOpenFence` hands back what it was given when nothing is open, so the
+            // comparison is the balance test and there is no second reading of the fences.
+            if (closeOpenFence(text) !== text) {
+                fail(list, file, "ends inside a fenced block, so a nested fence closed one it was meant to sit in");
+            }
+        }
+    }
+
+    if (list.length === 0) console.log(`OK lenses/skills: ${checked} markdown file(s) with balanced fences`);
+
+    return list;
+}
+
 async function checkProvenance(): Promise<Failures> {
     const list: Failures = [];
     const file = "lenses/skills/PROVENANCE.tsv";
@@ -391,23 +445,19 @@ async function checkDefaults(): Promise<Failures> {
 }
 
 /**
- * The lenses this repository's own workflow names, against the ones the action ships.
+ * What this repository's own workflow says about the lenses it runs.
  *
- * `lenses` replaces the default rather than adding to it, so a workflow that names them one
- * by one keeps its own list and nothing reconciles the two. Both directions are quiet in
- * their own way. A lens removed from `action.yml` and left here fails `build-prompts.sh`
- * seconds into a run, which is loud but wastes a job; that is how the tool removal broke one.
- * A lens *added* to `action.yml` and not here is silent for ever: the review simply covers
- * less than the shipped default and says nothing about it.
+ * It used to restate the shipped default minus two, which nothing could keep in step: a lens
+ * removed from action.yml and left there failed `build-prompts.sh` seconds into a run, and a
+ * lens *added* to action.yml and not there was silent for ever, the review covering less than
+ * the default and saying nothing about it. Forty lines here reconciled the copy in both
+ * directions against a map naming the two exceptions.
  *
- * So the list has to be the default minus exactly the lenses named below, and dropping one
- * means saying so here.
+ * `exclude-lenses` states the intent instead, and subtraction cannot go stale when the
+ * default grows. What is left to check is that the workflow has not gone back to a copy, and
+ * that each name it subtracts is one action.yml still ships: a stale exclusion runs a lens
+ * this repository decided not to run, and `run.sh` only says so on the job's stderr.
  */
-const LENSES_THIS_REPO_SKIPS = new Map<string, string>([
-    ["comment-review", "run by hand against the working tree before a push"],
-    ["writing-review", "run by hand against the working tree before a push"],
-]);
-
 async function checkWorkflowLenses(): Promise<Failures> {
     const list: Failures = [];
     const path = ".github/workflows/codeferret.yml";
@@ -417,37 +467,25 @@ async function checkWorkflowLenses(): Promise<Failures> {
     const parsed = record(await parseYaml(list, path));
     const job = record(record(parsed?.jobs)?.review);
     const steps = Array.isArray(job?.steps) ? job.steps : [];
-    const named = steps.flatMap((step) => lines(record(record(step)?.with)?.lenses));
+    const shipped = lines(manifest.inputs?.lenses?.default);
 
-    if (named.length === 0) {
-        console.log(`OK ${path}: names no lenses, so it takes the shipped default`);
-        return list;
-    }
+    for (const step of steps) {
+        const to = record(record(step)?.with);
 
-    for (const lens of named) {
-        if (!existsSync(`lenses/skills/${lens}/SKILL.md`)) {
-            fail(list, path, `names lens '${lens}', which has no bundled skill`);
+        if (lines(to?.lenses).length > 0) {
+            fail(list, path, "names `lenses`, which replaces the default. Subtract with `exclude-lenses` instead.");
+        }
+
+        for (const lens of lines(to?.["exclude-lenses"])) {
+            if (!shipped.includes(lens)) {
+                fail(list, path, `excludes '${lens}', which action.yml no longer ships. Drop it, or fix the name.`);
+            }
         }
     }
 
-    for (const lens of lines(manifest.inputs?.lenses?.default)) {
-        if (named.includes(lens) || LENSES_THIS_REPO_SKIPS.has(lens)) continue;
+    const dropped = steps.flatMap((step) => lines(record(record(step)?.with)?.["exclude-lenses"]));
 
-        fail(
-            list,
-            path,
-            `does not name '${lens}', which action.yml ships by default.` +
-                " Add it, or say here why this repository skips it.",
-        );
-    }
-
-    for (const [lens, why] of LENSES_THIS_REPO_SKIPS) {
-        if (named.includes(lens)) {
-            fail(list, "scripts/validate-repo.ts", `LENSES_THIS_REPO_SKIPS holds '${lens}' (${why}), and ${path} names it`);
-        }
-    }
-
-    if (list.length === 0) console.log(`OK ${path}: the shipped default minus ${LENSES_THIS_REPO_SKIPS.size}`);
+    if (list.length === 0) console.log(`OK ${path}: the shipped default minus ${dropped.length}`);
 
     return list;
 }
@@ -513,8 +551,10 @@ async function checkStandingDetail(): Promise<Failures> {
         return list;
     }
 
+    const bundled = bundledLenses();
+
     for (const lens of STANDING_DETAIL.keys()) {
-        if (!bundledLenses().has(lens)) {
+        if (!bundled.has(lens)) {
             fail(list, file, `names '${lens}', which is not a lens under lenses/skills/`);
         }
     }
@@ -531,8 +571,11 @@ async function checkStandingDetail(): Promise<Failures> {
  *
  * action.yml cannot import `RUN_FILES`, so its `emit_output_file` calls spell each name out
  * a second time. Rename one side and the summary and the step outputs report `unknown` for a
- * $36 review, which is exactly what a session killed halfway looks like. The same class as
- * `TOOLS_LENS` and `RETENTION_DAYS`, which are checked against their second homes here too.
+ * $36 review, which is exactly what a session killed halfway looks like.
+ *
+ * Not a pair a generator could collapse, which is what became of the artifact name and the
+ * retention window. YAML cannot read a TypeScript constant, and the shell that would write
+ * one of these into a step output is the shell inside action.yml.
  */
 async function checkRunFiles(): Promise<Failures> {
     const list: Failures = [];
@@ -700,73 +743,45 @@ async function checkLensList(): Promise<Failures> {
 }
 
 /**
- * The bun the action installs, against the one the lint workflow installs.
+ * That the two places bun is installed both take the version out of review/versions.sh.
  *
- * Both pin it because both run a fork's code with an unpinned global install otherwise, and
- * a version in two files with a comment asking for one edit is a version that drifts. The
- * cost of drift is quiet: the tests pass under one bun and the review runs under another.
- */
-async function checkBunVersion(): Promise<Failures> {
-    const list: Failures = [];
-    const workflow = ".github/workflows/lint.yml";
-
-    const inAction = (await Bun.file("action.yml").text()).match(/^\s*BUN_VERSION=(\S+)$/m)?.[1];
-    const inWorkflow = (await Bun.file(workflow).text()).match(/npm install -g bun@(\S+)$/m)?.[1];
-
-    if (!inAction) {
-        fail(list, "action.yml", "names no BUN_VERSION, so the bun it installs is whatever `latest` is that morning");
-    }
-
-    if (!inWorkflow) {
-        fail(list, workflow, "installs bun without a version, so it runs a fork's code under whatever `latest` is");
-    }
-
-    if (inAction && inWorkflow && inAction !== inWorkflow) {
-        fail(list, workflow, `installs bun@${inWorkflow} and action.yml installs bun@${inAction}`);
-    }
-
-    if (list.length === 0) console.log(`OK bun-version: both install bun@${inAction}`);
-
-    return list;
-}
-
-/**
- * The retention window fetch-previous.ts pages back to, against the one the action asks for.
+ * Both pin it because both would otherwise run a fork's code under an unpinned global
+ * install. It used to be pinned twice with a comment asking for one edit, which this file
+ * reconciled; one home needs no reconciling, and what is worth guarding instead is the way
+ * back to two. That way is a literal typed into either caller, and the cost of it is quiet:
+ * the tests pass under one bun and the review runs under another.
  *
- * Drift here is quiet in the direction that matters: raise the action's retention and the
- * paging loop stops early, dropping an artifact that is still downloadable and repeating a
- * whole review's findings, with only a line on stderr to go on.
+ * Matching no literal is the passing case here, so this check has no empty-match hole. What
+ * carries the weight is the positive half above it, which fails on a caller that stopped
+ * reading the file.
  */
-async function checkRetention(): Promise<Failures> {
+async function checkToolchainPin(): Promise<Failures> {
     const list: Failures = [];
-    const manifest = await action(list);
-    if (!manifest) return list;
+    const home = "review/versions.sh";
+    const declared = (await Bun.file(home).text()).match(/^export BUN_VERSION=(\S+)$/m)?.[1];
 
-    const upload = (manifest.runs?.steps ?? []).find((step) => step.uses?.startsWith("actions/upload-artifact"));
-    const kept = (upload as { with?: { "retention-days"?: unknown } } | undefined)?.with?.["retention-days"];
-
-    const paged = (await Bun.file("review/fetch-previous.ts").text()).match(/^const RETENTION_DAYS = (\d+);$/m)?.[1];
-
-    if (paged === undefined) {
-        fail(list, "review/fetch-previous.ts", "declares no RETENTION_DAYS, so nothing bounds how far back it pages");
+    if (!declared) {
+        fail(list, home, "declares no BUN_VERSION, so nothing pins the bun a review runs on");
         return list;
     }
 
-    if (kept === undefined) {
-        fail(list, "action.yml", "the upload step names no `retention-days`, so nothing says how long an artifact lasts");
-        return list;
+    for (const file of ["action.yml", ".github/workflows/lint.yml"]) {
+        const text = await Bun.file(file).text();
+
+        if (!text.includes(home)) {
+            fail(list, file, `installs bun without reading ${home}, so its version can drift again`);
+            continue;
+        }
+
+        for (const [, pinned] of text.matchAll(/\bbun@([^"'\s]+)/g)) {
+            if (!String(pinned).startsWith("$")) {
+                fail(list, file, `pins bun@${pinned} of its own, and ${home} is where that lives`);
+            }
+        }
     }
 
-    if (String(kept) !== paged) {
-        fail(
-            list,
-            "action.yml",
-            `keeps an artifact for ${String(kept)} days and review/fetch-previous.ts pages back ${paged}`,
-        );
-        return list;
-    }
+    if (list.length === 0) console.log(`OK toolchain: both installs read bun@${declared} from ${home}`);
 
-    console.log(`OK retention: action.yml and fetch-previous.ts both say ${paged} days`);
     return list;
 }
 
@@ -859,16 +874,30 @@ async function checkShippedVersions(): Promise<Failures> {
     // `version` together, so the manifest is what they have to agree with.
     const manifest = await pluginManifest(list);
     const released = manifest?.version;
+    let named = 0;
 
     for (const file of [TEMPLATE, "commands/install-workflow.md", "README.md", "CLAUDE.md"]) {
         if (!existsSync(file)) continue;
 
-        for (const [, named] of (await Bun.file(file).text()).matchAll(/@v(\d+\.\d+\.\d+)/g)) {
-            if (named !== released) {
-                fail(list, file, `names @v${named}, but ${MANIFEST_FILE} is at ${released}`);
+        for (const [, pinned] of (await Bun.file(file).text()).matchAll(/@v(\d+\.\d+\.\d+)/g)) {
+            named += 1;
+
+            if (pinned !== released) {
+                fail(list, file, `names @v${pinned}, but ${MANIFEST_FILE} is at ${released}`);
             }
         }
     }
+
+    // A check that matched nothing has proved nothing, and this one used to say nothing
+    // either way: no OK line and no failure, so a file that had stopped naming a version read
+    // exactly like one that named the right one. Losing the advice above loses the one
+    // alternative to `@v1`, so its absence is a failure of its own.
+    if (named === 0) {
+        fail(list, TEMPLATE, "no shipped file names a @vX.Y.Z to pin, so nothing offers an alternative to @v1");
+        return list;
+    }
+
+    if (list.length === 0) console.log(`OK versions: ${named} mention(s) of @v${released}`);
 
     return list;
 }
@@ -879,6 +908,7 @@ const CHECKS: Array<[string, () => Promise<Failures>]> = [
     ["plugin", checkPluginManifest],
     ["marketplace", checkMarketplace],
     ["skills", checkBundledSkills],
+    ["skill-fences", checkSkillFences],
     ["provenance", checkProvenance],
     ["defaults", checkDefaults],
     ["workflow-lenses", checkWorkflowLenses],
@@ -887,8 +917,7 @@ const CHECKS: Array<[string, () => Promise<Failures>]> = [
     ["run-files", checkRunFiles],
     ["lens-list", checkLensList],
     ["bun-config", checkBunConfig],
-    ["retention", checkRetention],
-    ["bun-version", checkBunVersion],
+    ["toolchain", checkToolchainPin],
     ["standing-detail", checkStandingDetail],
     ["prompts", checkPrompts],
     ["workflows", checkWorkflows],

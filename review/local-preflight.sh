@@ -81,9 +81,16 @@ say repo "$GIT_DIR"
 # The git dir is not the working tree, and it is the working tree that holds
 # .claude/skills/, where a workspace lens comes from. In a linked worktree the two are
 # nowhere near each other.
-TOPLEVEL=$(git rev-parse --show-toplevel)
+#
+# Reported apart from `unsafe`, because there is no `--show-toplevel` in a bare repository
+# and this script does not stop on a failing command. The empty string fails `plain_path`
+# like any other, so a bare repository came back as a path holding a shell metacharacter, and
+# whoever read that went looking at a directory name that was fine.
+TOPLEVEL=$(git rev-parse --show-toplevel 2>/dev/null || true)
 
-if plain_path "$TOPLEVEL"; then
+if [ -z "$TOPLEVEL" ]; then
+    say toplevel none
+elif plain_path "$TOPLEVEL"; then
     say toplevel "$TOPLEVEL"
 else
     say toplevel unsafe

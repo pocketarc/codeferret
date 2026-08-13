@@ -89,6 +89,16 @@ and what each key does at runtime, and "Screen Reader" an "Announced As" column.
 tables out entirely. Its Tip 1 puts contrast first: start with keyboard instead, meaning the
 part of 2.1.1 the source settles and the rest of the set above.
 
+Its "Testing Approach" is a workflow for a page you can open, and four of its five steps have
+nothing to run against here. Skip steps 1, 3, 4 and 5 outright: there is no scanner, no
+screen reader, no rendered colour and nothing to zoom. Step 2 means the source half of 2.1.1
+described above, not a live tab-through. The rule above already rules out what those steps
+would report, and this paragraph rules out going looking: a lens told to follow the procedure
+spends its budget hunting for a page to run it against.
+
+Its "Common Issues" list is a different case and stays in scope. Items 5 and 6, focus traps
+in modals and missing ARIA landmarks, are both decidable from source.
+
 One correction to the skill's quick reference: its table is headed "WCAG 2.1 AA" and lists
 2.5.5 Target Size under it. 2.5.5 is Level AAA. The AA criterion is 2.5.8 Target Size
 (Minimum), added in WCAG 2.2, at 24 by 24 CSS pixels. Neither is decidable without a

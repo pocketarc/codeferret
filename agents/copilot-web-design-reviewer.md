@@ -93,6 +93,7 @@ tell what this lens covered from what it could not reach.
 
 Return JSON matching this schema as your entire final message:
 
+```json
 {
     "type": "object",
     "required": ["skill_name", "findings"],
@@ -154,3 +155,4 @@ Return JSON matching this schema as your entire final message:
         }
     }
 }
+```

@@ -272,19 +272,26 @@ export function vetSuppression(findings: Finding[], discussion: Survey, previous
         }
 
         if (f.status === "already-reported") {
-            // A critical or a high is held to the decline bar instead, whether or not a
-            // comment is cited. The lower bar below rests on the finding keeping its line in
-            // the review either way, and for these two that is not the whole of it: the body
-            // prints critical and high in full and everything else as one line in a collapsed
-            // block, so demoting one is the difference between a reader seeing the defect and
-            // seeing its title.
+            // A critical or a high takes an owner, a member or a collaborator saying so,
+            // whether or not a comment is cited. The lower bar below rests on the finding
+            // keeping its line in the review either way, and for these two that is not the
+            // whole of it: the body prints critical and high in full and everything else as
+            // one line in a collapsed block, so demoting one is the difference between a
+            // reader seeing the defect and seeing its title.
+            //
+            // Higher than the decline branch above, which also takes a comment on a thread
+            // somebody closed. Closing one takes repository write, which is what makes it
+            // evidence at all, but the person who replied under it needed no more than the
+            // ability to comment. That is enough to settle a finding printed as one line, and
+            // it is not enough to take a critical off the page, so `cited.onClosedThread` is
+            // deliberately absent here. Adding it to make the two branches read alike is the
+            // edit to refuse.
             //
             // Citing nothing is not the weaker case, it is the emptier one. Gated on a url
             // being present, omitting the url skipped the bar and fell through to
             // `raisedBefore`, which asks only whether the previous review raised anything at
             // all in that file, at any severity. A low finding in the same file would then
-            // settle a critical. So the bar is the same either way: an owner, a member or a
-            // collaborator says so, or the finding is printed.
+            // settle a critical. So the bar is the same whether or not a comment is cited.
             //
             // The cost is a critical that was genuinely reported before and never commented
             // on, printed in full again on every push. Criticals are rare and that is the

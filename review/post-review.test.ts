@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { rawFinding as finding } from "./test-fixtures.ts";
 
 const SCRIPT = join(import.meta.dir, "post-review.ts");
 
@@ -28,20 +29,6 @@ globalThis.fetch = async (input, init) => {
 `;
 
 const DECLINED_URL = "https://github.com/o/r/pull/1#issuecomment-999";
-
-function finding(overrides: Record<string, unknown>): Record<string, unknown> {
-    return {
-        found_by: ["caveman-review"],
-        file: "a.ts",
-        line: 1,
-        severity: "high",
-        category: "correctness",
-        title: "A finding",
-        body: "What is wrong with it.",
-        status: "new",
-        ...overrides,
-    };
-}
 
 let dir: string;
 

@@ -39,6 +39,12 @@ That is the whole job. The action keeps its own `codeferret-run` artifact holdin
 prints the critical and high findings in full and points at that file for the rest. That
 file is also what the next run reads to know what was said before.
 
+Weigh all three together, because the agent and the tokens share a runner. A composite
+action has steps rather than jobs, so the step that reviews and the step that posts run side
+by side as one user, and a review talked into running a command can reach whatever the job
+was granted. Posting from a second job that never runs the agent is what would keep the two
+apart, and that is a change to make in the workflow.
+
 `contents: write` adds one thing, and only for a while. A review is one body and opens no
 thread of its own, so the threads left to close are the inline ones that versions released
 before `v1.1.0` left behind. `resolve-threads: 'true'` and `contents: write` together close

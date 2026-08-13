@@ -13,18 +13,7 @@ import {
     mention,
 } from "./review-body.ts";
 import type { Posting } from "./review-body.ts";
-
-function finding(over: Partial<Finding> = {}): Finding {
-    return {
-        file: "a.ts",
-        line: 1,
-        severity: "low",
-        category: "style",
-        title: "A title",
-        body: "A body.",
-        ...over,
-    };
-}
+import { finding } from "./test-fixtures.ts";
 
 describe("bullet", () => {
     test("escapes a trailing backslash in a title, which would eat the closing emphasis", () => {

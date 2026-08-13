@@ -62,8 +62,9 @@ that file to decide the finding, and anchor it to the line in that file, even wh
 does not touch it. The fix for a sequential scan or a missing composite index is usually in
 a migration, and an author sent to the query instead has to find that for themselves.
 
-The skill is wrong in the places below, and correcting them here rather than in the skill
-keeps the vendored copy matching the commit PROVENANCE.tsv pins.
+The skill is wrong in the places below. Correcting them here rather than in the vendored file
+keeps that file to the rewrites `scripts/rewrite-markdown.ts` reproduces at vendor time, so a
+re-vendor at a new PROVENANCE.tsv pin cannot revert a correction.
 
 Its "Overuse of DISTINCT" example replaces `SELECT DISTINCT u.name` with the same query under
 `GROUP BY u.name`, presented as a fix for the join. It is not: the grouping deduplicates the
@@ -112,6 +113,7 @@ SQL at all, so a grep for `SELECT` returning nothing is not on its own an answer
 
 Return JSON matching this schema as your entire final message:
 
+```json
 {
     "type": "object",
     "required": ["skill_name", "findings"],
@@ -173,3 +175,4 @@ Return JSON matching this schema as your entire final message:
         }
     }
 }
+```

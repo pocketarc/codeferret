@@ -25,12 +25,23 @@ jobs:
         # A full set of lenses on a small diff takes around 20 minutes.
         timeout-minutes: 60
         permissions:
-            # The review runs an agent with Bash, so a token that can write contents is a
-            # token that can push. `contents: write` plus `resolve-threads: 'true'` is what
-            # it takes to have CodeFerret close the inline threads its older versions left
-            # behind, and `contents: write` is worth granting only while an open pull
-            # request still has one of those threads on it.
+            # Every one of these is granted to a job that runs an agent with Bash on
+            # untrusted text, and the agent, the OAuth token and this job's token share one
+            # runner. A composite action has steps rather than jobs, so nothing about it
+            # separates the step that reviews from the step that posts. Read the list below
+            # as what a review talked into running a command could reach, not as what the
+            # action itself needs.
+            #
+            # `contents: write` is the one to weigh hardest, because a token that can write
+            # contents is a token that can push. `contents: write` plus
+            # `resolve-threads: 'true'` is what it takes to have CodeFerret close the inline
+            # threads its older versions left behind, and it is worth granting only while an
+            # open pull request still has one of those threads on it.
             contents: read
+            # Granted unconditionally, and this is the one that writes to the pull request.
+            # Splitting the posting into a second job that never runs the agent is what would
+            # take it out of the agent's reach; this template does not, because the action
+            # posts for you.
             pull-requests: write
             # What lets a run read the findings the previous run kept, so a finding is
             # posted once instead of on every push. It is used for that and nothing else,

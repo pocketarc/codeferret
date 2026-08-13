@@ -22,7 +22,17 @@
  * that.
  *
  * Upstream's prose stays as written, Title Case headings and all, because the commit in
- * PROVENANCE.tsv is only worth pinning while the vendored copy still matches it.
+ * PROVENANCE.tsv is only worth pinning while the vendored copy still matches it, bar the
+ * rewrites here and in rewrite-markdown.ts, which a re-vendor reproduces.
+ *
+ * One correction is not reproduced, and it is a fence rather than prose. Two of the bundled
+ * skills arrived wrapping a template in a three-backtick fence with three-backtick samples
+ * nested in it, which closes the template early and leaves the rest of the page inside a
+ * block nothing closes. Raising the enclosing fence takes reading which delimiter was meant
+ * as the closer, and an attempt at inferring that settled on the wrong one and swallowed a
+ * whole document. So it is an edit somebody makes, and `checkSkillFences` in validate-repo.ts
+ * is what stops a re-vendor dropping it in silence: re-vendor one of those two and the check
+ * fails until the fence is raised again.
  *
  * Frontmatter is edited a line at a time rather than parsed and re-emitted, unlike
  * validate-repo.ts, which parses it. A YAML round-trip reformats every key this

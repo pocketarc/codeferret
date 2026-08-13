@@ -41,6 +41,8 @@ Stop when you see any of these, and name every one you saw:
 - `repo=missing`. This is not a git repository.
 - `repo=unsafe` or `toplevel=unsafe`. This checkout sits under a directory whose path
   would run as shell where the review builds its commands. Say so and stop.
+- `toplevel=none`. This repository has no working tree, which is what a bare clone looks
+  like. There is nothing for a lens to read. Say so and stop.
 - `head=none`. This repository has no commits yet.
 - `bun=missing`. The review cannot read its own findings back. Install Bun from
   https://bun.sh.

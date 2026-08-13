@@ -302,14 +302,74 @@ export function escapeBlockStart(line: string): string {
     return /^\s*(=+|-+|\*{3,}|_{3,})\s*$/.test(escaped) ? escaped.replace(/^(\s*)(.)/, "$1\\$2") : escaped;
 }
 
+/** Whether a line is blank, which is what starts and ends an indented code block. */
+function blank(line: string): boolean {
+    return line.trim() === "";
+}
+
+/**
+ * A model's indented code block, rewritten as a fenced one so the escaping below skips it.
+ *
+ * `fenceMap` knows only about fences, so a sample a lens wrote as an indented block came out
+ * the other side escaped as prose — and an indented block renders its content literally, so
+ * the backslashes were on the page, inside the very sample the finding was about. `bullet`
+ * makes it worse by adding its own two columns, but `prose` has it at column zero too.
+ *
+ * Leaving those lines unescaped instead is the wrong way round. An indented code block
+ * cannot interrupt a paragraph, so a four-space line under a line of prose is a lazy
+ * continuation and its `<div>` really is live markup. That is what the blank-line test
+ * below is for: without it, this would turn prose into code and let a tag through.
+ *
+ * The residual is the other direction, and it is the safe one. Four spaces after a blank
+ * line inside a list item is that item's own continuation paragraph rather than code,
+ * because the item's content column is already two or three in; this fences it, and the
+ * paragraph renders as a code sample. Telling the two apart takes the block-container state
+ * a fence scanner does not keep, and being wrong this way costs a reader one oddly rendered
+ * paragraph where being wrong the other way costs them a live tag.
+ */
+function fenceIndented(lines: string[]): string[] {
+    const fenced = fenceMap(lines);
+    const out: string[] = [];
+
+    for (let i = 0; i < lines.length; ) {
+        const starts = !fenced[i] && /^(\t| {4})/.test(lines[i] ?? "") && (i === 0 || blank(lines[i - 1] ?? ""));
+
+        if (!starts) {
+            out.push(lines[i] ?? "");
+            i += 1;
+            continue;
+        }
+
+        let end = i;
+
+        while (end < lines.length && !fenced[end] && (blank(lines[end] ?? "") || /^(\t| {4})/.test(lines[end] ?? ""))) {
+            end += 1;
+        }
+
+        // A code block does not keep the blank lines that trail it, and swallowing them
+        // would put a blank line inside the fence and take the paragraph break out.
+        while (end > i && blank(lines[end - 1] ?? "")) end -= 1;
+
+        const body = lines.slice(i, end).map((line) => line.replace(/^(\t| {4})/, ""));
+        const longest = Math.max(0, ...body.flatMap((line) => [...line.matchAll(/`+/g)].map((m) => m[0].length)));
+        const fence = "`".repeat(Math.max(3, longest + 1));
+
+        out.push(fence, ...body, fence);
+        i = end;
+    }
+
+    return out;
+}
+
 /**
  * A model's block of prose, with everything it would open on its own escaped and everything
  * inside a fence left alone.
  */
 export function escapeBlocks(lines: string[]): string[] {
-    const fenced = fenceMap(lines);
+    const normalised = fenceIndented(lines);
+    const fenced = fenceMap(normalised);
 
-    return lines.map((line, i) => (fenced[i] ? line : escapeBlockStart(escapeTags(line))));
+    return normalised.map((line, i) => (fenced[i] ? line : escapeBlockStart(escapeTags(line))));
 }
 
 /**
@@ -412,15 +472,32 @@ export function prose(text: string, limit: number): string {
 }
 
 /**
+ * A summary line, encoded for the one place in this file that is not markdown.
+ *
+ * `<details>` at column zero opens a CommonMark HTML block, and the block runs to the next
+ * blank line: the `<summary>` line is inside it. Content there is passed through as raw
+ * HTML, with no inline parsing, so a backslash escape is not an escape. `escapeInline`
+ * would leave `\<img src=...>` on the page as a literal backslash in front of a live tag,
+ * which GitHub's sanitiser passes.
+ *
+ * Entities are what that region still decodes, so `&`, `<` and `>` become entities. `&` goes
+ * first, or the ampersands this writes would be encoded again.
+ */
+function encodeSummary(text: string): string {
+    return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
+/**
  * A collapsed block. GitHub renders nothing at all if the markup is a line out.
  *
- * The summary is escaped here. Every caller today builds one out of counts, but nothing in
+ * The summary is encoded here. Every caller today builds one out of counts, but nothing in
  * the signature says so, and an unbalanced tag in a `<summary>` swallows the rest of the
  * disclosure with no sign of it in the review. The body is the caller's to escape, because
- * each one is a different shape of model prose.
+ * each one is a different shape of model prose, and it sits past the blank line below,
+ * which is where markdown starts again.
  */
 export function details(summary: string, body: string, open = false): string {
-    const heading = escapeInline(flatten(summary));
+    const heading = encodeSummary(flatten(summary));
 
     return `<details${open ? " open" : ""}>\n<summary>${heading}</summary>\n\n${body}\n</details>`;
 }

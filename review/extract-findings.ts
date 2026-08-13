@@ -183,7 +183,7 @@ await Bun.write(outPath, `${JSON.stringify(structured, null, 2)}\n`);
 const health: LensHealth[] = (Array.isArray(structured.lens_health) ? structured.lens_health : []).filter(
     (h): h is LensHealth => record(h) !== null,
 );
-const broken = health.filter((h) => record(h)?.ok === false);
+const broken = health.filter((h) => h.ok === false);
 
 console.log(`findings: ${findings.length}`);
 console.log(`lenses reported: ${health.length}`);

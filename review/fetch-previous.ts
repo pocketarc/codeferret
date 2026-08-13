@@ -24,26 +24,16 @@
  * Env:   GITHUB_TOKEN (or the token on stdin), GITHUB_REPOSITORY, GITHUB_RUN_ID
  */
 
+import { ARTIFACT_NAME as ARTIFACT, RETENTION_DAYS } from "./artifact.ts";
 import { requirePullNumber, requireRepository, rest, restJson, tokenFromStdinOrEnv } from "./github.ts";
 import { reason, record } from "./json.ts";
 import { candidates, firstPosted, sameWorkflow } from "./previous.ts";
 import type { Artifact, Previous } from "./previous.ts";
 import { MAX_ENTRY_BYTES, readFromZip } from "./unzip.ts";
 
-/** The name the shipped workflow gives the upload. A repository that renames it opts out. */
-const ARTIFACT = "codeferret-run";
-
 /** Artifacts are listed newest first, so this is how far back a busy repository is searched. */
 const MAX_PAGES = 5;
 const PER_PAGE = 100;
-
-/**
- * What action.yml keeps an artifact for. Nothing older is still downloadable.
- *
- * validate-repo.ts checks the two against each other, because raising one without the
- * other stops this paging at an artifact that is still there.
- */
-const RETENTION_DAYS = 14;
 
 /**
  * How many artifacts are opened before this gives up.
@@ -75,17 +65,41 @@ const pull: string = requirePullNumber(prNumber);
 const MAX_REDIRECTS = 5;
 
 /**
+ * Where GitHub's artifact API sends a download.
+ *
+ * Artifacts are served from object storage, and the API answers the zip endpoint with a
+ * redirect to a signed URL there. These are the hosts it uses.
+ */
+const STORAGE_HOSTS = [".blob.core.windows.net", ".actions.githubusercontent.com", ".s3.amazonaws.com"];
+
+/**
  * The redirect target, refused unless it is one this will fetch.
  *
  * Bun's fetch honours `file:`, so a `Location` naming one would have this read a local path
- * and hand the bytes on as an artifact. The value comes from api.github.com today, and it
- * is the one input this file takes on faith.
+ * and hand the bytes on as an artifact. The scheme was the whole of the check, and it left
+ * the destination unbounded: any https host was followed and whatever came back was parsed
+ * into this run's previous.json, which decides which findings are marked `already-reported`.
+ * A suppressed finding is one nobody sees. Everything else on this path is qualified —
+ * `sameWorkflow`, `fromThisRepository`, `postedFor` — and the bytes those checks qualify came
+ * through the one hop nothing qualified.
+ *
+ * The precondition is that api.github.com emits the `Location`, which is why the scheme test
+ * held for as long as it did, and that is the one input this file takes on faith. A refusal
+ * costs a review that repeats itself, which is the direction this file already fails in.
  */
 function storageUrl(location: string): string {
     const parsed = new URL(location);
 
     if (parsed.protocol !== "https:") {
         throw new Error(`the artifact redirect points at ${parsed.protocol}, which this will not fetch`);
+    }
+
+    // A leading dot on each suffix, so `evil-blob.core.windows.net` is not a match for
+    // `blob.core.windows.net` and neither is `blob.core.windows.net.example.com`.
+    const host = parsed.hostname.toLowerCase();
+
+    if (!STORAGE_HOSTS.some((suffix) => host.endsWith(suffix))) {
+        throw new Error(`the artifact redirect points at ${host}, which is not where GitHub keeps artifacts`);
     }
 
     return parsed.href;

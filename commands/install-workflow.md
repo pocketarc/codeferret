@@ -19,6 +19,13 @@ take from it.
 Read `<plugin>/templates/workflow.yml` and show it before writing anything. It grants
 `pull-requests: write` and `contents: read`, and the user should see that first.
 
+Say what a permission on this job means before saying what each one is for. The review runs
+an agent with Bash over a diff and comments that anybody can write, and the composite action
+runs that agent and the posting step in one job, on one runner, as one user. So every
+permission below is within reach of a review talked into running a command, `pull-requests:
+write` included. What would take posting out of that reach is a second job that never runs
+the agent, which is a change to make in the workflow rather than in the action.
+
 `contents: read` is what the template ships, and everything works under it. The one thing
 `contents: write` adds is closing the inline threads CodeFerret left on this repository
 before `v1.1.0`: a review is one body now and opens no thread of its own, so

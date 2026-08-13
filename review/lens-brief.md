@@ -49,4 +49,6 @@ not apply it.
 __EXTRAS__
 Return JSON matching this schema as your entire final message:
 
+```json
 __SCHEMA__
+```

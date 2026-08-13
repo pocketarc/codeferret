@@ -205,6 +205,8 @@ the orchestrator's last turn alone, and undercounted one full run sixtyfold.
 | `local-preflight.sh` | Works out from the checkout what the workflow event would otherwise supply. |
 | `local-run.sh`, `local-print.sh`, `local-post.sh` | What `/codeferret:review` runs, so a session pastes no paths and relays no refs. |
 | `defaults/` | The `lenses` and `exclude-paths` defaults as plain lists, for a session that cannot read a YAML default. Generated from action.yml. |
+| `artifact.ts` | The name and retention window the action's upload step declares, for the run that reads an artifact back. Generated from action.yml. |
+| `versions.sh` | The bun and Claude Code versions a review runs on, sourced by both the action and the lint workflow. |
 | `fetch-existing.ts` | Reads the discussion already on the pull request, for the orchestrator to match findings against. |
 | `fetch-previous.ts` | Reads the previous run's findings out of its artifact, which is the other half of that match. |
 | `previous.ts` | Which artifact that is and what it holds, with `previous.test.ts` beside it. |
@@ -224,6 +226,7 @@ the orchestrator's last turn alone, and undercounted one full run sixtyfold.
 | `diff-args.ts` | Reads back what the lenses were told to diff, so nothing builds a second range or pathspec. |
 | `github.ts` | How these scripts talk to GitHub: the token handshake, the headers, the shape of a failure. |
 | `json.ts` | The two narrowings every script here takes on a value it did not produce. |
+| `test-fixtures.ts` | The one finding the suites build their cases out of, typed and untyped. |
 | `lib.sh` | What a shell script must work out or refuse before passing a value on: the guards, the `gh` handshake, the pull request and the base ref. |
 
 ## Why it is built this way
@@ -299,14 +302,14 @@ Without that test, a maintainer who comments "LGTM, merging" settles every findi
 pull request. What is left is that a maintainer settling one finding in a file settles every
 finding this run made in that file, which is the direction to be wrong in.
 
-Neither file is taken as the orchestrator left it. `existing.json` is fetched a second time
-once the session has exited, and `previous.json` is copied aside before it and put back
-after, along with `diff-args` and `lens-list.txt`. The orchestrator holds every one of those
-paths in its prompt and has `Bash` under `bypassPermissions`, so the first copies could have
-been written by the session they are evidence about. The second fetch also picks up whatever
-was said during the twenty minutes the review took; a restored copy that differs from what
-went in is reported on stderr, because nothing else in a run would show a lens rewriting the
-diff the others read.
+Neither file is taken as the orchestrator left it. `run.sh` replaces `existing.json` with
+the empty form once the session has exited, and the post and print paths fetch it again;
+`previous.json` is copied aside before the session and put back after, along with `diff-args`
+and `lens-list.txt`. The orchestrator holds every one of those paths in its prompt and has
+`Bash` under `bypassPermissions`, so the first copies could have been written by the session
+they are evidence about. The second fetch also picks up whatever was said during the twenty
+minutes the review took; a restored copy that differs from what went in is reported on
+stderr, because nothing else in a run would show a lens rewriting the diff the others read.
 
 It matches against two files. `build/previous.json` holds what the last run reported, and
 that is where a repeat is caught. `build/existing.json` holds the discussion on the pull
@@ -646,12 +649,11 @@ prompt injection, so `run.sh` spends a second process keeping them apart. The se
 
 ### The GitHub token never enters the step that runs the agent
 
-`run.sh` fetches `existing.json` and `previous.json` before the session and fetches
-`existing.json` again after it, so it needs a token that can read the pull request. It used
-to take that token out of its own environment with `unset`, which is not something `unset`
-can do. A process's environment block is written once, at `execve`, and `/proc/<pid>/environ`
-holds that block for as long as the process lives. A lens runs as the same user and has
-`Bash`.
+`run.sh` fetches `existing.json` and `previous.json` before the session, so it needs a token
+that can read the pull request. It used to take that token out of its own environment with
+`unset`, which is not something `unset` can do. A process's environment block is written
+once, at `execve`, and `/proc/<pid>/environ` holds that block for as long as the process
+lives. A lens runs as the same user and has `Bash`.
 
 Measured in a Linux container against the two step bodies as `action.yml` shipped them: the
 agent's own environment was clean, and `tr '\0' '\n' </proc/$PPID/environ` from the agent
@@ -665,12 +667,24 @@ and `run.sh` reads the file and deletes it before it starts anything. `token_fil
 measurement came back empty: no ancestor's environment held the token, and no file under
 `RUNNER_TEMP` did either.
 
-What is left is worth naming. The token spends the run in `run.sh`'s shell memory, and
-reading that takes ptrace on an ancestor, which is off under Yama's default scope. The runner
-puts `ACTIONS_RUNTIME_TOKEN` into every step's environment itself, so it is in `/proc` before
-this action runs at all and nothing here can take it out. And the posting step still holds a
-token, so the routes the `run.sh` comment already names (a line appended to `GITHUB_ENV`, or
-overwriting the `bun` on `PATH`) reach it as they did.
+`run.sh` used to refetch `existing.json` after the session as well, and the post and print
+paths do that now. Both `bun` and the scripts under `$GITHUB_ACTION_PATH` are files
+this user owns — `install: auto` installs the first with `npm install -g` — so a session with
+`Bash` has the length of a review to replace either, and any credential handed over
+afterwards goes to code a lens chose. Moving the fetch does not make that untrue; it means
+the run authenticates once after the session rather than twice, at a step that holds a token
+for its own work anyway, and `run.sh` drops the value before an agent starts rather than
+holding it across the review.
+
+What is left is worth naming. The token stays in `run.sh`'s shell memory for the two fetches,
+and reading that takes ptrace on an ancestor, which is off under Yama's default scope. The
+runner puts `ACTIONS_RUNTIME_TOKEN` into every step's environment itself, so it is in `/proc`
+before this action runs at all and nothing here can take it out. And the posting step still
+holds a token, so the routes the `run.sh` comment already names (a line appended to
+`GITHUB_ENV`, or overwriting the `bun` on `PATH`) reach it as they did. What closes that one
+is posting from a job that never runs the agent. A composite action has steps rather than
+jobs, so the last post-session use of the credential is now in the one step a consumer could
+lift out into a job of their own.
 
 ### Which permissions a lens gets is an argument
 

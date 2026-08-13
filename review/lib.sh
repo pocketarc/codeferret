@@ -36,7 +36,7 @@ emit_output_file() {
     emit_output "$1" "$(cat "$2")"
 }
 
-# ---- The empty form of the file the orchestrator is handed ---------------------------
+# ---- The file the orchestrator is handed, and what replaces it afterwards -------------
 
 # What existing.json says when there was no pull request to fetch it from, or when the fetch
 # failed before it could write.
@@ -47,6 +47,37 @@ emit_output_file() {
 # does not recognise, and every suppression is reopened with nothing saying why.
 empty_existing() {
     printf '{"threads": [], "conversation": []}\n' >"$1"
+}
+
+# What puts a real one back, once the session has exited. The token comes in on stdin.
+#
+# The orchestrator is handed this path in the same prompt as the rule `vetSuppression`
+# applies, so the copy it was given is not evidence about the session, and run.sh empties the
+# file rather than leaving it. This fetch is what the vetting reads instead, and it carries
+# whatever was said during the review as well.
+#
+# Here rather than in run.sh, which is the script that starts the agent. A token that script
+# still held afterwards would go to a `bun` the session has had a whole review to overwrite,
+# and to a script under the action path it could have rewritten just as easily. So the fetch
+# belongs to the post and print paths, each of which already holds a credential for its own
+# work and runs once the session is gone.
+#
+# The token goes over stdin for the reason run.sh gives where it hands one to the fetch that
+# runs before the session. GITHUB_TOKEN is emptied across the boundary as well, because
+# `tokenFromStdinOrEnv` reads the environment ahead of stdin: a job or a developer's shell
+# exporting one of its own would otherwise decide which account read the pull request, with
+# nothing said either way.
+#
+# Usage: fetch_existing <root> <build-dir> <pr> [<own-login>], token on stdin.
+fetch_existing() {
+    local root=$1 build=$2 pr=$3 login=${4:-}
+
+    ${PREFIX:-} env \
+        "GITHUB_TOKEN=" \
+        "GITHUB_REPOSITORY=${GITHUB_REPOSITORY:-}" \
+        bun --config=/dev/null "$root/review/fetch-existing.ts" \
+        "$pr" "$build/existing.json" ${login:+"$login"} ||
+        echo "could not read all of this pull request's comments. Whatever went unread counts as new." >&2
 }
 
 # ---- Where a run keeps its files ----------------------------------------------------

@@ -67,6 +67,7 @@ census when a later commit could falsify it.
 
 Return JSON matching this schema as your entire final message:
 
+```json
 {
     "type": "object",
     "required": ["skill_name", "findings"],
@@ -128,3 +129,4 @@ Return JSON matching this schema as your entire final message:
         }
     }
 }
+```

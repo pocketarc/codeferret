@@ -119,9 +119,9 @@ is in `review/README.md`.
   rule beside it, and no later commit can make it wrong. Nothing mechanical catches these, so
   the `comment-review` lens is told, in `review/lens-extras/comment-review.md`, to report the
   ones that get through. That lens is currently off in this repository's own workflow, along
-  with `writing-review`: `LENSES_THIS_REPO_SKIPS` in `scripts/validate-repo.ts` names both and
-  says why. While they are off, run them by hand over the working tree before a push, or this
-  rule has nothing behind it. The run that first had them off left a stale `tool-stub.ts` row
+  with `writing-review`: the `exclude-lenses` block in `.github/workflows/codeferret.yml`
+  names both and says why. While they are off, run them by hand over the working tree before
+  a push, or this rule has nothing behind it. The run that first had them off left a stale `tool-stub.ts` row
   and three descriptions of a deleted stage in the tree, and a person found them.
 - A lens's `in_diff` field is unreliable, and nothing reads it. On every run that used
   inline comments, a lens reported an out-of-diff finding as in-diff. Nothing anchors to a
@@ -161,13 +161,17 @@ is in `review/README.md`.
   write that file into every directory a run has left to stand in. `validate-repo.ts` reads
   `review/*.sh` and `action.yml` for a `bun` that names a script without the flag, including
   the ones inside printed hints, and fails on one.
-- No file the session could have written is evidence about the session. `run.sh` deletes
-  the `existing.json` the orchestrator was given and fetches it again, because the
+- No file the session could have written is evidence about the session. `run.sh` replaces
+  the `existing.json` the orchestrator was given with the empty form, because the
   orchestrator holds that path in the same prompt as the rule `vetSuppression` applies, and
-  it could write the file its own suppressions are then checked against. Refetching costs
-  one extra pair of API calls and picks up whatever was said during the run. `previous.json`,
-  `diff-args` and `lens-list.txt` cannot be had again that cheaply, so they are copied aside
-  before the session and put back after it, and a copy that comes back changed is reported.
+  it could write the file its own suppressions are then checked against. `fetch_existing` in
+  `lib.sh` puts a real one back, called from the post and print paths rather than from
+  `run.sh`: the token would have to come back into the script that started the agent to be
+  used there, and by then `bun` and the action's own scripts are files that session has had a
+  whole review to replace. The refetch costs one extra pair of API calls and picks up
+  whatever was said during the run. `previous.json`, `diff-args` and `lens-list.txt` cannot
+  be had again that cheaply, so they are copied aside before the session and put back after
+  it, and a copy that comes back changed is reported.
 - An input that names what a review may do has to reach the code that does it.
   `resolve-threads` reached the orchestrator's prompt and nothing else until
   `post-review.ts` was given `RESOLVE_THREADS`, and the upload step read `artifact-path`

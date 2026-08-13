@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { asExisting, survey } from "./existing.ts";
 import { isListed, partition, vetSuppression } from "./findings.ts";
 import type { Finding } from "./findings.ts";
+import { finding } from "./test-fixtures.ts";
 
 /**
  * `vetSuppression` against a case written as the file on disk.
@@ -12,18 +13,6 @@ import type { Finding } from "./findings.ts";
  */
 const vet = (findings: Finding[], existing: unknown, previous?: unknown): ReturnType<typeof vetSuppression> =>
     vetSuppression(findings, survey(asExisting(existing)), previous);
-
-function finding(over: Partial<Finding> = {}): Finding {
-    return {
-        file: "a.ts",
-        line: 1,
-        severity: "low",
-        category: "style",
-        title: "A title",
-        body: "A body.",
-        ...over,
-    };
-}
 
 describe("partition", () => {
     test("splits on status and orders by severity", () => {

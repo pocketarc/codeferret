@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { rawFinding as finding } from "./test-fixtures.ts";
 
 const SCRIPT = join(import.meta.dir, "check-findings.ts");
 
@@ -17,20 +18,6 @@ beforeEach(() => {
 afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
 });
-
-function finding(over: Record<string, unknown> = {}): Record<string, unknown> {
-    return {
-        found_by: ["caveman-review"],
-        file: "a.ts",
-        line: 4,
-        severity: "high",
-        category: "correctness",
-        title: "A title",
-        body: "A body.",
-        status: "new",
-        ...over,
-    };
-}
 
 async function check(merged: unknown): Promise<{ code: number; out: string; written: unknown }> {
     const path = join(dir, "findings.json");

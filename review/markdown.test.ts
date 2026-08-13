@@ -1,5 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { clamp, closeOpenDetails, closeOpenFence, escapeBlocks, escapeInline, fenceMap, prose } from "./markdown.ts";
+import {
+    clamp,
+    closeOpenDetails,
+    closeOpenFence,
+    details,
+    escapeBlocks,
+    escapeInline,
+    fenceMap,
+    prose,
+} from "./markdown.ts";
 
 describe("fenceMap", () => {
     test("marks the delimiters as fenced, so a caller mapping the rest leaves them alone", () => {
@@ -174,6 +183,30 @@ describe("escapeBlocks", () => {
         expect(escapeBlocks(["![alt](https://example.test/x.png)"])).toEqual(["\\![alt](https://example.test/x.png)"]);
     });
 
+    test("fences an indented code block, which would otherwise show its backslashes", () => {
+        expect(escapeBlocks(["Wrap it:", "", "    <div>y</div>", "", "Done."])).toEqual([
+            "Wrap it:",
+            "",
+            "```",
+            "<div>y</div>",
+            "```",
+            "",
+            "Done.",
+        ]);
+    });
+
+    test("draws a fence longer than the backticks inside it, so the sample nests", () => {
+        expect(escapeBlocks(["", "    a ``` b"])).toEqual(["", "````", "a ``` b", "````"]);
+    });
+
+    test("escapes a four-space line under prose, which is a continuation and not a block", () => {
+        expect(escapeBlocks(["Wrap it:", "    <div>y</div>"])).toEqual(["Wrap it:", "    \\<div>y\\</div>"]);
+    });
+
+    test("leaves a nested list item alone, which is indented for a different reason", () => {
+        expect(escapeBlocks(["- outer", "    - inner", "- other"])).toEqual(["- outer", "    - inner", "- other"]);
+    });
+
     test("leaves an ordinary exclamation mark and an ordinary link alone", () => {
         expect(escapeBlocks(["it fails! see [the docs](https://example.test)"])).toEqual([
             "it fails! see [the docs](https://example.test)",
@@ -206,6 +239,22 @@ describe("clamp", () => {
 
     test("falls back to a word rather than cutting one in half", () => {
         expect(clamp("alpha beta gamma delta", 14)).toBe("alpha beta\n\n_(cut for length)_");
+    });
+});
+
+describe("details", () => {
+    // The summary sits inside the HTML block `<details>` opens, where a backslash is a
+    // backslash and only an entity neutralises a tag.
+    test("encodes a tag in the summary, which a backslash would leave live", () => {
+        expect(details("3 <img src=x> raised", "body")).toContain("<summary>3 &lt;img src=x&gt; raised</summary>");
+    });
+
+    test("encodes the ampersand first, so its own entities are not encoded twice", () => {
+        expect(details("a & <b>", "body")).toContain("<summary>a &amp; &lt;b&gt;</summary>");
+    });
+
+    test("leaves the body to its caller, past the blank line where markdown starts again", () => {
+        expect(details("s", "a <div> here")).toContain("\n\na <div> here\n");
     });
 });
 
