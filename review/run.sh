@@ -165,6 +165,11 @@ trim() {
 kept=$(printf '%s\n' "$LENSES" | trim)
 
 while read -r drop; do
+    # `<<<` feeds one empty line for an empty string however the value was trimmed, so an
+    # unset EXCLUDE_LENSES arrived here as a name of "". That is the shipped default, and
+    # `plain_name` refuses it, so every consumer run died before the prompts were built.
+    [ -n "$drop" ] || continue
+
     if ! plain_name "$drop"; then
         echo "exclude-lenses holds '$drop', which is not a plain lens name." >&2
         exit 1
