@@ -130,6 +130,17 @@ describe("vetSuppression: who may settle a finding", () => {
         });
     }
 
+    // A severity nothing recognises is printed in full as well, so it takes the same author.
+    test("a resolved thread cannot decline a finding whose severity nothing recognises", () => {
+        const out = vet(
+            [finding({ file: "a.ts", severity: "blocker", status: "declined", existing_comment_url: replyUrl })],
+            existing("NONE", true),
+        );
+
+        expect(out.untraceable).toBe(1);
+        expect(out.findings[0]?.status).toBe("new");
+    });
+
     test("that reply settles nothing in another file, whatever it names", () => {
         const anyone = existing("NONE", true);
         const comment = anyone.threads[0]?.comments[1];
@@ -355,6 +366,13 @@ describe("vetSuppression holds a listed severity to the decline bar", () => {
         });
     }
 
+    test("a stranger's comment cannot demote a finding whose severity nothing recognises", () => {
+        const out = vet([reported("blocker")], commented("NONE"));
+
+        expect(out.findings[0]?.status).toBe("new");
+        expect(out.unvouched).toBe(1);
+    });
+
     for (const severity of ["medium", "low"]) {
         test(`anyone's comment still settles a ${severity} finding`, () => {
             expect(vet([reported(severity)], commented("NONE")).findings[0]?.status).toBe("already-reported");
@@ -373,6 +391,13 @@ describe("vetSuppression: a listed severity citing no comment at all", () => {
             expect(out.unvouched).toBe(1);
         });
     }
+
+    test("a severity nothing recognises is reopened, because the body prints it in full", () => {
+        const out = vet([finding({ severity: "blocker", status: "already-reported" })], {}, raised);
+
+        expect(out.findings[0]?.status).toBe("new");
+        expect(out.unvouched).toBe(1);
+    });
 
     for (const severity of ["medium", "low"]) {
         test(`a ${severity} still rests on the previous review having raised that file`, () => {

@@ -94,6 +94,16 @@ describe("bullet", () => {
         expect(line).toContain("(cut for length)");
         expect(line.length).toBeLessThan(MAX_TITLE + 200);
     });
+
+    // The cut lands inside the span, because a span may hold the space `clamp` cuts on.
+    test("leaves no code span open when the cut lands inside one", () => {
+        const title = `Quote the ref in ${"x".repeat(160)} \`git rev-parse --verify -- $ref\` now`;
+        const line = bullet(finding({ title })).split("\n")[0] ?? "";
+
+        expect(line).toContain("git rev-parse");
+        expect(line).toContain("(cut for length)");
+        expect((line.match(/(?<!\\)`/g) ?? []).length % 2).toBe(0);
+    });
 });
 
 describe("mention", () => {
@@ -259,6 +269,7 @@ describe("composeReview", () => {
         linkable: new Set(),
         dispatched: [],
         unread: [],
+        sessionChanged: [],
     };
 
     const onARunner = destinationOf({
@@ -339,6 +350,15 @@ describe("composeReview", () => {
         // rather than as underscores.
         expect(item).toContain("_(cut for length)_");
         expect(item?.length).toBeLessThan(MAX_LENS_DETAIL + 200);
+    });
+
+    test("leaves no code span open when a lens caveat is cut inside one", () => {
+        const detail = `${"word ".repeat(396)}\`@media (prefers-reduced-motion: reduce)\` is missing`;
+        const body = review({ lens_health: [{ lens: "codeferret:x", findings_returned: 1, ok: true, detail }] });
+        const item = body.split("\n").find((line) => line.includes("@media")) ?? "";
+
+        expect(item).toContain("_(cut for length)_");
+        expect((item.match(/(?<!\\)`/g) ?? []).length % 2).toBe(0);
     });
 
     test("names a dispatched lens the run reported no health for", () => {
@@ -540,6 +560,13 @@ describe("composeReview", () => {
         expect(body).not.toContain("Seen 119");
     });
 
+    test("names an input the session changed, which is what the lens counts rest on", () => {
+        const body = review({}, { sessionChanged: ["diff-args", "lenses.txt"] });
+
+        expect(body).toContain("[!WARNING]");
+        expect(body).toContain("changed diff-args, lenses.txt under it");
+    });
+
     test("says what could not be read of the discussion, which is why findings repeat", () => {
         const body = review({}, { unread: ["the review threads could not be listed."] });
 
@@ -593,6 +620,23 @@ describe("composeReview", () => {
                     { lens_health: [{ ...healthy, ok: false }] },
                     { dispatched: ["codeferret:caveman-review"] },
                 ),
+            ).toBe(true);
+        });
+
+        test("a lens that named something it could not check", () => {
+            const limited = { lens: "codeferret:anthropic-accessibility-review", findings_returned: 0, ok: true };
+
+            expect(
+                warnedBy(
+                    { lens_health: [limited] },
+                    { dispatched: ["codeferret:anthropic-accessibility-review"] },
+                ),
+            ).toBe(true);
+        });
+
+        test("an input the session changed under the run", () => {
+            expect(
+                warnedBy({ lens_health: [healthy] }, { dispatched: ["codeferret:caveman-review"], sessionChanged: ["lenses.txt"] }),
             ).toBe(true);
         });
 

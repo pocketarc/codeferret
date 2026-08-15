@@ -18,6 +18,7 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { reason } from "../../review/json.ts";
+import { lines } from "../../review/lines.ts";
 
 process.chdir(join(import.meta.dir, "..", ".."));
 
@@ -70,6 +71,26 @@ export async function frontmatter(
         fail(list, file, `frontmatter is not valid YAML: ${reason(error)}`);
         return null;
     }
+}
+
+/**
+ * A newline-separated input's value, as lines, or a failure naming the shape it was written in.
+ *
+ * The boundary `lines` in review/lines.ts refuses to guess at: a check reads these keys out of
+ * a parsed YAML document, where a sequence is an ordinary thing for an author to write.
+ *
+ * An absent key is not a fault. Every caller here reads an optional input, and "not set" is
+ * what an empty list already means.
+ */
+export function inputLines(list: Failures, file: string, key: string, value: unknown): string[] {
+    if (value === undefined || value === null) return [];
+    if (typeof value === "string") return lines(value);
+
+    const shape = Array.isArray(value) ? "a list" : `a ${typeof value}`;
+
+    fail(list, file, `writes \`${key}\` as ${shape}. An action reads it as one string, so write it as a block scalar.`);
+
+    return [];
 }
 
 export interface Action {

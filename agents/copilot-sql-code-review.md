@@ -8,8 +8,8 @@ Review this change.
 
 The repository is the current working directory. Your instruction gives the diff under
 review and the ref it is taken against. Run the diff commands in that instruction as
-written. Their pathspec leaves out generated files such as lockfiles and build output,
-which are not worth reviewing.
+written. Their pathspec has already taken out what is not worth reviewing, such as
+lockfiles and build output, so anything still in the diff is in scope, generated or not.
 
 The base ref is already decided. You are a subagent, so there is nobody to answer a
 question. Do not ask one.
@@ -89,14 +89,16 @@ semi-join, which leaves at most one row per user instead of one per order, and `
 not unique, so dropping it turns two users both called Alice into two rows where the original
 returned one. Dropping `DISTINCT` is safe only once the projection carries a key.
 
-Its N+1 fix is unsound for a second reason and it is the advice most likely to reach an
-author. The "GOOD" replacement for a per-user query loop is `SELECT u.*, o.* FROM users u
-LEFT JOIN orders o ON u.id = o.user_id;`, which has no `WHERE` and no `LIMIT`, so it reads
-every user and every order to answer a question about a bounded page of users, and it repeats
-each user's row once per matching order. It is also `SELECT *` on `users`, the table the
-skill itself uses to illustrate sensitive columns. Recommend a batched fetch on the child
-table keyed by the parent ids already in hand, with the columns named: `SELECT o.user_id,
-o.id, o.total, o.order_date FROM orders o WHERE o.user_id = ANY($1)`.
+Its N+1 example is the one most likely to reach an author, and its replacement is worse than
+the loop it replaces. The skill offers `SELECT u.*, o.* FROM users u LEFT JOIN orders o ON
+u.id = o.user_id` as the fix for a per-user query loop. There is no `WHERE` and no `LIMIT`,
+so it reads every user and every order to answer a question that was about one page of users,
+and `u.*` repeats once per matching order, so each user is transferred as many times as they
+have orders. The projection is also the `SELECT *` the same skill lists as a defect of its
+own. The fix for an N+1 is one batched query over the ids
+the caller already holds, projecting named columns: `SELECT o.user_id, o.id, o.total,
+o.order_date FROM orders o WHERE o.user_id = ANY($1)`, grouped in the application. Recommend
+that shape, and raise the skill's own example if it appears in a diff.
 
 Its "SECURE" examples are wrong twice over, and neither half is what an application author
 needs. The projection is `SELECT *` from `users`, which is the table the same skill uses to
@@ -115,15 +117,16 @@ same way: the range condition it teaches is right and the projection carried ove
 bad example is not. So do not read a green tick as permission for the projection it carries:
 name the columns, and raise `SELECT *` in the diff on the skill's own rule.
 
-Its N+1 example is the one most likely to reach an author, and its replacement is worse than
-the loop it replaces. The skill offers `SELECT u.*, o.* FROM users u LEFT JOIN orders o ON
-u.id = o.user_id` as the fix for a per-user query loop. There is no `WHERE` and no `LIMIT`,
-so it reads every user and every order to answer a question that was about one page of users,
-and `u.*` repeats once per matching order, so each user is transferred as many times as they
-have orders. The projection is also the `SELECT *` the same skill lists as a defect. The fix
-for an N+1 is one query over the ids the caller already holds, projecting named columns:
-`SELECT o.user_id, o.id, o.total FROM orders o WHERE o.user_id = ANY($1)`, grouped in the
-application. Recommend that shape, and raise the skill's own example if it appears in a diff.
+Its SQL Server section, under the platform-specific advice, writes
+`CREATE COLUMNSTORE INDEX idx_sales_cs ON sales;`, which does not parse in T-SQL. Omitting
+`CLUSTERED` makes the index nonclustered, and a nonclustered columnstore index takes a column
+list. The two valid spellings are `CREATE CLUSTERED COLUMNSTORE INDEX idx_sales_cs ON sales;`,
+which takes no column list and converts the whole rowstore table, and
+`CREATE NONCLUSTERED COLUMNSTORE INDEX idx_sales_cs ON sales (order_date, product_id, total);`,
+which needs one. They are not interchangeable, and the comment above it ("Columnstore indexes
+for analytics") means the clustered form. The statement sits under a heading the skill presents
+as best practice with no cross beside it, so recommend the clustered form and never quote the
+statement as written: an author pastes it into a migration and gets a syntax error.
 
 Its Issue Template, and the output format, scores and priority actions around it, are
 upstream's own reporting shape, and none of it applies: your output is the JSON schema in the

@@ -12,9 +12,18 @@
  * `trim_lines` in review/lib.sh does the same for the shell, deliberately in the same three
  * steps: `String.prototype.trim` and `[[:space:]]` agree on the space, the tab and the
  * carriage return, which is the whole of what turns up here.
+ *
+ * A string, and not `unknown` coerced with `String(value ?? "")`. GitHub hands every input to
+ * an action as one string, so that is the only shape a run ever sees, but the build scripts
+ * read the same values straight out of a parsed YAML document, where an author can write a
+ * sequence instead of a block scalar. `String(["a", "b"])` is `"a,b"`, which came back from
+ * here as one entry that looked well formed and reached `plain_name` three scripts later as
+ * a lens name nobody typed; an object took the same route as `[object Object]`. So the shape
+ * is decided where the document is read: `inputLines` in scripts/checks/support.ts is that
+ * boundary for the checks, and `trim_lines` on the shell side cannot be handed a list at all.
  */
-export function lines(value: unknown): string[] {
-    return String(value ?? "")
+export function lines(value: string | undefined | null): string[] {
+    return (value ?? "")
         .split("\n")
         .map((line) => line.trim())
         .filter((line) => line !== "");

@@ -274,13 +274,15 @@ is in `review/README.md`.
   nothing about the finding's file, or the same maintainer's "LGTM" would settle every
   finding on the pull request. Every suppression is reopened when `existing.json` cannot be
   read: a repeated comment costs less than a finding nobody sees.
-- A closed thread stands for its own file, no other, and not for a critical or a high.
-  Closing one takes repository write, or authorship of the pull request, which GitHub
+- A closed thread stands for its own file, no other, and not for a finding the body prints
+  in full. Closing one takes repository write, or authorship of the pull request, which GitHub
   documents and a round of review caught here: on a branch from an outside contributor the
   only person who can close a thread is the one whose work is under review, so closure alone
   is not evidence that anybody with standing settled anything. It still decides a finding
-  printed as one line, and `vetSuppression` holds the two severities that take a reader off
-  the page to an entitled commenter instead. Replying to a closed thread takes no more than
+  printed as one line, and `vetSuppression` holds the rest to an entitled commenter instead.
+  It calls `isListed` rather than testing `LISTED`, because those are two different sets: the
+  body prints a severity nothing recognises in full as well, and the narrower test gave such a
+  finding the whole page and the low bar at once. Replying to a closed thread takes no more than
   commenting and does not reopen it, so a reply there is bound to the file the thread is
   anchored to and its words settle nothing. Widen either half and a stranger's "working as intended,
   `src/auth.ts` is fine" on any resolved thread silences any file it names.
@@ -348,10 +350,15 @@ and every entry here was once written that way.
   repository. What the narrowing changed is what else goes up beside it. This repository's own
   workflow named `.`, which is the whole build directory, `existing.json` and `previous.json`
   with it, and those two are other people's comment text rather than this session's prose. It
-  now names `findings.json`, `run.json` and `lens-list.txt`, which is what a maintainer reads
-  when a review goes wrong. **Lapses** when a lens runs without `Bash`, which is the day the
-  shorter route closes and the artifact becomes the widest channel left. It has to be weighed
-  again before anything outside those files goes back into `artifact-path` here.
+  now names two classes and nothing else: the review's own output (`findings.json`, `run.json`
+  and `lens-list.txt`) and this run's numbers (`cost-usd`, `duration-ms`, `permission-denials`
+  and `findings-checked`). Both are what a maintainer reads when a review goes wrong. The
+  numbers were weighed on 2026-08-15 and add nothing anybody else wrote. The list is also not a
+  bound on what a run can publish, which is written out beside it in the workflow: the session
+  could rewrite or symlink any path it names. **Lapses** when a lens runs
+  without `Bash`, which is the day the shorter route closes and the artifact becomes the widest
+  channel left. It has to be weighed again before anything carrying somebody else's words goes
+  back into `artifact-path` here.
 - The orchestrator runs under `bypassPermissions` with `Bash`, holding comments written by
   anyone who can comment. **Weighed 2026-08-01.** `--disallowed-tools` takes `Edit`, `Write`,
   `NotebookEdit`, `WebFetch` and `WebSearch`; `Bash` and `Agent` stay, because the run needs

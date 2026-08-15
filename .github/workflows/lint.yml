@@ -9,7 +9,8 @@ permissions:
 
 jobs:
     # This job runs a fork's pull request code: `bun test` executes the test files as that
-    # pull request has them. So it holds no secrets and no write permissions.
+    # pull request has them. So it holds no secrets, no write permissions, and no credential
+    # left in the tree for that code to read.
     #
     # Named for what it runs rather than for one of its steps. It was `manifests`, after a
     # `validate-manifests.ts` this branch deleted, so a reader who saw it go red opened
@@ -19,6 +20,8 @@ jobs:
         steps:
             - name: Checkout
               uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+              with:
+                  persist-credentials: false
 
             # Pinned for the reason review/versions.sh gives, and the version comes out of
             # the same file the action reads, so bumping it is one edit. A stale pin fails
@@ -53,6 +56,8 @@ jobs:
         steps:
             - name: Checkout
               uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+              with:
+                  persist-credentials: false
 
             # SC2016 fires on every backtick inside a single-quoted printf format, and
             # these scripts write markdown into a prompt, so every SC2016 hit here is a

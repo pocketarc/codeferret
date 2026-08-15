@@ -41,8 +41,12 @@ const rules = selfCheck(schema);
 // the findings in front of it, and failing here would leave the drift for the next run
 // anyway.
 if (rules.stray.length > 0) {
+    // An absolute path, because whoever pastes this line is standing wherever the run left
+    // them, which during a review is the checkout under review rather than this repository.
+    const validate = join(import.meta.dir, "..", "scripts", "validate-repo.ts");
+
     console.warn(`WARN check-findings.ts keys ${rules.stray.join(", ")}, which merged-schema.json has no field for.`);
-    console.warn("Run `bun scripts/validate-repo.ts finding-rules` and fix the table.");
+    console.warn(`Run \`bun --config=/dev/null ${validate} finding-rules\` and fix the table.`);
 }
 
 let parsed: unknown;

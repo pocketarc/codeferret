@@ -50,6 +50,26 @@ export function dispatchedFrom(text: string): string[] {
 }
 
 /**
+ * Where run.sh writes the build files the session changed under it, one name per line.
+ *
+ * Empty is the ordinary answer and is written every run, so an absent file means the review is
+ * being posted from a findings file somebody copied rather than that nothing moved. The
+ * session cannot forge it: run.sh truncates it after the session has exited, and the digests
+ * it decides from live in that shell's own variables.
+ *
+ * A name in it decides the commit every finding's line belongs to, or which lenses this run
+ * says it dispatched, so a reader judging how much of the change was covered has to be told.
+ */
+export const SESSION_CHANGED_FILE = "session-changed.txt";
+
+/** The build files the session changed, out of the run directory. */
+export async function readSessionChanged(dir: string): Promise<string[]> {
+    const file = Bun.file(join(dir, SESSION_CHANGED_FILE));
+
+    return (await file.exists()) ? lines(await file.text()) : [];
+}
+
+/**
  * The lenses a run dispatched, out of the run directory.
  *
  * Empty where the file is not there, which is a review checked or posted by hand from a

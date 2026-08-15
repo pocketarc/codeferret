@@ -20,7 +20,9 @@ export async function checkGenerated(): Promise<Failures> {
         process.stdout.write(new TextDecoder().decode(run.stdout));
 
         if (run.exitCode !== 0) {
-            list.push(new TextDecoder().decode(run.stderr).trim());
+            const said = new TextDecoder().decode(run.stderr).trim();
+
+            list.push(said === "" ? `${generator} exited ${run.exitCode} and wrote nothing to stderr` : said);
         }
     }
 

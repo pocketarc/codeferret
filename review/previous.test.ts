@@ -3,7 +3,15 @@
 // it. So each is pinned against the shapes the artifacts endpoint really returns.
 
 import { describe, expect, test } from "bun:test";
-import { candidates, firstPosted, fromThisRepository, postedFor, previousOf, sameWorkflow } from "./previous.ts";
+import {
+    candidates,
+    firstPosted,
+    fromThisRepository,
+    postedFor,
+    previousOf,
+    sameWorkflow,
+    storageUrl,
+} from "./previous.ts";
 import type { Artifact } from "./previous.ts";
 
 function artifact(over: Partial<Artifact> & { run?: Record<string, unknown> } = {}): Artifact {
@@ -255,5 +263,44 @@ describe("firstPosted", () => {
 
     test("is null when there is nothing to open", async () => {
         expect(await firstPosted([], "7", async () => posted(), 10, () => {})).toBeNull();
+    });
+});
+
+describe("storageUrl", () => {
+    test("passes the object-storage hosts GitHub redirects an artifact download to", () => {
+        for (const url of [
+            "https://productionresultssa0.blob.core.windows.net/actions-results/x?sig=y",
+            "https://pipelines.actions.githubusercontent.com/x",
+            "https://github-production-artifact.s3.amazonaws.com/x",
+        ]) {
+            expect(storageUrl(url)).toBe(url);
+        }
+    });
+
+    test("refuses a scheme bun's fetch would honour and read off disk", () => {
+        expect(() => storageUrl("file:///etc/passwd")).toThrow("which this will not fetch");
+    });
+
+    test("refuses a plain http hop", () => {
+        expect(() => storageUrl("http://productionresultssa0.blob.core.windows.net/x")).toThrow(
+            "which this will not fetch",
+        );
+    });
+
+    test("refuses a host that only ends in one of the names", () => {
+        expect(() => storageUrl("https://evil-blob.core.windows.net/x")).toThrow("not where GitHub keeps artifacts");
+        expect(() => storageUrl("https://blob.core.windows.net.example.com/x")).toThrow(
+            "not where GitHub keeps artifacts",
+        );
+    });
+
+    test("refuses any other host outright", () => {
+        expect(() => storageUrl("https://example.test/findings.zip")).toThrow("not where GitHub keeps artifacts");
+    });
+
+    test("matches the host case-insensitively, which is how a URL may be written", () => {
+        const url = "https://Productionresultssa0.Blob.Core.Windows.Net/x";
+
+        expect(storageUrl(url)).toBe("https://productionresultssa0.blob.core.windows.net/x");
     });
 });

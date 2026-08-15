@@ -43,11 +43,24 @@ jobs:
                   # It was `.`, which is the whole build directory: `existing.json` and
                   # `previous.json` with it, and both carry other people's comment text.
                   #
-                  # The four below are this run's own measurements rather than anybody's
-                  # prose. `run.json` holds all four as fields, so leaving them out lost
-                  # nothing that could not be read back; it cost the reading being a `cat`
-                  # rather than a walk through JSON, and `permission-denials` is the one a
-                  # maintainer reaches for when a review comes back thinner than it should.
+                  # Do not read a shorter list as a bound on what leaves the runner. The
+                  # orchestrator ran with Bash under bypassPermissions, so every path below is
+                  # one it could have rewritten, and `upload-artifact` globs its `path` with
+                  # symbolic links followed, so an entry replaced with a link goes up as
+                  # whatever it points at. What bounds that is the job's `if:` above, which
+                  # runs no review for a fork or for anyone outside the repository. What this
+                  # list settles is what a maintainer opens.
+                  #
+                  # `cost-usd`, `duration-ms` and `permission-denials` are this run's own
+                  # measurements, and `extract-findings.ts` derives each from a field of
+                  # `run.json`. They are named so that reading one is a `cat` rather than a
+                  # walk through JSON, and `permission-denials` is the one a maintainer
+                  # reaches for when a review comes back thinner than it should.
+                  #
+                  # `findings-checked` is none of that. It is not in `run.json` and cannot be
+                  # derived from it: run.sh writes it from `check-findings.ts`'s exit code once
+                  # the session has ended, and the posting step posts nothing without it, so a
+                  # maintainer asking why a paid-for review was never posted reads it here.
                   artifact-path: |
                       findings.json
                       run.json

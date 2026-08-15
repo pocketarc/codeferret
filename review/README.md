@@ -214,14 +214,16 @@ the orchestrator's last turn alone, and undercounted one full run sixtyfold.
 | `fetch-previous.ts` | Reads the previous run's findings out of its artifact, which is the other half of that match. |
 | `previous.ts` | Which artifact that is and what it holds, with `previous.test.ts` beside it. |
 | `unzip.ts` | Reads one file out of an artifact's zip, with `unzip.test.ts` beside it. |
-| `extract-findings.ts` | Reads the merged findings out of the run log, and what the run cost. |
+| `extract-findings.ts` | The command that reads a run log: argv, the writing, the printing and the exit codes. |
+| `run-log.ts` | How a log is read, which of its `result` messages is the complete one, what a run cost and why one ended. `run-log.test.ts` beside it. |
 | `summary.ts` | Renders those numbers into the action's job summary. |
 | `check-findings.ts` | The command that checks those findings before anything posts them: argv, printing, the write-back and the exit code. |
 | `finding-rules.ts` | What may be wrong with a findings file and what to do about each thing, as functions over a parsed value. `finding-rules.test.ts` beside it. |
 | `post-review.ts` | Renders the review body, posts it, and records that it landed. |
 | `review-body.ts` | The rendering behind it, with `review-body.test.ts` beside it. |
 | `print-findings.ts` | The same findings for a terminal, which is what a session shows instead of a posted review. |
-| `findings.ts` | What a run produced: the shape, how a finding ranks, which ones the body prints, and which suppressions hold. `findings.test.ts` beside it. |
+| `findings.ts` | What a run produced: the shape, how a finding ranks, which ones the body prints, and which suppressions hold. Pure, so nothing importing a rule imports a module that can read a file or end the process. `findings.test.ts` beside it. |
+| `read-run.ts` | The files a posted review and a printed one both read, so the two cannot decide differently what an unreadable one means. |
 | `existing.ts` | The shape of `existing.json` and the one walk over it, so no reader declares its own. |
 | `run-files.ts` | The names a run writes its numbers under, which action.yml and summary.ts both read back. |
 | `markdown.ts` | Where a fenced block starts and stops, and what a model's prose may open in a posted review. `markdown.test.ts` beside it. |
@@ -234,6 +236,7 @@ the orchestrator's last turn alone, and undercounted one full run sixtyfold.
 | `select-lenses.ts` | The lenses a run dispatches, after the exclusions. `select-lenses.test.ts` beside it. |
 | `test-fixtures.ts` | The one finding the suites build their cases out of, typed and untyped. |
 | `lib.sh` | What a shell script must work out or refuse before passing a value on: the guards, the `gh` handshake, the pull request and the base ref. |
+| `refuse-fork.sh` | The action's first step: whether the commit this run would review is this repository's. `refuse-fork.test.ts` beside it. |
 
 ## Why it is built this way
 
@@ -280,14 +283,16 @@ A suppression does not rest on the orchestrator's word alone. `vetSuppression` r
 each one cites back out of `existing.json` or `previous.json`, and reopens whatever those
 files do not bear out.
 
-A decline needs an owner, a member or a collaborator, or (below critical and high) a thread
-somebody closed. GitHub resolves a conversation for anyone with repository write, and for
-whoever opened the pull request, so closure is not on its own the word of somebody with
-standing: on a branch from an outside contributor, the only person who can close a thread is
-the person under review. It still settles a finding the body prints as one line, and the two
-severities that take a reader off the page are held to the author association instead.
-Replying to a closed thread takes no more than commenting and does not reopen it, so a reply
-there settles the file its thread is anchored to and no other.
+A decline needs an owner, a member or a collaborator, or, for a finding the body prints as one
+line, a thread somebody closed. GitHub resolves a conversation for anyone with repository
+write, and for whoever opened the pull request, so closure is not on its own the word of
+somebody with standing: on a branch from an outside contributor, the only person who can close
+a thread is the person under review. The findings that take a reader off the page are held to
+the author association instead, and `isListed` decides which those are, on the same test the
+body applies: critical, high, and any severity nothing recognises. When the test was the two
+names the schema carries, a finding graded `blocker` was printed in full and settled by a
+stranger. Replying to a closed thread takes no more than commenting and does not reopen it,
+so a reply there settles the file its thread is anchored to and no other.
 
 An `already-reported` finding is held to less, because it stays a finding in the file and
 loses only its paragraph. Anyone's comment settles it. What it still needs is that the
@@ -319,9 +324,9 @@ A run keeps two directories for that reason. `session/` holds the files the sess
 while it runs (`diff-args`, `diff.sh`, `existing.json` and `previous.json`), and every path in
 a prompt is one of those. `build/` holds the run's own record, which no prompt names and which
 everything downstream reads. Each file under `session/` is a copy, so a session that rewrote
-one rewrote what it reads itself, and `run.sh` copies nothing back. It does compare them and
-report a difference on stderr, because nothing else in a run would show a lens rewriting the
-diff the others read.
+one rewrote what it reads itself, and `run.sh` copies nothing back. It does compare them, and
+what it finds goes into the review, because nothing else in a run would show a lens rewriting
+the diff the others read.
 
 The split is not a boundary. `--plugin-dir` is handed the directory both of these sit under,
 and a lens with `Bash` runs as this user, so `build/` is one path segment from a path the
@@ -353,6 +358,19 @@ writes both, so identical replacements pass `cmp` in silence. What a lens cannot
 ptrace on an ancestor is the memory of the process that started the agent. Where there is no
 `shasum`, the run says so, because a reader could not tell two empty comparisons from nothing
 having changed.
+
+Both comparisons write the names they found into `build/session-changed.txt`, and the review
+body turns that into a coverage warning beside the one for a lens that reported nothing about
+itself. Stderr on its own was not enough, because the reader these caveats are for never opens
+a job log: a session that rewrote `lenses.txt` to name only the lenses it accounted for would
+produce a review that reads as complete, with the discrepancy recorded where nobody looks.
+
+What the run does not do is refuse to post. Clearing `findings-checked` was the other way to
+act on this, and it fails in the wrong direction twice over: it leaves a twenty-minute review
+saying nothing at all, which is the failure every coverage warning exists to prevent, and it
+hands a session that wants its findings buried a one-line way to do it. Those findings are
+still worth posting. What a reader must not be left with is a review that reads as complete
+when the lens list behind it is the session's own answer.
 
 The orchestrator matches against two files. `build/previous.json` holds what the last run
 reported, and that is where a repeat is caught. `build/existing.json` holds the discussion on
@@ -616,9 +634,19 @@ a failure.
 A review is posted even when nothing survives. Zero findings and a failed lens is the shape
 of a review that never happened, and posting nothing leaves a pull request looking clean.
 The test is the body rather than the failure: `composeReview` returns `warned` for every
-condition it writes a `[!WARNING]` under, and a run with nothing new posts whenever that is
-set. A lens missing from `lens_health` and a `lens_health` that is absent altogether both
-count, and the earlier condition of a failed lens alone was true for neither.
+condition under which the body says something about its own coverage, and a run with nothing
+new posts whenever that is set. A lens missing from `lens_health` and a `lens_health` that is
+absent altogether both count, and the earlier condition of a failed lens alone was true for
+neither.
+
+The conditions are a `Record` over their names, and every section reads its own from there, so
+a section cannot raise an alert without a name that counts towards `warned`. Before that,
+`warned` restated the conditions by hand as a boolean expression, sitting beside two functions
+that neither call it nor are called by it, and it had already lost one: `limited`, the lenses
+`caveatOf` gives a sentence for, renders as a `[!NOTE]` rather than a `[!WARNING]` and was left
+out. That is the standing sentence `STANDING_DETAIL` exists to carry, so a first run over
+markup that produced no critical defect went green with nothing posted, and the reader took
+contrast, focus order, target size and reflow for checked.
 
 ### The reviewed tree does not configure the session
 

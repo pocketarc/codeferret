@@ -46,11 +46,13 @@ export class ArtifactPathRefused extends Error {}
  * The module's whole premise is that the comparison against `findings.json` is made once
  * against a normalised value, and it was not: stripping a single leading `./` left
  * `.//findings.json` and `findings.json/` resolving to the findings file for the upload while
- * answering `false` for the body. Repeated and trailing slashes go, then every leading `./`,
- * and the result is `""` for the spellings that name the build directory itself.
+ * answering `false` for the body. Repeated slashes collapse, a trailing slash goes where a
+ * name is left in front of it, then every leading `./`, and the result is `""` for the
+ * spellings that name the build directory itself. Root keeps its slash, so every spelling of
+ * it is refused as absolute rather than read as that directory.
  */
 function normalise(entry: string): string {
-    const collapsed = entry.replace(/\/+/g, "/").replace(/\/+$/, "");
+    const collapsed = entry.replace(/\/+/g, "/").replace(/(?<=[^/])\/$/, "");
 
     return collapsed.replace(/^(\.\/)+/, "").replace(/^\.$/, "");
 }

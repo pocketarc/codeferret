@@ -23,11 +23,12 @@
 
 import { dirname, join } from "node:path";
 import { ownThreads, planResolution, unreadOf } from "./existing.ts";
-import { partition, readMerged, vetAgainstExisting } from "./findings.ts";
+import { partition } from "./findings.ts";
+import { readMerged, vetAgainstExisting } from "./read-run.ts";
 import { graphql, graphqlFailure, requirePullNumber, requireRepository, rest, tokenFromStdinOrEnv } from "./github.ts";
 import { reason } from "./json.ts";
 import { composeReview, destinationOf, plural, reopenedReasons } from "./review-body.ts";
-import { readDispatched } from "./run-files.ts";
+import { readDispatched, readSessionChanged } from "./run-files.ts";
 
 const [findingsPath, headSha, prNumber] = process.argv.slice(2);
 const repo = process.env.GITHUB_REPOSITORY;
@@ -67,12 +68,13 @@ const buildDir = dirname(findingsFile);
 // `bunfig.toml` from.
 const merged = await readMerged(
     findingsFile,
+    (line) => console.error(line),
     `check it with: bun --config=/dev/null ${join(import.meta.dir, "check-findings.ts")} ${findingsFile}`,
 );
 
 // The decision is taken again here: the orchestrator held the suppression rules and the
 // comments it judged as text in one context.
-const vetted = await vetAgainstExisting(merged.findings, buildDir);
+const vetted = await vetAgainstExisting(merged.findings, buildDir, (line) => console.error(line));
 const existing = vetted.existing;
 
 for (const said of reopenedReasons(vetted)) console.error(said);
@@ -197,6 +199,7 @@ const {
         linkable: vetted.survey.linkable,
         unread: unreadOf(existing),
         dispatched: await readDispatched(buildDir),
+        sessionChanged: await readSessionChanged(buildDir),
     },
     parts,
 );

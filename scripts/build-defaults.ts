@@ -45,10 +45,12 @@ const wanted = new Map<string, string>();
 let problems = 0;
 
 for (const [input, path] of FILES) {
-    const entries = lines(action.inputs?.[input]?.default);
+    // Narrowed rather than coerced, for the reason `lines` gives.
+    const value = action.inputs?.[input]?.default;
+    const entries = typeof value === "string" ? lines(value) : [];
 
     if (entries.length === 0) {
-        console.error(`FAIL action.yml: input '${input}' has no default to write to ${path}`);
+        console.error(`FAIL action.yml: input '${input}' has no newline-separated default to write to ${path}`);
         problems += 1;
         continue;
     }

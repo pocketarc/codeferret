@@ -10,7 +10,7 @@
  * one of these into a step output is the shell inside action.yml.
  */
 
-import { DISPATCHED_FILE, RUN_FILE_NAMES, RUN_FILES } from "../../review/run-files.ts";
+import { DISPATCHED_FILE, RUN_FILE_NAMES, RUN_FILES, SESSION_CHANGED_FILE } from "../../review/run-files.ts";
 import { action, fail } from "./support.ts";
 import type { Failures } from "./support.ts";
 
@@ -54,6 +54,15 @@ export async function checkRunFiles(): Promise<Failures> {
 
     if (!(await Bun.file(prompts).text()).includes(`$BUILD/${DISPATCHED_FILE}`)) {
         fail(list, prompts, `never writes '${DISPATCHED_FILE}', which is where a run's dispatched lenses are read from`);
+    }
+
+    // And the same again for the changed-input report, where a rename fails silently:
+    // `readSessionChanged` answers a missing file exactly as it answers a run in which
+    // nothing moved.
+    const runner = "review/run.sh";
+
+    if (!(await Bun.file(runner).text()).includes(`$BUILD/${SESSION_CHANGED_FILE}`)) {
+        fail(list, runner, `never writes '${SESSION_CHANGED_FILE}', which is where a changed input is reported from`);
     }
 
     if (list.length === 0) console.log(`OK run-files: ${named.length} step output(s) name a file the run writes`);

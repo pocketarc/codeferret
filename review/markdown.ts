@@ -463,20 +463,38 @@ export function linkTarget(url: string | undefined): string | null {
     }
 }
 
+/** What survived a cut, and the line that says one happened. */
+export interface Clamped {
+    kept: string;
+    /** Empty where nothing was cut. Markdown of its own, so a caller must not escape it. */
+    marker: string;
+}
+
+const CUT_MARKER = "\n\n_(cut for length)_";
+
 /**
- * Text a model wrote, cut to a length the rest of the page can fit around.
+ * Text a model wrote, cut to a length the rest of the page can fit around, before the marker.
  *
- * Cut on the largest boundary inside the window and close whatever fence the cut left open.
- * A cut at a character offset lands mid-span or mid-fence, and an unbalanced fence renders
- * everything below it as one code block. The paragraph is not always there to cut on: a
- * lens's list of what it could not check is often one paragraph or a run of single-newline
- * lines, and that is the field where a cut mid-word does the most damage.
+ * Cut on the largest boundary inside the window. A cut at a character offset lands mid-span or
+ * mid-fence, and an unbalanced fence renders everything below it as one code block. The
+ * paragraph is not always there to cut on: a lens's list of what it could not check is often
+ * one paragraph or a run of single-newline lines, and that is the field where a cut mid-word
+ * does the most damage.
+ *
+ * Split from `clamp` for the one-line fields, which have to escape after the cut rather than
+ * before it. `escapeInline` balances a code span the model left open, and cutting the balanced
+ * string reopens one: measured against this module, a title holding
+ * `` `git rev-parse --verify -- $ref` `` came back with an odd number of backticks, the stray
+ * opener paired with the next finding's path span, and the cut marker, the closing emphasis,
+ * the body and the category all rendered as one code span. Escaping the cut text instead puts
+ * that dangling run through the branch that already handles one, and the marker is appended
+ * afterwards, which is what the old order was for.
  */
-export function clamp(text: string, limit: number): string {
-    if (text.length <= limit) return text;
+export function clampTo(text: string, limit: number): Clamped {
+    if (text.length <= limit) return { kept: text, marker: "" };
 
     const window = text.slice(0, limit);
-    const cut = (kept: string): string => `${closeOpenFence(kept)}\n\n_(cut for length)_`;
+    const cut = (kept: string): Clamped => ({ kept, marker: CUT_MARKER });
 
     const paragraph = window.lastIndexOf("\n\n");
     if (paragraph > 0) return cut(window.slice(0, paragraph));
@@ -489,6 +507,13 @@ export function clamp(text: string, limit: number): string {
     if (word > 0) return cut(window.slice(0, word));
 
     return cut(window);
+}
+
+/** The cut, with whatever fence it left open closed and the marker on the end. */
+export function clamp(text: string, limit: number): string {
+    const { kept, marker } = clampTo(text, limit);
+
+    return marker === "" ? kept : `${closeOpenFence(kept)}${marker}`;
 }
 
 /**

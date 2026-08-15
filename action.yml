@@ -260,6 +260,11 @@ inputs:
             request's comments, which are other people's words. `.` keeps the whole
             directory, which is all of them.
 
+            A short list is not a bound on what leaves the runner. The session ran with `Bash`
+            over the build directory, so the contents of anything named here are its to change,
+            and `upload-artifact` follows a symbolic link to whatever it points at. What bounds
+            this is the condition on the job that runs the review.
+
             Set it to an empty string to upload nothing. Every finding is then raised
             again on every push.
 
@@ -296,71 +301,20 @@ outputs:
 runs:
     using: composite
     steps:
-        # This step runs first, before anything has read the tree. This action's trust
-        # boundary is the caller's `if:`, which nothing here can see. What it can check is
-        # the ways that gate stops holding by accident, and none of them is a configuration
-        # anybody means.
-        #
-        # Under `pull_request_target` the event's head sha is the fork's commit and the
-        # secrets are available, which is how this class of action is usually compromised.
-        # The shipped template's gate happens to survive the trigger change, but only by
-        # accident of what it tests.
-        #
-        # A caller who keeps `pull_request` and drops the head-repo test gets the same thing,
-        # and that is a plausible edit: "why won't it review external pull requests?". With
-        # `checkout: auto` the next steps check out that commit and start an agent with
-        # `Bash` under `bypassPermissions` over it, in a job holding the OAuth token and
-        # `pull-requests: write`.
-        #
-        # `workflow_run` is the other trigger that pairs a fork's commit with the secrets, and
-        # the one people reach for after reading that `pull_request_target` is refused. That
-        # event fires with the workflow file as the default branch has it, and its payload
-        # carries the head sha of whatever ran before it, a fork's pull request included. The
-        # `head-sha` input is what turns that into a checkout, so the head repository it names
-        # is tested here under its own spelling.
-        #
-        # The action refuses rather than warns, and refuses here rather than after a review
-        # that took twenty minutes. Where an event names no head repository at all, there is
-        # nothing to test and the step says so rather than passing in silence.
+        # This step runs first, before anything has read the tree, and before the toolchain
+        # step below has put anything on PATH. What it decides, and why it is a script rather
+        # than a `run:` block, are in review/refuse-fork.sh.
         - name: Refuse to review a fork's code
           shell: bash
           env:
               EVENT: ${{ github.event_name }}
               HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
               RUN_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
-              HEAD_SHA: ${{ inputs.head-sha }}
               THIS_REPO: ${{ github.repository }}
-          run: |
-              if [ "$EVENT" = "pull_request_target" ]; then
-                  echo "CodeFerret will not run under pull_request_target." >&2
-                  echo "Under that trigger the secrets reach a job that checks out a fork's commit." >&2
-                  echo "Use pull_request, and keep the head-repo test in the job's if:." >&2
-                  exit 1
-              fi
-
-              # The two payload fields that name where a commit came from, each spelled its
-              # own way: `pull_request` and its review events fill `HEAD_REPO`, `workflow_run`
-              # fills `RUN_REPO`, and every other event fills neither.
-              for named in "$HEAD_REPO" "$RUN_REPO"; do
-                  if [ -n "$named" ] && [ "$named" != "$THIS_REPO" ]; then
-                      echo "The commit this run would review is on $named, not on $THIS_REPO." >&2
-                      echo "CodeFerret runs an agent with Bash over the branch it reviews, in the" >&2
-                      echo "job holding your tokens, so it reviews only a branch from this repository." >&2
-                      echo "Add the head-repo test to the job's if: to skip such a run" >&2
-                      echo "rather than fail on it." >&2
-                      exit 1
-                  fi
-              done
-
-              # Said rather than refused. A workflow_dispatch or a repository_dispatch takes
-              # write access to start, so a head-sha arriving on one was chosen by somebody who
-              # could have pushed the commit anyway. An issue_comment takes only the ability to
-              # comment, and its payload carries no head sha of its own, so whoever wired that
-              # trigger chose where the value came from and this step cannot see their choice.
-              if [ -n "$HEAD_SHA" ] && [ -z "$HEAD_REPO" ] && [ -z "$RUN_REPO" ]; then
-                  echo "head-sha names the commit to review and $EVENT carries no head repository" >&2
-                  echo "to check it against, so the job's if: is the only gate on whose code runs here." >&2
-              fi
+              HEAD_SHA: ${{ inputs.head-sha }}
+              PR_NUMBER: ${{ inputs.pr-number }}
+              CHECKOUT: ${{ inputs.checkout }}
+          run: bash "$GITHUB_ACTION_PATH/review/refuse-fork.sh"
 
         # actions/checkout cleans by default, deleting whatever an earlier step in the
         # caller's job wrote.

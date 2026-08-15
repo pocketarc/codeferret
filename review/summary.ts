@@ -5,7 +5,7 @@
  * Every value is read back off disk, so a run that died partway still reports whatever it
  * managed to write.
  *
- * Usage: bun review/summary.ts <build-dir> [<exit-status>]
+ * Usage: bun summary.ts <build-dir> [<exit-status>]
  */
 
 import { join } from "node:path";
@@ -14,7 +14,7 @@ import { RUN_FILES } from "./run-files.ts";
 const [buildDir, exitStatus] = process.argv.slice(2);
 
 if (!buildDir) {
-    console.error("usage: bun review/summary.ts <build-dir> [<exit-status>]");
+    console.error("usage: bun summary.ts <build-dir> [<exit-status>]");
     process.exit(2);
 }
 

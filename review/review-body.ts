@@ -13,6 +13,7 @@ import { STANDING_DETAIL } from "./standing-detail.ts";
 import type { Finding, LensHealth, Merged, Partitioned, Vetted } from "./findings.ts";
 import {
     clamp,
+    clampTo,
     closeOpenDetails,
     closeOpenFence,
     code,
@@ -65,8 +66,8 @@ const REOPENING: Record<Reopening, (n: number) => string> = {
         `${plural(n, "decline")} cited a comment that says nothing about the file the` +
         " finding is in. Reporting them as new.",
     unvouched: (n) =>
-        `${plural(n, "finding")} came back as already raised at critical or high, with no` +
-        " owner, member or collaborator having said so. Reporting them as new.",
+        `${plural(n, "finding")} came back as already raised at a severity this review prints` +
+        " in full, with no owner, member or collaborator having said so. Reporting them as new.",
     unreported: (n) =>
         `${plural(n, "finding")} came back as already raised, citing a comment that is not` +
         " on this pull request or says nothing about the file. Reporting them as new.",
@@ -204,10 +205,15 @@ export function bullet(f: Finding): string {
 /**
  * A model's one-line field, as one bounded line safe at a list item's content column.
  *
- * Escaped before the cut, for the reason `lensDetail` gives: the marker `clamp` appends is
- * markdown of its own and must not be escaped and shown as underscores. Flattened again
- * after it, because that marker carries newlines, and one inside `bullet`'s strong emphasis
- * closes it and leaves a literal `**` on the page.
+ * Cut first and escaped after, with the marker appended last. The marker is markdown of its
+ * own and must not be escaped and shown to the reader as underscores, and escaping first put
+ * the cut inside a code span `escapeInline` had already balanced: `clampTo` has the
+ * measurement. Escaping the cut text hands that dangling backtick run to the branch of
+ * `escapeOutsideCode` written for one. The limit therefore bounds the field before the
+ * backslashes go in, and what bounds the body is `assemble` measuring it.
+ *
+ * Flattened after, because the marker carries newlines, and one inside `bullet`'s strong
+ * emphasis closes it and leaves a literal `**` on the page.
  *
  * `escapeBlockStart` because `mention` and the resolved list both put one of these where a
  * `- ` item's content starts, and `escapeInline` leaves `#` and `>` alone: a title of
@@ -216,7 +222,9 @@ export function bullet(f: Finding): string {
  * costs a backslash the renderer takes back off.
  */
 function oneLine(text: string, limit: number): string {
-    return flatten(clamp(escapeBlockStart(escapeInline(flatten(text))), limit));
+    const { kept, marker } = clampTo(flatten(text), limit);
+
+    return flatten(`${escapeBlockStart(escapeInline(kept))}${marker}`);
 }
 
 /** A finding's title as one bounded line. */
@@ -269,18 +277,18 @@ export function mention(f: Finding, link: string, linkable: ReadonlySet<string>)
  * lens could not cover buried in the middle of that line. Four spaces would be an indented
  * code block.
  *
- * Escaped before the cut, so the marker `clamp` appends is not itself escaped and shown to
- * the reader as underscores. Flattened again after it, because that marker carries newlines
- * of its own, and one of those into column zero ends the item and drops the rest of the list
- * out of the block.
+ * Cut, escaped, then the marker, in the order and for the reasons `oneLine` gives. This is
+ * the field the code-span defect bit hardest: a lens caveat is prose quoting fragments with
+ * spaces in them, such as `@media (prefers-reduced-motion: reduce)`, and it renders inside the
+ * lens block, where a stray opener runs on into the next lens's line.
  *
  * The line starts at the item's own content column, where a `#` or a `>` opens a block of
  * its own, and `escapeInline` leaves both alone.
  */
 function lensDetail(detail: string): string {
-    const line = escapeBlockStart(escapeInline(flatten(detail)));
+    const { kept, marker } = clampTo(flatten(detail), MAX_LENS_DETAIL);
 
-    return `\n\n  ${flatten(clamp(line, MAX_LENS_DETAIL))}`;
+    return `\n\n  ${flatten(`${escapeBlockStart(escapeInline(kept))}${marker}`)}`;
 }
 
 /**
@@ -475,6 +483,8 @@ export interface Posting {
      * as though the interface had been reviewed.
      */
     dispatched: string[];
+    /** The build files the session changed under the run, from `readSessionChanged`. */
+    sessionChanged: string[];
 }
 
 /** A body and the two views of the run it was built from, for the caller that posts it. */
@@ -517,30 +527,53 @@ export function composeReview(merged: Merged, posting: Posting, parts: Partition
             health.map((h) => h.lens),
             posting.dispatched,
         ),
+        limited: health.filter((h) => caveatOf(h)),
         unread: posting.unread,
+        sessionChanged: posting.sessionChanged,
     };
 
+    const alerts = alertsOf(coverage, posting);
     const { listing, notice } = listingOf(parts.fresh, posting.to);
-    const tail = tailOf(merged, parts, posting);
+    const tail = tailOf(merged, parts, posting, alerts);
 
     const { body, printed } = assemble(
-        headOf(merged, parts, coverage),
+        headOf(merged, parts, coverage, alerts),
         listing,
         notice === null ? tail : [notice, ...tail],
     );
 
-    // Every condition under which something below writes a `[!WARNING]`. An empty
-    // `lens_health` is one of them on its own: with no dispatch list to compare against,
-    // `silent` is empty too, and a run that accounted for none of its lenses would read as
-    // one with nothing to declare.
-    const warned =
-        coverage.health.length === 0 ||
-        coverage.broken.length > 0 ||
-        coverage.silent.length > 0 ||
-        coverage.unread.length > 0 ||
-        posting.resolveDenied;
+    return { body, listed: printed, warned: Object.values(alerts).some((raised) => raised) };
+}
 
-    return { body, listed: printed, warned };
+/** Every alert the body can raise about its own coverage, so `warned` cannot miss one. */
+type Alert = "unread" | "unaccounted" | "silent" | "broken" | "limited" | "changed" | "resolveDenied";
+
+/**
+ * Which of them this run raises, decided once and read by the section that prints each.
+ *
+ * Restated by hand as a boolean expression, `warned` had already lost one: `limited` is the
+ * lenses `caveatOf` gives a sentence for, `headOf` renders it, and a run with nothing new
+ * posted none of it, so a pull request full of interface changes went green with no
+ * accessibility caveat anywhere.
+ *
+ * `limited` renders as a `[!NOTE]` rather than a `[!WARNING]`. It belongs here anyway: what
+ * `warned` decides is whether a reader has to see this body, and a lens that could not render
+ * the page is exactly the thing a green tick would be read as denying.
+ */
+function alertsOf(coverage: Coverage, posting: Posting): Record<Alert, boolean> {
+    return {
+        // Its own alert, and not a lens missing from a list: with no `lens_health` at all
+        // there is nothing to compare the dispatch list against, so `broken` and `limited` are
+        // empty too and a run that accounted for none of its lenses would read as one with
+        // nothing to declare.
+        unaccounted: coverage.health.length === 0,
+        unread: coverage.unread.length > 0,
+        silent: coverage.silent.length > 0,
+        broken: coverage.broken.length > 0,
+        limited: coverage.limited.length > 0,
+        changed: coverage.sessionChanged.length > 0,
+        resolveDenied: posting.resolveDenied,
+    };
 }
 
 /**
@@ -557,19 +590,21 @@ interface Coverage {
     broken: LensHealth[];
     /** The lenses that were dispatched and said nothing about themselves. */
     silent: string[];
+    /** The lenses that named something they could not check, in their own words or a standing one. */
+    limited: LensHealth[];
     /** The parts of the discussion the fetch could not read. */
     unread: string[];
+    /** The build files the session changed under the run. */
+    sessionChanged: string[];
 }
 
 /**
  * Everything above the findings: the summary, the counts, and what the run says about its
  * own coverage.
  */
-function headOf(merged: Merged, parts: Partitioned, coverage: Coverage): string[] {
-    const { health, broken, silent, unread } = coverage;
+function headOf(merged: Merged, parts: Partitioned, coverage: Coverage, alerts: Record<Alert, boolean>): string[] {
+    const { health, broken, silent, limited, unread, sessionChanged } = coverage;
     const { fresh, suppressed, declined } = parts;
-
-    const limited = health.filter((h) => caveatOf(h));
 
     const counts = [`**${plural(fresh.length, "new finding")}**`];
     if (suppressed.length > 0) counts.push(`${suppressed.length} raised in an earlier review`);
@@ -587,14 +622,24 @@ function headOf(merged: Merged, parts: Partitioned, coverage: Coverage): string[
     // Above the lens block, because it is about the counts directly above it rather than
     // about coverage of the diff: a finding this review repeats is one whose answer went
     // unread, and without this the reader has only the repetition to go on.
-    if (unread.length > 0) {
+    if (alerts.unread) {
         head.push(
             `> [!WARNING]\n> Part of the discussion on this pull request could not be read, so anything answered` +
                 ` there is raised again: ${escapeInline(flatten(unread.join(" ")))}`,
         );
     }
 
-    if (health.length === 0) {
+    // Above the coverage alerts, because it is what decides how much they are worth: the lens
+    // list this review counts from is one of the files it names.
+    if (alerts.changed) {
+        head.push(
+            `> [!WARNING]\n> The review session changed ${escapeInline(sessionChanged.join(", "))} under it.` +
+                " The commit these findings are lines of, and the list of lenses counted below, are that" +
+                " session's own answer rather than what this run built.",
+        );
+    }
+
+    if (alerts.unaccounted) {
         // Everything a reader has for how much of this review to trust hangs off
         // `lens_health`: the lens list, the coverage alert, and the standing sentence for a
         // lens that ships without the capability its skill describes. `lens_health` is
@@ -632,34 +677,33 @@ function headOf(merged: Merged, parts: Partitioned, coverage: Coverage): string[
         //
         // A lens missing from `lens_health` comes first, because the two counts under it are
         // both drawn from that same list and so fall short by exactly the lenses named here.
-        if (silent.length > 0) {
+        if (alerts.silent) {
             head.push(
                 `> [!WARNING]\n> ${escapeInline(silent.join(", "))} ran and reported nothing about` +
                     " themselves, so the coverage below leaves each one out.",
             );
         }
 
-        if (broken.length > 0) {
+        if (alerts.broken) {
             head.push(
                 `> [!WARNING]\n> ${broken.length} of ${lenses(health.length)} did not report normally,` +
                     " so this review covers less than it appears to.",
             );
-        } else if (limited.length > 0) {
+        } else if (alerts.limited) {
             head.push(
                 `> [!NOTE]\n> ${limited.length} of ${lenses(health.length)} named something they could not check.` +
                     " The list below has each in its own words.",
             );
         }
 
-        const heading =
-            broken.length > 0
-                ? `${lenses(health.length)} ran, ${broken.length} needing attention`
-                : `${lenses(health.length)} ran, all reporting`;
+        const heading = alerts.broken
+            ? `${lenses(health.length)} ran, ${broken.length} needing attention`
+            : `${lenses(health.length)} ran, all reporting`;
 
         // Open when a lens named a limit, not only when one broke. The note above says "the
         // list below has each in its own words", and a `<details>` a reader has to click is
         // not below anything: the sentence promised the words and then hid them.
-        head.push(details(heading, boundedBlock(items, "lens"), broken.length > 0 || limited.length > 0));
+        head.push(details(heading, boundedBlock(items, "lens"), alerts.broken || alerts.limited));
     }
 
     return head;
@@ -729,9 +773,9 @@ function bounded(items: string[], noun: string): string {
  * Everything below the findings: what was suppressed, what was declined, what was closed,
  * and the run's own caveats.
  */
-function tailOf(merged: Merged, parts: Partitioned, posting: Posting): string[] {
+function tailOf(merged: Merged, parts: Partitioned, posting: Posting, alerts: Record<Alert, boolean>): string[] {
     const { suppressed, declined } = parts;
-    const { resolved, resolveDenied, leftOpen, linkable } = posting;
+    const { resolved, leftOpen, linkable } = posting;
 
     const tail: string[] = [];
 
@@ -771,7 +815,7 @@ function tailOf(merged: Merged, parts: Partitioned, posting: Posting): string[] 
         );
     }
 
-    if (resolveDenied) {
+    if (alerts.resolveDenied) {
         tail.push(
             `> [!WARNING]\n> ${plural(leftOpen, "thread")} judged finished could not be resolved:` +
                 ` the workflow grants \`pull-requests: write\`, and \`resolveReviewThread\` needs` +

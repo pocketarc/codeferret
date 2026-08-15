@@ -2,9 +2,6 @@
 /**
  * Pull the merged findings out of a Claude Code run log, and write down what the run cost.
  *
- * The orchestrator emits a fresh structured output each time a lens reports back, so
- * the log holds several `result` messages and only the last is complete.
- *
  * What comes out of this sits in the directory of the findings path: `findings.json`, and
  * the files `RUN_FILES` names. The action reads them as step outputs, and review/summary.ts
  * renders them into the job summary. The numbers are written before the findings are looked
@@ -22,6 +19,7 @@ import { dirname, join } from "node:path";
 import type { LensHealth } from "./findings.ts";
 import { number, record, string } from "./json.ts";
 import { RUN_FILES } from "./run-files.ts";
+import { failureReason, lastResult, messagesOf, totalCost } from "./run-log.ts";
 
 /**
  * `LensHealth` as it arrives, before anything has checked a field.
@@ -38,32 +36,13 @@ if (!runPath || !outPath) {
     process.exit(2);
 }
 
-const text = await Bun.file(runPath).text();
+const { messages, unparsed } = messagesOf(await Bun.file(runPath).text());
 
-let messages: unknown[];
-try {
-    const parsed: unknown = JSON.parse(text);
-    messages = Array.isArray(parsed) ? parsed : [parsed];
-} catch {
-    // Each line in a `try` of its own. A log cut off mid-line is exactly what a killed or
-    // out-of-memory session leaves behind, and that is the run whose cost and refusals
-    // somebody most wants to see: one throw here and none of the numbers below is ever
-    // written.
-    messages = [];
-
-    for (const line of text.split("\n")) {
-        if (line.trim().length === 0) continue;
-
-        try {
-            messages.push(JSON.parse(line) as unknown);
-        } catch {
-            console.error("the run log holds a line that is not JSON, which a cut-off session leaves behind.");
-        }
-    }
+if (unparsed > 0) {
+    console.error(`the run log holds ${unparsed} line(s) that are not JSON, which a cut-off session leaves behind.`);
 }
 
-const results = messages.map(record).filter((m) => m !== null && m.type === "result");
-const last = results[results.length - 1];
+const last = lastResult(messages);
 const dir = dirname(outPath);
 
 /** Every run file this script owns. `findingsChecked` is run.sh's and is not written here. */
@@ -99,28 +78,6 @@ if (!last) {
     process.exit(1);
 }
 
-/**
- * Why a run ended, out of the fields a failed result carries.
- *
- * `subtype` is not one of them, and a reader takes it for a clean exit. A session the API cut
- * off with a 429 reported `subtype: "success"`, so the first line a maintainer read after a
- * $4 run died was `the run reported an error: success`. What happened was in
- * `terminal_reason` and `api_error_status`, and the sentence to act on (`You've hit your
- * session limit`) was in `result`, and nothing printed any of the three.
- */
-function failureReason(result: Record<string, unknown>): string {
-    const status = number(result.api_error_status) ?? string(result.api_error_status);
-    const what = string(result.terminal_reason) ?? string(result.subtype) ?? "unknown";
-    const named = status === null ? what : `${what}, HTTP ${status}`;
-
-    // Bounded and folded onto one line. `result` carries whatever the API or the model wrote,
-    // and a session that ended on a wall of prose would push everything reported below it off
-    // the screen of whoever is reading the step log.
-    const said = (string(result.result) ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
-
-    return said === "" ? named : `${named}: ${said}`;
-}
-
 // Read through the narrowers below rather than through an interface asserted over the
 // message. The shape is upstream's, and a field it renamed would come back as a confident
 // zero or a TypeError halfway through the reporting loop.
@@ -138,24 +95,6 @@ const outputTokens = perModel.reduce((total, [, usage]) => total + (number(usage
 
 const summed = perModel.reduce((total, [, usage]) => total + (number(usage?.costUSD) ?? 0), 0);
 const reported = number(last.total_cost_usd);
-
-/**
- * What the run cost, across the three answers a log can give.
- *
- * A subscription-billed run has been seen to report `total_cost_usd` as zero while the
- * modelUsage figures said otherwise, and zero is the number a reader takes for a free $36
- * review on every surface this reaches. So a reported zero falls through to the sum, and
- * only an empty `modelUsage` falls back to it: `record({})` is not null, so testing for the
- * object rather than for its entries produces the confident 0.00 this exists to avoid.
- */
-function totalCost(reported: number | null, summed: number, models: number): number | null {
-    if (reported) return reported;
-    if (models > 0) return summed;
-
-    // Null where the log carried neither, which is what a shape that has moved looks like.
-    // A reported zero with nothing to sum stays zero.
-    return reported;
-}
 
 const costUsd = totalCost(reported, summed, perModel.length);
 const durationMs = number(last.duration_ms) ?? 0;

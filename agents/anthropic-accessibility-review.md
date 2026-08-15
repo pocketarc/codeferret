@@ -8,8 +8,8 @@ Review this change.
 
 The repository is the current working directory. Your instruction gives the diff under
 review and the ref it is taken against. Run the diff commands in that instruction as
-written. Their pathspec leaves out generated files such as lockfiles and build output,
-which are not worth reviewing.
+written. Their pathspec has already taken out what is not worth reviewing, such as
+lockfiles and build output, so anything still in the diff is in scope, generated or not.
 
 The base ref is already decided. You are a subagent, so there is nobody to answer a
 question. Do not ask one.
@@ -125,9 +125,17 @@ Report the half you can see, and say plainly what you could not judge:
   so it is outside this bullet. Whether the source carries a pause mechanism anywhere is a
   source fact.
 - 2.3.3, motion from interactions. A `@media (prefers-reduced-motion: reduce)` block is
-  technique C39, which is sufficient for this criterion under WCAG and not for 2.2.2, so an
-  animation with no such block goes here rather than under the bullet above. 2.3.3 is Level
-  AAA. Name the level if you name the criterion.
+  technique C39, which is sufficient for this criterion under WCAG and not for 2.2.2. 2.3.3 is
+  Level AAA. Name the level if you name the criterion.
+
+  The criterion covers motion animation triggered by interaction, and nothing else, so cite it
+  only where the source shows a user action starting the motion: a `:hover` or `:focus` rule
+  that animates, an animation applied by a class a handler toggles, a scroll-linked animation,
+  a route or view transition. An animation that starts on page load or runs on its own cannot
+  fail a criterion whose trigger condition was never met, however the reduced-motion query is
+  written, so a missing block is not a 2.3.3 failure on its own. Where such an animation also
+  falls under the 2.2.2 threshold above, the source settles no criterion: say the block is
+  missing and name none.
 - Neither of those covers flashing. Three flashes in a second is 2.3.1 (Level A), it needs
   the rendered page, and so does whether what moves is distracting at all.
 

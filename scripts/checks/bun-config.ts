@@ -35,6 +35,20 @@
  * What the pair still does not match is `bun run`, `bun test` and `bunx`, none of which a
  * review starts. Whoever writes the first one has to widen this again.
  *
+ * The `.ts` files under review/ are matched by a pattern of their own, under the rule at the
+ * top: a printed hint counts, and the one that broke it lived in check-findings.ts, which runs
+ * inside every review and told its reader to run `bun scripts/validate-repo.ts` with no flag
+ * and against a path that is not there. Only review/, because the scripts/ files run over a
+ * checkout of this repository and take the exemption lint.yml takes.
+ *
+ * `HINT` rather than the pair above, which matches no hint at all: a line a reader can paste
+ * names an absolute path, and the only way to write one here is to interpolate
+ * `import.meta.dir`, which is not a script name any pattern matching one would find.
+ *
+ * What that leaves out is every `Usage: bun <script>.ts <arg>` synopsis these files open with,
+ * and leaving them out is the point. A synopsis has placeholders and no directory, so it is
+ * not a line anybody pastes.
+ *
  * A helper in lib.sh that always emits the flag does not replace any of it, which is why
  * `run_tool` exists and this check still runs: nothing stops the next script writing `bun`
  * itself. Nor is there a way to make the flag unnecessary. Measured on bun 1.3.5,
@@ -63,6 +77,15 @@ import type { Failures } from "./support.ts";
 function insideQuotes(before: string): boolean {
     return (before.match(/(?<!\\)"/g) ?? []).length % 2 === 1;
 }
+
+/**
+ * A `bun` command a `.ts` file prints for somebody to paste.
+ *
+ * The script is either an interpolation or the literal repository-relative path the shipped
+ * defect was written as. The flags are read up to the first quote or backtick, so a match
+ * cannot run out of the string it started in and pick up a `--config=` from the next line.
+ */
+const HINT = /\bbun\b([^\n`"']*?)(\$\{[^\n}]*\}|(?:review|scripts)\/[\w$/.-]*\.ts\b)/g;
 
 export async function checkBunConfig(): Promise<Failures> {
     const list: Failures = [];
@@ -99,6 +122,24 @@ export async function checkBunConfig(): Promise<Failures> {
         }
     }
 
+    const printed = readdirSync("review")
+        .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"))
+        .map((f) => `review/${f}`);
+
+    let pasteable = 0;
+
+    for (const file of printed) {
+        for (const match of (await Bun.file(file).text()).matchAll(HINT)) {
+            const [, flags, script] = match;
+
+            pasteable += 1;
+
+            if (!String(flags).includes("--config=")) {
+                fail(list, file, `prints \`bun ... ${script}\` with no --config=/dev/null`);
+            }
+        }
+    }
+
     // A check that matched nothing has proved nothing. This is the only mechanical guard on
     // the rule, in a job holding both tokens, so silence here has to be a failure rather than
     // an OK line: a regex that stops matching would otherwise read exactly like compliance.
@@ -110,8 +151,16 @@ export async function checkBunConfig(): Promise<Failures> {
         fail(list, "scripts/checks/bun-config.ts", "matched no bun invocation at all, so it checked nothing");
     }
 
+    // The same argument for `HINT`, which is narrow enough to stop matching on an ordinary edit.
+    if (pasteable === 0) {
+        fail(list, "scripts/checks/bun-config.ts", "matched no printed bun command in review/, so it checked nothing");
+    }
+
     if (list.length === 0) {
-        console.log(`OK bun-config: ${invocations} bun invocation(s) and ${hints} printed hint(s) name a config`);
+        console.log(
+            `OK bun-config: ${invocations} bun invocation(s), ${hints} shell hint(s)` +
+                ` and ${pasteable} printed command(s) in review/ name a config`,
+        );
     }
 
     return list;

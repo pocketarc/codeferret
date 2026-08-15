@@ -16,10 +16,11 @@
  */
 
 import { dirname } from "node:path";
-import { brokenLenses, lensLabel, lineOf, partition, readMerged, silentLenses, vetAgainstExisting } from "./findings.ts";
+import { brokenLenses, lensLabel, lineOf, partition, silentLenses } from "./findings.ts";
+import { readMerged, vetAgainstExisting } from "./read-run.ts";
 import type { Finding } from "./findings.ts";
 import { caveatOf, plural, reopenedReasons, where } from "./review-body.ts";
-import { readDispatched } from "./run-files.ts";
+import { readDispatched, readSessionChanged } from "./run-files.ts";
 
 const [findingsPath] = process.argv.slice(2);
 
@@ -29,11 +30,11 @@ if (!findingsPath) {
 }
 
 const findingsFile: string = findingsPath;
-const merged = await readMerged(findingsFile);
+const merged = await readMerged(findingsFile, (line) => console.error(line));
 
 // A suppression the posting path would overturn has to be overturned here too, or a session
 // reports as settled a finding a posted review would raise.
-const vetted = await vetAgainstExisting(merged.findings, dirname(findingsFile));
+const vetted = await vetAgainstExisting(merged.findings, dirname(findingsFile), (line) => console.error(line));
 const { fresh, suppressed, declined } = partition(vetted.findings);
 
 // The same sentences the posted path writes. Without them a session reopened a suppression
@@ -86,7 +87,23 @@ const silent = silentLenses(
     await readDispatched(dirname(findingsFile)),
 );
 
-if (silent.length > 0) {
+// Above the coverage lines, for the reason `headOf` puts it there.
+const changed = await readSessionChanged(dirname(findingsFile));
+
+if (changed.length > 0) {
+    out.push(
+        `The review session changed ${changed.join(", ")} under it. The commit these findings are` +
+            " lines of, and the lenses named below, are that session's own answer rather than what this run built.",
+    );
+}
+
+// The same two branches the posted body has, in the same order.
+if (health.length === 0) {
+    out.push(
+        "This run reported nothing about which lenses ran or what they could not check," +
+            " so how much of the change was covered is unknown.",
+    );
+} else if (silent.length > 0) {
     out.push(`${silent.join(", ")} ran and reported nothing about themselves, so this leaves each one out.`);
 }
 

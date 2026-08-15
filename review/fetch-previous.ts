@@ -27,7 +27,7 @@
 import { ARTIFACT_NAME as ARTIFACT, RETENTION_DAYS } from "./artifact.ts";
 import { requirePullNumber, requireRepository, rest, restJson, tokenFromStdinOrEnv } from "./github.ts";
 import { reason, record } from "./json.ts";
-import { candidates, firstPosted, sameWorkflow } from "./previous.ts";
+import { candidates, firstPosted, sameWorkflow, storageUrl } from "./previous.ts";
 import type { Artifact, Previous } from "./previous.ts";
 import { MAX_ENTRY_BYTES, readFromZip } from "./unzip.ts";
 
@@ -63,58 +63,6 @@ requireRepository(repo);
 const pull: string = requirePullNumber(prNumber);
 
 const MAX_REDIRECTS = 5;
-
-/**
- * Where GitHub's artifact API sends a download.
- *
- * Artifacts are served from object storage, and the API answers the zip endpoint with a
- * redirect to a signed URL there. These are the hosts it uses.
- *
- * The Azure and AWS entries are self-service namespaces: any Azure customer can hold an
- * `<account>.blob.core.windows.net` and any AWS customer a `<bucket>.s3.amazonaws.com`. So
- * this list says what a redirect has to look like and not who may be at the other end, and
- * the docstring below says what does bound that. Narrowing it to a form nobody outside GitHub
- * can obtain would mean guessing at storage account names GitHub changes without notice, and
- * a wrong guess fails a download that should have worked.
- */
-const STORAGE_HOSTS = [".blob.core.windows.net", ".actions.githubusercontent.com", ".s3.amazonaws.com"];
-
-/**
- * The redirect target, refused unless it is one this will fetch.
- *
- * Bun's fetch honours `file:`, so a `Location` naming one would have this read a local path
- * and hand the bytes on as an artifact. The scheme was the whole of the check: every https
- * host was followed and whatever came back was parsed into this run's previous.json, which
- * decides which findings are marked `already-reported`. A suppressed finding is one nobody
- * sees. Everything else on this path is qualified — `sameWorkflow`, `fromThisRepository`,
- * `postedFor` — and the bytes those checks qualify came through the one hop nothing
- * qualified.
- *
- * What bounds the destination is still that api.github.com emits the `Location` in an
- * authenticated TLS response, and that is the one input this file takes on faith. The host
- * test is not a second bound and must not be read as one, for the reason written beside
- * `STORAGE_HOSTS`. What it does rule out is `file:`, a plain http hop and every host that is
- * not object storage, so a `Location` that ever stops being GitHub's word has a far shorter
- * list of places to send this. A refusal costs a review that repeats itself, which is the
- * direction this file already fails in.
- */
-function storageUrl(location: string): string {
-    const parsed = new URL(location);
-
-    if (parsed.protocol !== "https:") {
-        throw new Error(`the artifact redirect points at ${parsed.protocol}, which this will not fetch`);
-    }
-
-    // A leading dot on each suffix, so `evil-blob.core.windows.net` is not a match for
-    // `blob.core.windows.net` and neither is `blob.core.windows.net.example.com`.
-    const host = parsed.hostname.toLowerCase();
-
-    if (!STORAGE_HOSTS.some((suffix) => host.endsWith(suffix))) {
-        throw new Error(`the artifact redirect points at ${host}, which is not where GitHub keeps artifacts`);
-    }
-
-    return parsed.href;
-}
 
 /**
  * Follow the chain by hand, checking every hop rather than only the first.

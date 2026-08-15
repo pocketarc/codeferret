@@ -1,8 +1,7 @@
 /** That every lens the action ships by default is one this repository bundles a skill for. */
 
 import { existsSync } from "node:fs";
-import { lines } from "../../review/lines.ts";
-import { action, fail } from "./support.ts";
+import { action, fail, inputLines } from "./support.ts";
 import type { Failures } from "./support.ts";
 
 export async function checkDefaults(): Promise<Failures> {
@@ -10,7 +9,7 @@ export async function checkDefaults(): Promise<Failures> {
     const manifest = await action(list);
     if (!manifest) return list;
 
-    const lenses = lines(manifest.inputs?.lenses?.default);
+    const lenses = inputLines(list, "action.yml", "lenses", manifest.inputs?.lenses?.default);
 
     for (const lens of lenses) {
         if (!existsSync(`lenses/skills/${lens}/SKILL.md`)) {

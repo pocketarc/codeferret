@@ -19,9 +19,8 @@
  * the exclusion a second time.
  */
 
-import { lines } from "../../review/lines.ts";
 import { record } from "../../review/json.ts";
-import { action, fail, parseYaml } from "./support.ts";
+import { action, fail, inputLines, parseYaml } from "./support.ts";
 import type { Failures } from "./support.ts";
 
 /** The line that gives an end date to a lens this repository has switched off. */
@@ -36,23 +35,28 @@ export async function checkWorkflowLenses(): Promise<Failures> {
     const parsed = record(await parseYaml(list, path));
     const job = record(record(parsed?.jobs)?.review);
     const steps = Array.isArray(job?.steps) ? job.steps : [];
-    const shipped = lines(manifest.inputs?.lenses?.default);
+    const shipped = inputLines(list, "action.yml", "lenses", manifest.inputs?.lenses?.default);
 
     for (const step of steps) {
         const to = record(record(step)?.with);
 
-        if (lines(to?.lenses).length > 0) {
+        // Present at all, whatever it holds. `lines` gave an empty list for a key set to a
+        // YAML sequence or to nothing, and the workflow went on replacing the default in
+        // silence.
+        if (to && "lenses" in to) {
             fail(list, path, "names `lenses`, which replaces the default. Subtract with `exclude-lenses` instead.");
         }
 
-        for (const lens of lines(to?.["exclude-lenses"])) {
+        for (const lens of inputLines(list, path, "exclude-lenses", to?.["exclude-lenses"])) {
             if (!shipped.includes(lens)) {
                 fail(list, path, `excludes '${lens}', which action.yml no longer ships. Drop it, or fix the name.`);
             }
         }
     }
 
-    const dropped = steps.flatMap((step) => lines(record(record(step)?.with)?.["exclude-lenses"]));
+    const dropped = steps.flatMap((step) =>
+        inputLines(list, path, "exclude-lenses", record(record(step)?.with)?.["exclude-lenses"]),
+    );
 
     if (dropped.length > 0) {
         const on = (await Bun.file(path).text()).match(EXCLUSION_EXPIRES)?.[1];

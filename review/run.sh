@@ -318,26 +318,50 @@ fi
 # because a difference means that the lenses did not all read the same diff.
 #
 # Before the deletions below, so that `existing.json` is still the file the fetch wrote.
+CHANGED=()
+
 for handed in "${HANDED[@]}"; do
-    cmp -s "$BUILD/$handed" "$SESSION/$handed" 2>/dev/null ||
+    if ! cmp -s "$BUILD/$handed" "$SESSION/$handed" 2>/dev/null; then
         echo "$handed changed during the review, so what the session read is not what it was given." >&2
+        CHANGED+=("$handed")
+    fi
 done
 
 # And the build copies nothing puts back, against the digests this shell took before the
 # session. A difference here means the commit the review is recorded against, or which lenses
 # this run reports as dispatched, is the session's own answer.
 #
-# The `+` expansion because the array is empty where there was no `shasum`, and bash 3.2, which
-# is what a Mac runs, reads `"${arr[@]}"` on an empty array as an unbound variable under
-# `set -u`.
-recorded_at=0
+# The per-entry `:-`, and the `+` expansion further down: where the machine had no `shasum`
+# every lookup is empty, and bash 3.2, which is what a Mac runs, reads `"${arr[@]}"` on an
+# empty array as an unbound variable under `set -u`.
+for at in "${!RECORDED[@]}"; do
+    recorded=${RECORDED[$at]}
+    before=${RECORDED_BEFORE[$at]:-}
 
-for recorded in "${RECORDED_BEFORE[@]+"${RECORDED_BEFORE[@]}"}"; do
-    if [ "$recorded" != "$(digest "${RECORDED[$recorded_at]}")" ]; then
-        echo "${RECORDED[$recorded_at]} changed during the review, so what is read from here on is not what was built." >&2
+    [ -n "$before" ] || continue
+
+    if [ "$before" != "$(digest "$recorded")" ]; then
+        echo "$recorded changed during the review, so what is read from here on is not what was built." >&2
+        CHANGED+=("$recorded")
     fi
+done
 
-    recorded_at=$((recorded_at + 1))
+# Written down rather than only said, and the review still goes out. `readSessionChanged` in
+# run-files.ts carries this into the posted body as a coverage warning, beside the one for a
+# lens that reported nothing about itself, because a detection whose only output is stderr has
+# no consumer: the reader those caveats are for never opens a job log.
+#
+# Not by clearing `findings-checked`, which is the other way to act on this and the wrong one.
+# It would leave the run posting nothing at all, which is the failure the whole `warned` path
+# exists to prevent, and it would hand a session that wanted its findings buried a one-line way
+# to do it: rewrite an input this compares, and the review it was paid for is never posted.
+#
+# Truncated first and appended to after, so a file the session pre-created is gone whatever the
+# checks above found.
+: >"$BUILD/session-changed.txt"
+
+for changed in "${CHANGED[@]+"${CHANGED[@]}"}"; do
+    printf '%s\n' "$changed" >>"$BUILD/session-changed.txt"
 done
 
 # The orchestrator ran with Bash under bypassPermissions, so a directory no prompt names is

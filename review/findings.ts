@@ -4,14 +4,11 @@
  * The shape the orchestrator returns, plus the questions everything downstream asks of it:
  * how a finding ranks, which findings this review is posting, and which of the suppressions
  * the comments on the pull request bear out. Everything that touches a finding depends on
- * this, and nothing here depends on how a review is rendered.
+ * this, and nothing here depends on how a review is rendered, reads a file, or ends a
+ * process. The IO around it is in `read-run.ts`.
  */
 
-import { join } from "node:path";
-import { readExisting, survey } from "./existing.ts";
-import type { Located, Survey, Surveyed } from "./existing.ts";
-import { reason } from "./json.ts";
-import { filesRaisedBefore } from "./previous.ts";
+import type { Located, Survey } from "./existing.ts";
 
 export interface Finding {
     found_by?: string[];
@@ -210,7 +207,7 @@ export interface Vetted {
     /** Declines citing an entitled comment that says nothing about the finding's file. */
     unrelated: number;
     /**
-     * Critical and high `already-reported` findings with nobody entitled having said so.
+     * `already-reported` findings the body prints in full, with nobody entitled having said so.
      *
      * Counted apart from `unreported` because it is the one reopening that happens with no
      * comment cited at all, and that is the ordinary shape of it. While the two shared a
@@ -251,10 +248,10 @@ function raisedBefore(raisedFiles: ReadonlySet<string>, file: string): boolean {
  * them for the rule would silence a finding for as long as the pull request lives. So the
  * decision is taken again here, against what GitHub reported.
  *
- * The two statuses are held to different bars. A decline needs an author with standing, or,
- * below critical and high, a thread somebody closed: closing one takes repository write or
- * authorship of the pull request, and `resolveReviewThread` grants neither. Replying to a
- * closed thread takes no more than commenting and does not reopen it, so a reply there
+ * The two statuses are held to different bars. A decline needs an author with standing, or, for
+ * a finding the body prints as one line, a thread somebody closed: closing one takes repository
+ * write or authorship of the pull request, and `resolveReviewThread` grants neither. Replying to
+ * a closed thread takes no more than commenting and does not reopen it, so a reply there
  * settles the file its thread is anchored to and nothing else. An `already-reported` finding
  * is a defect somebody has written down, whoever they are, and it stays a finding in the file
  * either way, so all it needs is that what it rests on is there and is about the same file: a
@@ -288,7 +285,7 @@ export function vetSuppression(findings: Finding[], discussion: Survey, raisedFi
         const cited = url ? comments.get(url) : undefined;
 
         if (f.status === "declined") {
-            // A closed thread stands for everything but a critical and a high. GitHub
+            // A closed thread stands for every finding the body prints as one line. GitHub
             // resolves a conversation for anyone with repository write, or for whoever opened
             // the pull request, so on a branch from an outside contributor the only person
             // who can close a thread is the one whose work is under review: open a thread on
@@ -300,7 +297,7 @@ export function vetSuppression(findings: Finding[], discussion: Survey, raisedFi
             // security defect from any reply, and that carve-out is prompt text sitting in
             // the same context as the comments it judges, so this branch is where refusing
             // costs an attacker anything.
-            const closed = cited?.onClosedThread === true && !LISTED.has(f.severity);
+            const closed = cited?.onClosedThread === true && !isListed(f);
 
             if (!cited || !(entitled(cited) || closed)) {
                 untraceable += 1;
@@ -316,12 +313,20 @@ export function vetSuppression(findings: Finding[], discussion: Survey, raisedFi
         }
 
         if (f.status === "already-reported") {
-            // A critical or a high takes an owner, a member or a collaborator saying so,
-            // whether or not a comment is cited. The lower bar below rests on the finding
-            // keeping its line in the review either way, and for these two that is not the
-            // whole of it: the body prints critical and high in full and everything else as
-            // one line in a collapsed block, so demoting one is the difference between a
-            // reader seeing the defect and seeing its title.
+            // A finding the body prints in full takes an owner, a member or a collaborator
+            // saying so, whether or not a comment is cited. The lower bar below rests on the
+            // finding keeping its line in the review either way, and for these that is not the
+            // whole of it: the body prints them whole and everything else as one line in a
+            // collapsed block, so demoting one is the difference between a reader seeing the
+            // defect and seeing its title.
+            //
+            // `isListed` and not `LISTED`, because those are two different sets and the
+            // argument above is about the first. A severity nothing recognises is printed in
+            // full as well, for the reason `isListed` carries: a label nobody chose is no
+            // ground for dropping a defect out of a comment. Testing `LISTED` here held such a
+            // finding to the low bar while the body gave it the whole page, and a review that
+            // repairs `Critical` but not `blocker` treats the two differently for no reason a
+            // reader could find.
             //
             // The decline branch above takes a comment on a thread somebody closed, and the
             // two branches agree about a critical: closure is standing enough for a finding
@@ -340,7 +345,7 @@ export function vetSuppression(findings: Finding[], discussion: Survey, raisedFi
             // The cost is a critical that was genuinely reported before and never commented
             // on, printed in full again on every push. Criticals are rare and that is the
             // direction to be wrong in.
-            if (LISTED.has(f.severity) && !(cited && entitled(cited))) {
+            if (isListed(f) && !(cited && entitled(cited))) {
                 unvouched += 1;
                 return reopen(f);
             }
@@ -372,83 +377,6 @@ export function vetSuppression(findings: Finding[], discussion: Survey, raisedFi
 /** Whether a parsed file is something this module can read as a run's output. */
 export function isMerged(value: unknown): value is Merged {
     return typeof value === "object" && value !== null && Array.isArray((value as Merged).findings);
-}
-
-/**
- * A run's findings file, or the process ends naming the file and what was wrong with it.
- *
- * Nothing has necessarily validated the file. The action runs check-findings.ts first, but
- * local-post.sh and the by-hand path in review/README.md both come straight to a reader, and
- * an unhandled rejection at the end of a run that cost real money is a worse answer than a
- * sentence naming the file.
- *
- * Here rather than at each entry point, beside `vetAgainstExisting` and for the same reason:
- * a session and a posted review must not decide differently what an unreadable findings file
- * means. `hint` is the extra line a caller adds, naming the check that would explain it.
- */
-export async function readMerged(path: string, hint?: string): Promise<Merged> {
-    const stop = (message: string): never => {
-        console.error(`${path}: ${message}`);
-        if (hint) console.error(hint);
-        process.exit(1);
-    };
-
-    let parsed: unknown;
-
-    try {
-        parsed = JSON.parse(await Bun.file(path).text());
-    } catch (error) {
-        return stop(reason(error));
-    }
-
-    if (!isMerged(parsed)) return stop("has no `findings` array");
-
-    return parsed;
-}
-
-export interface Vetting extends Vetted {
-    /** What the vetting was decided against, which post-review.ts also reads its threads from. */
-    existing: Surveyed;
-    /** The one walk over it, which the review body reads its linkable urls from. */
-    survey: Survey;
-}
-
-/** The previous run's findings, or `{}` with a line saying they could not be read. */
-async function readPrevious(path: string): Promise<unknown> {
-    const file = Bun.file(path);
-
-    if (!(await file.exists())) return {};
-
-    try {
-        return JSON.parse(await file.text());
-    } catch {
-        console.error("previous.json could not be read, so a finding said to have been raised before is raised again.");
-        return {};
-    }
-}
-
-/**
- * Vet a run's suppressions against the discussion on the pull request and against what the
- * last review said.
- *
- * One reader for the two entry points, so a session and a posted review cannot vet the same
- * findings against different files, and so the sentence saying what an unreadable file costs
- * is written once.
- *
- * Neither file is the copy the orchestrator was handed. The orchestrator held both paths in
- * the same prompt as the rules applied here, so it could have written the evidence its own
- * suppressions are checked against. `run.sh` replaces both with their empty forms once the
- * session has exited, and the paths that hold a credential of their own fetch them again: the
- * action's posting step for both, and `local-post.sh` and `local-print.sh` for
- * `existing.json`. An empty file reopens every suppression resting on it, which is the
- * direction to fail in.
- */
-export async function vetAgainstExisting(findings: Finding[], buildDir: string): Promise<Vetting> {
-    const existing = await readExisting(buildDir, (line) => console.error(line));
-    const raisedBefore = filesRaisedBefore(await readPrevious(join(buildDir, "previous.json")));
-    const walked = survey(existing);
-
-    return { existing, survey: walked, ...vetSuppression(findings, walked, raisedBefore) };
 }
 
 /**

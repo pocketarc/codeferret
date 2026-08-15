@@ -97,7 +97,18 @@ describe("resolveArtifactPath: what it refuses", () => {
         expect(resolve("tool-report..json").paths).toEqual([`${BUILD}/tool-report..json`]);
     });
 
-    for (const input of ["/findings.json", "//findings.json", "/etc/passwd", "findings.json\n/run.json"]) {
+    // The root is on this list rather than among the dot spellings above. Both name a
+    // directory, but only one of them names this run's.
+    for (const input of [
+        "/findings.json",
+        "//findings.json",
+        "/etc/passwd",
+        "findings.json\n/run.json",
+        "/",
+        "//",
+        "  /  ",
+        "/reports/",
+    ]) {
         test(`'${input}' is absolute, and everything here resolves against the build directory`, () => {
             expect(() => resolve(input)).toThrow(ArtifactPathRefused);
         });

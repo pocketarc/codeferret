@@ -2,8 +2,8 @@ Review this change.
 
 The repository is the current working directory. Your instruction gives the diff under
 review and the ref it is taken against. Run the diff commands in that instruction as
-written. Their pathspec leaves out generated files such as lockfiles and build output,
-which are not worth reviewing.
+written. Their pathspec has already taken out what is not worth reviewing, such as
+lockfiles and build output, so anything still in the diff is in scope, generated or not.
 
 The base ref is already decided. You are a subagent, so there is nobody to answer a
 question. Do not ask one.
