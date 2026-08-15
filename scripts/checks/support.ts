@@ -8,19 +8,16 @@
  * the only thing here that goes to stdout as it happens: an empty list and no line is a check
  * that read nothing, and that has to look different from a check that passed.
  *
- * The working directory is set here rather than in the CLI. Every check reads paths relative
- * to the repository root, and a module body runs before the body of whatever imported it, so
- * a `chdir` in `validate-repo.ts` would happen after these modules had been evaluated. None
- * of them touches the filesystem at evaluation time today, and nothing would say so on the
- * day one did.
+ * Every check reads paths relative to the repository root, and `validate-repo.ts` is what
+ * moves the process there. It used to happen in this module body, because a static import is
+ * evaluated before the body of whatever imported it; the CLI loads the check modules with a
+ * dynamic import instead, which runs after its own `chdir`. Importing `fail` from anywhere no
+ * longer relocates the whole process as a side effect.
  */
 
 import { existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
 import { reason } from "../../review/json.ts";
 import { lines } from "../../review/lines.ts";
-
-process.chdir(join(import.meta.dir, "..", ".."));
 
 /** What one check found, one line per problem, each naming the file it is about. */
 export type Failures = string[];

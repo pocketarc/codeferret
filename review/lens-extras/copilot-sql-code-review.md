@@ -69,6 +69,29 @@ same way: the range condition it teaches is right and the projection carried ove
 bad example is not. So do not read a green tick as permission for the projection it carries:
 name the columns, and raise `SELECT *` in the diff on the skill's own rule.
 
+Its "SQL Style & Formatting" example carries a green tick on a join that does not do what it
+says. The GOOD query leaves `o.order_date >= '2024-01-01'` in the `WHERE` clause of a
+`LEFT JOIN`. Every row the join preserved for a user with no matching order carries
+`o.order_date` as `NULL`, `NULL >= '2024-01-01'` is unknown, and the row is dropped, so the
+`LEFT JOIN` returns exactly what an `INNER JOIN` would and an active user with no recent order
+vanishes from a result the author believes is outer. The reformatting is the part worth
+teaching and the join is not. Give the two shapes instead, one per intent: move the predicate
+into the join condition, `LEFT JOIN orders o ON u.id = o.user_id AND o.order_date >=
+'2024-01-01'`, where users with no matching order are wanted, and write `INNER JOIN` where they
+are not. Raise the pattern in a reviewed diff as well: a `LEFT JOIN` whose right-hand column is
+filtered anywhere but the `ON` clause, except an `IS NULL` test, which is the anti-join. Its
+"Join Optimization" checklist has "Verify appropriate join types" and no example of a wrong
+join.
+
+Its checklist line "Subqueries are optimized or converted to JOINs" holds for one case and not
+the other, and the corrections above on its `DISTINCT` examples go the other way. A correlated
+scalar subquery in the projection, which is what its own "Aggregate and Window Functions"
+example shows, does belong as a join or an aggregate: it runs once per output row. An existence
+test is the opposite case, and `EXISTS` beats a join followed by `DISTINCT` or `GROUP BY`,
+because a semi-join stops at the first match instead of materialising one row per order. A
+checklist is what you reach for while scanning a diff, so read that line as the first case
+alone; where the two disagree, follow this file.
+
 Its SQL Server section, under the platform-specific advice, writes
 `CREATE COLUMNSTORE INDEX idx_sales_cs ON sales;`, which does not parse in T-SQL. Omitting
 `CLUSTERED` makes the index nonclustered, and a nonclustered columnstore index takes a column

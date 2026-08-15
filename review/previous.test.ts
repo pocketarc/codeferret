@@ -232,7 +232,7 @@ describe("firstPosted", () => {
         expect(said.join(" ")).toContain("gave up after opening 3 artifacts");
     });
 
-    test("says it stopped at its own limit when the candidates run out on it exactly", async () => {
+    test("claims no truncation when the candidates run out on the limit exactly", async () => {
         const said: string[] = [];
 
         const found = await firstPosted(
@@ -243,8 +243,11 @@ describe("firstPosted", () => {
             (line) => said.push(line),
         );
 
+        // Nothing was left to open, so the caller's "no posted artifact for this branch" is
+        // the whole of it. Saying both put two lines in the log describing one search, and the
+        // first asserted a search cut short that never was.
         expect(found).toBeNull();
-        expect(said.join(" ")).toContain("gave up after opening 3 artifacts");
+        expect(said.join(" ")).not.toContain("gave up");
     });
 
     test("says nothing about a limit it did not reach", async () => {

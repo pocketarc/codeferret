@@ -104,11 +104,11 @@ Then, in any repository:
 
 The command works out what to diff against (the base of your open pull request, or the
 default branch), dispatches the lenses, and prints what they found as `path:line` you can
-click. Ask, and it includes uncommitted work. It offers to post the review when three
-things hold: the branch has an open pull request, your commits are pushed, and your
-working tree is clean. Otherwise the findings stay in the terminal. Every line in a review
-belongs to the commit the lenses read, and a file you have edited since is a file whose
-lines have moved.
+click. Ask, and it includes uncommitted work. It offers to post the review when the branch
+has an open pull request, `gh` is installed and authenticated, your commits are pushed, and
+your working tree is clean. Otherwise the findings stay in the terminal. Every line in a
+review belongs to the commit the lenses read, and a file you have edited since is a file
+whose lines have moved.
 
 Posting uses your `gh` credential, which is usually scoped to everything you can reach.
 Export a fine-grained token as `GITHUB_TOKEN` if you would rather it were not: `gh` takes
@@ -129,8 +129,8 @@ dispatch, and waits; the action reports what each run cost in the job summary.
 
 ## Where things are
 
-See [`review/README.md`](review/README.md) for the inputs, how to add a lens, and why
-each part is built the way it is.
+See [`review/README.md`](review/README.md) for the inputs and how to add a lens, and
+[`review/DECISIONS.md`](review/DECISIONS.md) for why each part is built the way it is.
 
 ```
 action.yml       the composite action

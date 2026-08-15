@@ -272,12 +272,12 @@ export async function firstPosted(
         }
     }
 
-    // After the loop, not on the iteration that would have exceeded the limit: with exactly
-    // `limit` candidates and none posted, the loop runs out, and the caller then
-    // reports "no posted artifact for this branch", which means there were none. Stopping at
-    // the search's own limit is a different fact, and the one that explains a review
-    // repeating itself.
-    if (opened >= limit) {
+    // Only where candidates were left. With exactly `limit` of them and none posted, the loop
+    // runs out rather than stopping, and the caller then reports "no posted artifact for this
+    // branch", which means there were none. Stopping at the search's own limit is a different
+    // fact, and the one that explains a review repeating itself, so the two must not both
+    // print: `opened >= limit` alone asserted a truncation that had not happened.
+    if (opened >= limit && list.length > limit) {
         say(`previous findings: gave up after opening ${opened} artifacts, none of them posted`);
     }
 

@@ -11,7 +11,7 @@
  * parameterised SQL query.
  */
 
-import { fenceMap } from "../review/markdown.ts";
+import { fenceMap, splitLines } from "../review/markdown.ts";
 
 /** Lines to write, and a line of explanation for each change, printed at vendor time. */
 export interface Pass {
@@ -271,7 +271,7 @@ export function substitutePlaceholders(label: string, lines: string[]): Pass {
 /** The three passes in order, and everything they changed. */
 export function rewriteMarkdown(label: string, markdown: string): { text: string; notes: string[] } {
     const notes: string[] = [];
-    let lines = markdown.split("\n");
+    let lines = splitLines(markdown);
 
     for (const pass of [dropConnectorsSection, stripDeadLinks, substitutePlaceholders]) {
         const result = pass(label, lines);

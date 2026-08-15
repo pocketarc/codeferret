@@ -1,5 +1,10 @@
 ---
-standing-detail: No browser was available, so nothing was judged from a rendered page.
+standing-detail: >-
+  No page was rendered, so element overflow and overlap, alignment and computed spacing, the
+  mobile, tablet, desktop and wide viewport sweep, contrast ratios, target sizes,
+  focus-indicator visibility, hover and active states, and layout shift on load were not
+  evaluated. Only the markup and styles in the diff, and the configuration they depend on,
+  were read.
 ---
 
 The skill you are about to load assumes a running site and a browser it can drive. This
@@ -21,14 +26,19 @@ Its workflow does not.
   whether or not it is named there: a declared fixed width on a fluid container, a block
   with no `overflow-wrap` or `text-overflow` around text that cannot wrap, whether a focus
   state is declared at all, and a font or a colour that matches no other in the change.
-- Report a contrast ratio only where the diff declares both colours, and a target size only
-  where one rule fixes the box and its padding. A ratio is a property of a colour against
-  whatever paints behind it after cascade, inheritance, opacity and any theme layer, so a
-  declared colour on its own does not say which: `#767676` is 4.54:1 on white and 4.27:1 on
-  `#f6f8fa`, which passes 1.4.3 for normal text on the first background and fails it on the
-  second. A hit area is a computed box, not a declared width. Reporting either where the
-  source does not settle it produces a WCAG failure nobody measured, which teaches the author
-  that this review's accessibility claims are guesses.
+- Report a contrast ratio only where the source settles both the text colour and everything
+  painting behind it, in this diff or in a file you can read alongside it, and never where a
+  theme layer, an opacity or an inherited background leaves the backdrop open. A ratio is a
+  property of a colour against whatever paints behind it after cascade, inheritance, opacity
+  and any theme layer, so a declared colour on its own does not say which: `#767676` is 4.54:1
+  on white and 4.27:1 on `#f6f8fa`, which passes 1.4.3 for normal text on the first background
+  and fails it on the second. The test is whether the source settles the pair, not where the
+  two were written: a colour the diff changes on an element whose background comes from an
+  untouched rule is the ordinary case, and the source settles it. Report a target size only
+  where one rule fixes the box and its padding, which is the same bar reached a different way,
+  because a hit area is a computed box rather than a declared width. Reporting either where the source
+  does not settle it produces a WCAG failure nobody measured, which teaches the author that
+  this review's accessibility claims are guesses.
 - Do not enter Step 3.3. It is the fixing loop, and every other lens is reading this same
   checkout while you run. Report each fix as a finding and change nothing. Steps 3.1 and 3.2
   stay, and neither writes anything: 3.1 is a priority matrix, and 3.2's selector and

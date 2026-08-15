@@ -15,9 +15,10 @@ dispatch the same agents, so a change to how a review works lands in both. Keep 
 way.
 
 This file is the part to get right before touching anything: which branch, what never to
-change, what to run, and the traps. [`review/README.md`](review/README.md) has the rest:
-how a run works and why each part is built the way it is, how to add a lens, how to run a
-review by hand, and how to release.
+change, what to run, and the traps. [`review/README.md`](review/README.md) has the rest: how
+a run works, how to add a lens, how to run a review by hand, and how to release.
+[`review/DECISIONS.md`](review/DECISIONS.md) beside it has why each part is built the way it
+is, one heading per decision.
 
 ## Branches
 
@@ -110,7 +111,7 @@ anyone who was not counting at the time.
 ## Things that will bite you
 
 Each of these is a rule and the one fact that makes it stick. The argument behind each one
-is in `review/README.md`.
+is in `review/DECISIONS.md`.
 
 - Do not write a count of what this repository holds into a comment or a document. The
   README led with "fourteen lenses" for a full round after the set became thirteen, and
@@ -130,7 +131,8 @@ is in `review/README.md`.
   line now, so there is nothing left to be wrong about. Whoever adds the first inline
   comment back has to restore the check that caught it.
 - Do not ask the orchestrator for counts. It narrated "27 by three lenses" when the
-  answer was 31. `post-review.ts` and `review-body.ts` compute every count in the body.
+  answer was 31. `post-review.ts`, `review-body.ts` and `caveats.ts` compute every count in
+  the body between them.
 - A lens that returns zero findings is probably broken. One spent $1.28, exited 0,
   and emitted nothing after a complete and correct review. Every finding must go through
   the structured output, and the posted review carries `lens_health` so a dead lens shows
@@ -211,7 +213,7 @@ is in `review/README.md`.
   `GITHUB_TOKEN` back out of its parent's after the shell had unset it. So the token the two
   GitHub fetches use is staged in a file by a step of its own, and `run.sh` reads it and
   deletes it before the session starts. Never put it in the `env:` of the step that execs the
-  agent. "The GitHub token never enters the step that runs the agent" in review/README.md has
+  agent. "The GitHub token never enters the step that runs the agent" in review/DECISIONS.md has
   the measurement and what is left over.
 - A tool an agent asks for is not necessarily a tool it gets, and nothing says so.
   `Grep`, `Glob`, and `TodoWrite` were all in the lens tool list and none reached a
@@ -304,10 +306,21 @@ is in `review/README.md`.
   built the pathspec itself once, the two drifted, and the anchor map then covered files no
   lens had read. `review/diff-args.ts` holds the one reader and the one rule for getting the
   reviewed commit back out of the range. Do not reintroduce a second construction of either.
+- A warning the body can raise is a warning the body prints. `COVERAGE_NOTICES` in
+  `caveats.ts` keys the condition and the sentence together, and the union comes from the list
+  above it, so a notice added there has a place on the page before it compiles;
+  `POSTING_NOTICES` in `review-body.ts` does the same for the one thing the body says about
+  its own posting. Both halves were by hand once, and each lost one: `warned` missed `limited`,
+  so a pull request full of interface changes went green with no accessibility caveat, and the
+  rendering missed a thread left open by anything but a permission denial. Do not restate
+  either condition beside the branch that prints it.
 - The action posts on `findings-checked`, not on the findings file existing.
   `check-findings.ts` repairs what has one right answer, keeps what `post-review.ts`
   survives, and drops only a finding with nothing left to render, so the run can end red and
-  the review still land. A file that fails it outright holds nothing worth posting.
+  the review still land. A run whose findings were all dropped lands too: the `lens_health`
+  block, the coverage notices and every standing caveat are still in the file, and a red job
+  beside a pull request reading as clean is the pair `warned` exists to prevent. Exit 1 is for
+  a file nothing can read as a run's output, which really does hold nothing worth posting.
 
 ## Nothing has shipped
 

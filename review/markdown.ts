@@ -11,6 +11,38 @@
  */
 
 /**
+ * The text with every line ending the renderer honours written as `\n`.
+ *
+ * CommonMark ends a line at `\n`, at `\r\n`, and at a lone `\r`, and GitHub's cmark-gfm does
+ * the same. Split on `\n` alone, a `\r` sits in the middle of what this module calls a line
+ * while the reader sees two: `FENCE` below stops matching a delimiter the renderer still
+ * closes a block on, because `.` does not match `\r` and `$` without `m` is the end of the
+ * input, and every line-start escape then misses the half of the line after it. Measured
+ * against `prose`: a closed fence whose closing delimiter carried a trailing carriage return
+ * left the scanner inside a block the renderer had already shut, and the `<img>`, the
+ * `<details>` and the `@` below it all reached the page unescaped.
+ *
+ * The input reaches here. `orchestrator.md` tells the orchestrator to copy attempted-injection
+ * text out of pull request comments into `notes`, and the GitHub API takes whatever line
+ * endings whoever wrote a comment chose.
+ */
+function normalised(text: string): string {
+    return text.replace(/\r\n?/g, "\n");
+}
+
+/**
+ * The text as the lines a renderer reads.
+ *
+ * Nothing in this module or its callers splits markdown for itself. This is the splitter, and
+ * every exported function below that takes a whole string normalises through it before
+ * anything looks at the text, so a line ending can be wrong in one place rather than in each
+ * of the escapes.
+ */
+export function splitLines(text: string): string[] {
+    return normalised(text).split("\n");
+}
+
+/**
  * A fenced block's delimiter, at the indentation the renderer reads as one.
  *
  * CommonMark allows three spaces before an opening or closing fence and reads a fourth as an
@@ -20,6 +52,23 @@
  * A tab is four columns, so it is outside the bound too.
  */
 const FENCE = /^ {0,3}(```+|~~~+)(.*)$/;
+
+/**
+ * Whether a delimiter line opens a block, which is not the same question as whether it is a
+ * delimiter.
+ *
+ * CommonMark: "If the info string comes after a backtick fence, it may not contain any
+ * backtick characters." So ```` ```x`y ```` is a paragraph to GitHub and was an opening fence
+ * here, and the disagreement lands on the side that stops escaping: every line after it came
+ * back marked fenced, `escapeBlocks` skipped it, and a `<details>` and an `@` in a finding's
+ * body reached the page live. `closeOpenFence` then appended a delimiter the renderer reads
+ * as an *opening* one, which is the inversion `prose` warns about.
+ *
+ * A tilde fence keeps the current reading, because its info string may hold backticks.
+ */
+function opens(fence: string, info: string): boolean {
+    return fence[0] !== "`" || !info.includes("`");
+}
 
 /**
  * Whether a run of delimiters closes a block the given run opened.
@@ -50,7 +99,7 @@ function scan(lines: string[]): { inside: boolean[]; open: string | null } {
         const fence = match?.[1];
         const info = match?.[2] ?? "";
 
-        if (fence && open === null) {
+        if (fence && open === null && opens(fence, info)) {
             open = fence;
             inside.push(true);
             continue;
@@ -71,6 +120,10 @@ function scan(lines: string[]): { inside: boolean[]; open: string | null } {
 /**
  * Whether each line falls inside a fenced code block, the opening and closing lines
  * included. A caller that maps over the false lines therefore leaves a delimiter alone.
+ *
+ * The answer is one boolean per line given, so the lines have to be the renderer's: a `\r`
+ * inside one of them is two lines to a reader and one answer here, and there is no boolean
+ * that covers both. `splitLines` is what produces them.
  */
 export function fenceMap(lines: string[]): boolean[] {
     return scan(lines).inside;
@@ -78,9 +131,11 @@ export function fenceMap(lines: string[]): boolean[] {
 
 /** Close a fence the text left open, so what follows it does not render as code. */
 export function closeOpenFence(text: string): string {
-    const { open } = scan(text.split("\n"));
+    const lines = splitLines(text);
+    const { open } = scan(lines);
+    const kept = lines.join("\n");
 
-    return open === null ? text : `${text}\n${open}`;
+    return open === null ? kept : `${kept}\n${open}`;
 }
 
 /**
@@ -98,7 +153,7 @@ export function closeOpenFence(text: string): string {
  * closing tag inside a span cancels a real opener and seals the rest of the review inside it.
  */
 export function closeOpenDetails(text: string): string {
-    const lines = text.split("\n");
+    const lines = splitLines(text);
     const fenced = fenceMap(lines);
     let open = 0;
 
@@ -111,9 +166,11 @@ export function closeOpenDetails(text: string): string {
         open -= (prose.match(/(?<!\\)<\/details>/g) ?? []).length;
     }
 
-    if (open <= 0) return text;
+    const kept = lines.join("\n");
 
-    return `${text}\n${Array.from({ length: open }, () => "</details>").join("\n")}`;
+    if (open <= 0) return kept;
+
+    return `${kept}\n${Array.from({ length: open }, () => "</details>").join("\n")}`;
 }
 
 /** A run of text, and whether the renderer reads it as a code span. */
@@ -259,9 +316,15 @@ function outsideCode(text: string): string {
  * whoever owns that name, from the account that posts the review, on every push. Anyone who
  * wants that only has to put a handle where a lens will quote it. GitHub renders `\@name`
  * as the text it is.
+ *
+ * Flattened here rather than at each caller. This escapes what a character does mid-line and
+ * says nothing about the start of one, so a line ending that survives into the result puts
+ * the rest of the field where `#` opens a heading and `**` never closes. A caller handing over
+ * a joined list rather than a model's own field flattened nothing, and one of those lists is
+ * lens names read out of a file the review session can write.
  */
 export function escapeInline(text: string): string {
-    return escapeOutsideCode(text, escapeChars("\\*_[]<~@"));
+    return escapeOutsideCode(flatten(text), escapeChars("\\*_[]<~@"));
 }
 
 /**
@@ -413,10 +476,14 @@ function fenceIndented(lines: string[]): string[] {
  * inside a fence left alone.
  */
 export function escapeBlocks(lines: string[]): string[] {
-    const normalised = fenceIndented(lines);
-    const fenced = fenceMap(normalised);
+    // Split again rather than trusting the caller's split. Unlike `fenceMap` this hands back
+    // its own array, so a line the caller left a `\r` inside can come out as the two lines
+    // the renderer reads, each escaped on its own.
+    const source = lines.flatMap(splitLines);
+    const indented = fenceIndented(source);
+    const fenced = fenceMap(indented);
 
-    return normalised.map((line, i) => (fenced[i] ? line : escapeBlockStart(escapeTags(line))));
+    return indented.map((line, i) => (fenced[i] ? line : escapeBlockStart(escapeTags(line))));
 }
 
 /**
@@ -428,7 +495,7 @@ export function escapeBlocks(lines: string[]): string[] {
  * leaves a literal `**` on the page.
  */
 export function flatten(text: string): string {
-    return text.replace(/\s*\n+\s*/g, " ").trim();
+    return normalised(text).replace(/\s*\n+\s*/g, " ").trim();
 }
 
 /**
@@ -502,9 +569,11 @@ const CUT_MARKER = "\n\n_(cut for length)_";
  * afterwards, which is what the old order was for.
  */
 export function clampTo(text: string, limit: number): Clamped {
-    if (text.length <= limit) return { kept: text, marker: "" };
+    const source = normalised(text);
 
-    const window = text.slice(0, limit);
+    if (source.length <= limit) return { kept: source, marker: "" };
+
+    const window = source.slice(0, limit);
     const cut = (kept: string): Clamped => ({ kept, marker: CUT_MARKER });
 
     const paragraph = window.lastIndexOf("\n\n");
@@ -540,7 +609,7 @@ export function clamp(text: string, limit: number): string {
  * closing a closed fence adds nothing.
  */
 export function prose(text: string, limit: number): string {
-    return escapeBlocks(closeOpenFence(clamp(text, limit)).split("\n")).join("\n");
+    return escapeBlocks(splitLines(closeOpenFence(clamp(text, limit)))).join("\n");
 }
 
 /**

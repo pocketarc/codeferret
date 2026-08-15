@@ -69,6 +69,15 @@ inputs:
             any-depth form would hide `app/build/` from every lens. Add your own workspace
             directory here if it is neither `apps/` nor `packages/`.
 
+            `out/_next` is matched at any depth as well, which covers the byte-heavy half of
+            a static export from a workspace root nobody anticipated: `web/`, `frontend/`,
+            `site/` and `client/` are all common, and `next build` with `output: 'export'`
+            writes every hashed chunk under `out/_next/static/`. `_next` is a reserved
+            Next.js path and an underscore-prefixed segment, which is the App Router's one
+            documented convention for a folder that is never a route, so this hides no
+            routable file the way `**/out/**` would. The `out/` parent keeps it away from a
+            hand-written `app/_next/`. The exported `out/*.html` still comes through.
+
             `dist` and `vendor` are matched at any depth, and that is a trade rather than a
             rule. A package's `dist/` and a Composer `vendor/` both turn up at depths no
             anchored glob can name (`backend/vendor/` is the ordinary PHP layout), and
@@ -111,6 +120,7 @@ inputs:
             **/dist/**
             out/**
             build/**
+            **/out/_next/**
             apps/*/out/**
             apps/*/build/**
             packages/*/out/**

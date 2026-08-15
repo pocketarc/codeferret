@@ -24,9 +24,9 @@ export type Report = (line: string) => void;
  * sentence naming the file.
  *
  * The exit stays here rather than moving to post-review.ts and print-findings.ts, which is the
- * point of the function being shared: an unreadable findings file is one fact, and two callers
- * answering it differently is what this exists to prevent. `hint` is the extra line a caller
- * adds, naming the check that would explain it.
+ * point of the function being shared: an unreadable findings file is one fact, and a posted
+ * review and a printed one answering it differently is what this exists to prevent. `hint` is
+ * the extra line a caller adds, naming the check that would explain it.
  */
 export async function readMerged(path: string, report: Report, hint?: string): Promise<Merged> {
     const stop = (message: string): never => {

@@ -11,20 +11,23 @@
 export interface DiffArgs {
     /** The commit range the lenses reviewed under. */
     range: string;
-    /** The pathspec, `--` included, or empty when the run excluded nothing. */
-    pathspec: string[];
 }
 
+/**
+ * The file holds the pathspec after the range, and nothing hands it out: nothing has read one
+ * since the anchor map went. Whoever needs it again adds it to the shape here rather than
+ * splitting this file a second time somewhere else, which is what this module exists to stop.
+ */
 export async function readDiffArgs(argsFile: string): Promise<DiffArgs> {
     const file = Bun.file(argsFile);
 
     if (!(await file.exists())) throw new Error(`no ${argsFile}`);
 
-    const [range, ...pathspec] = (await file.text()).split("\0").filter(Boolean);
+    const [range] = (await file.text()).split("\0").filter(Boolean);
 
     if (!range) throw new Error(`${argsFile} names no range`);
 
-    return { range, pathspec };
+    return { range };
 }
 
 /**

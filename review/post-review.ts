@@ -27,8 +27,10 @@ import { partition } from "./findings.ts";
 import { readMerged, vetAgainstExisting } from "./read-run.ts";
 import { graphql, graphqlFailure, requirePullNumber, requireRepository, rest, tokenFromStdinOrEnv } from "./github.ts";
 import { reason } from "./json.ts";
-import { composeReview, destinationOf, plural, reopenedReasons } from "./review-body.ts";
+import { reopenedReasons } from "./caveats.ts";
+import { composeReview, destinationOf } from "./review-body.ts";
 import { readDispatched, readSessionChanged } from "./run-files.ts";
+import { plural } from "./words.ts";
 
 const [findingsPath, headSha, prNumber] = process.argv.slice(2);
 const repo = process.env.GITHUB_REPOSITORY;
@@ -146,8 +148,12 @@ if (foreign.length > 0) {
 const resolved: Array<{ reason: string }> = [];
 let resolveDenied = false;
 
-// Resolving is a write, so a dry run reports the decision without making it.
-if (toResolve.length > 0 && !dryRun) {
+// Resolving is a write, so a dry run decides which threads to close and closes none. The
+// entries still go in: `DRY_RUN=1` is documented as printing the review instead of posting it,
+// and a body missing the `N threads resolved` block is not the body that would have gone out.
+if (dryRun) {
+    for (const { reason: why } of toResolve) resolved.push({ reason: why });
+} else if (toResolve.length > 0) {
     for (const { thread_id, reason: why } of toResolve) {
         const result = await graphql(
             token,

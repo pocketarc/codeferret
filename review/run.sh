@@ -36,6 +36,38 @@
 #   INCLUDE_WORKING_TREE  1 to review uncommitted work as well.
 set -euo pipefail
 
+# Whether a composite action's inputs reach its `run:` steps as INPUT_<NAME> is undocumented
+# and has changed before. Where they do, both tokens are in scope a second time, under names
+# the denylist further down does not mention, and a lens holds Bash. Nothing in this script
+# reads one: every value it needs arrives as an argument or under its own name.
+#
+# `unset` cannot take them out. The runner uppercases an input name and replaces its spaces
+# with underscores, leaving the dashes, so the token inputs arrive as `INPUT_GITHUB-TOKEN` and
+# `INPUT_CLAUDE-CODE-OAUTH-TOKEN`, and neither is a valid shell identifier. Measured under
+# bash 3.2, which is what a Mac runs: `compgen -e` lists both, `unset -v 'INPUT_GITHUB-TOKEN'`
+# answers "not a valid identifier", and `set -e` ends the review on that line. Under a bash
+# that leaves them out of `compgen -e` the same loop passes and removes nothing.
+#
+# `env -u` names a variable a shell cannot, so the script re-execs through it once, before it
+# has read the caller's token file or written anything. The list comes from `env` rather than
+# being written out here, so an input added later is covered without anyone remembering this
+# block; a line that is only some value's embedded newline costs a `-u` for a name that does
+# not exist.
+if [ -z "${CODEFERRET_INPUTS_SCRUBBED:-}" ]; then
+    scrub=()
+
+    while IFS='=' read -r name _; do
+        case $name in
+        INPUT_*) scrub+=(-u "$name") ;;
+        esac
+    done < <(env)
+
+    # Every `-u` ahead of the assignment: `env` reads the first `name=value` as the end of its
+    # own options, and a `-u` after it is the command to run. `env: -u: No such file or
+    # directory` is what that looks like, and it costs the whole review.
+    exec env "${scrub[@]+"${scrub[@]}"}" CODEFERRET_INPUTS_SCRUBBED=1 bash "$0" "$@"
+fi
+
 BASE=${1:?usage: run.sh BASE_REF ACTION_PATH OUT_DIR WORKSPACE}
 ACTION=${2:?missing action path}
 OUT=${3:?missing output dir}
@@ -140,13 +172,8 @@ unset -v GITHUB_TOKEN GH_TOKEN GITHUB_TOKEN_FILE \
     NPM_TOKEN NODE_AUTH_TOKEN \
     GITHUB_ENV GITHUB_PATH GITHUB_OUTPUT GITHUB_STATE GITHUB_STEP_SUMMARY
 
-# Whether a composite action's inputs reach its `run:` steps as INPUT_<NAME> is undocumented
-# and has changed before. Where they do, both tokens are in scope a second time under names
-# the list above does not mention. Nothing below reads one: every value this script needs
-# arrives as an argument or under its own name.
-for name in $(compgen -e | grep '^INPUT_' || true); do
-    unset -v "$name"
-done
+# The `INPUT_*` names are already gone: the block at the top of this script re-execs through
+# `env -u`, because `unset` cannot name a variable with a dash in it.
 
 # Which lenses this run dispatches, decided in review/select-lenses.ts, which has why the
 # subtraction exists and why an exclusion that matches nothing is a line on stderr rather than
@@ -168,7 +195,7 @@ printf '%s\n' "$kept" |
 # Every `bun` a review starts is given `--config=/dev/null`. Without it, bun reads the
 # `bunfig.toml` in whatever directory a run stands in and runs the script that file names,
 # inside the job holding the tokens. "Bun runs whatever a `bunfig.toml` in the reviewed tree
-# names" in review/README.md has why the working directory alone does not settle it.
+# names" in review/DECISIONS.md has why the working directory alone does not settle it.
 #
 # The working directory still moves, because a relative path in a report or an argument
 # resolves against it. Only the orchestrator starts in the workspace, and it does so in a
@@ -224,7 +251,7 @@ cp "$BUILD/existing.json" "$BUILD/previous.json" "$SESSION/"
 # holds a credential already, and the value goes out of this shell before an agent starts.
 #
 # What is left over is written down in "The GitHub token never enters the step that runs the
-# agent" in review/README.md. Moving the refetch narrows where the credential goes; it does
+# agent" in review/DECISIONS.md. Moving the refetch narrows where the credential goes; it does
 # not make the runner safe to hand one to twice.
 token=""
 
@@ -284,7 +311,7 @@ fi
 # `--setting-sources user` keeps the reviewed tree out of the session's own configuration.
 # The session starts in that tree, and a SessionStart hook declared there runs even under
 # bypassPermissions. Plugins passed with --plugin-dir still load, so the lens agents are
-# unaffected. "The reviewed tree does not configure the session" in review/README.md has
+# unaffected. "The reviewed tree does not configure the session" in review/DECISIONS.md has
 # what was measured and how.
 (
     cd "$WORKSPACE" &&
@@ -320,10 +347,21 @@ fi
 # Before the deletions below, so that `existing.json` is still the file the fetch wrote.
 CHANGED=()
 
+# `diff-args` is in both lists, and it is the one file a session can fail both checks with at
+# once: the body then read "The review session changed diff-args, diff-args under it.", which
+# is the one line telling a reader the lens list may be the session's own answer.
+note_changed() {
+    for seen in "${CHANGED[@]+"${CHANGED[@]}"}"; do
+        if [ "$seen" = "$1" ]; then return 0; fi
+    done
+
+    CHANGED+=("$1")
+}
+
 for handed in "${HANDED[@]}"; do
     if ! cmp -s "$BUILD/$handed" "$SESSION/$handed" 2>/dev/null; then
         echo "$handed changed during the review, so what the session read is not what it was given." >&2
-        CHANGED+=("$handed")
+        note_changed "$handed"
     fi
 done
 
@@ -342,7 +380,7 @@ for at in "${!RECORDED[@]}"; do
 
     if [ "$before" != "$(digest "$recorded")" ]; then
         echo "$recorded changed during the review, so what is read from here on is not what was built." >&2
-        CHANGED+=("$recorded")
+        note_changed "$recorded"
     fi
 done
 

@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { partition } from "./findings.ts";
 import type { Finding, Merged } from "./findings.ts";
-import { closeOpenFence, fenceMap } from "./markdown.ts";
+import { COVERAGE_NOTICES, coverageOf, noticesFor } from "./caveats.ts";
+import { closeOpenFence, escapeInline, fenceMap } from "./markdown.ts";
 import {
     assemble,
     bullet,
@@ -410,8 +411,8 @@ describe("composeReview", () => {
         });
 
         expect(body).toContain("> 2 of 2 lenses named something they could not check.");
-        expect(body).toContain("No page was rendered");
-        expect(body).toContain("No browser was available");
+        expect(body).toContain("contrast, focus order, target size, reflow");
+        expect(body).toContain("the mobile, tablet, desktop and wide viewport sweep");
     });
 
     test("keeps the standing sentence beside the lens's own words rather than losing it", () => {
@@ -649,8 +650,82 @@ describe("composeReview", () => {
             ).toBe(true);
         });
 
+        test("a thread left open by anything other than a refusal", () => {
+            expect(
+                warnedBy(
+                    { lens_health: [healthy] },
+                    { dispatched: ["codeferret:caveman-review"], resolveDenied: false, leftOpen: 1 },
+                ),
+            ).toBe(true);
+        });
+
         test("every dispatched lens reporting normally", () => {
             expect(warnedBy({ lens_health: [healthy] }, { dispatched: ["codeferret:caveman-review"] })).toBe(false);
+        });
+    });
+
+    describe("a warning raised is a warning printed", () => {
+        test("says which threads were left open when nothing refused, rather than only on stderr", () => {
+            const body = review({}, { resolveDenied: false, leftOpen: 2 });
+
+            expect(body).toContain("2 threads judged finished could not be closed");
+        });
+
+        test("reports a lens that broke and a lens that named a limit, not the first of the two", () => {
+            const body = review({
+                lens_health: [
+                    { lens: "codeferret:caveman-review", findings_returned: 0, ok: false },
+                    { lens: "codeferret:anthropic-accessibility-review", findings_returned: 2, ok: true },
+                ],
+            });
+
+            expect(body).toContain("did not report normally");
+            expect(body).toContain("named something they could not check");
+        });
+
+        test("names the silent lenses even when the run accounted for none of them", () => {
+            const body = review({}, { dispatched: ["codeferret:caveman-review"] });
+
+            expect(body).toContain("reported nothing about which lenses ran");
+            expect(body).toContain("caveman-review ran and reported nothing about themselves");
+        });
+
+        test("carries a sentence for every notice a run can raise at once", () => {
+            const merged: Merged = {
+                findings: [],
+                lens_health: [
+                    { lens: "codeferret:caveman-review", findings_returned: 0, ok: false },
+                    { lens: "codeferret:anthropic-accessibility-review", findings_returned: 2, ok: true },
+                ],
+            };
+            const posting: Posting = {
+                ...quiet,
+                dispatched: ["codeferret:caveman-review", "codeferret:anthropic-accessibility-review", "codeferret:x"],
+                unread: ["the review threads could not be listed."],
+                sessionChanged: ["lenses.txt"],
+                resolveDenied: true,
+                leftOpen: 1,
+            };
+            const coverage = coverageOf(merged, posting);
+            const { body, warned } = composeReview(merged, posting, partition(merged.findings));
+
+            // `unaccounted` is the one that cannot join them: it means an empty `lens_health`,
+            // which leaves `broken`, `limited` and the lens block with nothing to report. The
+            // test above pairs it with `silent`, which is the only notice it can share a body
+            // with.
+            expect(warned).toBe(true);
+            expect(noticesFor(coverage)).toEqual(["unread", "changed", "silent", "broken", "limited"]);
+
+            for (const name of noticesFor(coverage)) {
+                expect(body).toContain(COVERAGE_NOTICES[name].say(coverage, escapeInline));
+            }
+        });
+
+        test("bounds what the fetch could not read, which the body is charged for before any finding", () => {
+            const body = review({}, { unread: ["e".repeat(9000)] });
+
+            expect(body).toContain("(cut for length)");
+            expect(body.length).toBeLessThan(3000);
         });
     });
 });

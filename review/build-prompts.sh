@@ -207,7 +207,7 @@ for lens in "${LENSES[@]}"; do
         # .claude/skills/ out of the session's reach with everything else the reviewed tree
         # declares. Left there, every workspace lens would follow its agent's own
         # instruction to stop and return nothing. "A lens agent ships pre-built" in
-        # review/README.md has what was measured.
+        # review/DECISIONS.md has what was measured.
         cp -R "$WORKSPACE/.claude/skills/$lens" "$PLUGIN/skills/$lens"
     else
         echo "lens '$lens' has no SKILL.md in the action's bundled lenses or in" >&2

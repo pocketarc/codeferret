@@ -7,7 +7,9 @@ import {
     escapeBlocks,
     escapeInline,
     fenceMap,
+    flatten,
     prose,
+    splitLines,
 } from "./markdown.ts";
 
 describe("fenceMap", () => {
@@ -323,5 +325,52 @@ describe("escapeBlocks: an indented run with no content", () => {
             "```",
             "b",
         ]);
+    });
+});
+
+describe("a line ending the renderer honours and this module did not", () => {
+    test("splits a lone carriage return, which GitHub reads as a line break", () => {
+        expect(splitLines("a\rb\r\nc\nd")).toEqual(["a", "b", "c", "d"]);
+    });
+
+    test("does not let a carriage return carry a bare closer past the fence tracker", () => {
+        // `FENCE` never matched "```\r", so the scanner stayed inside the block the renderer
+        // had already closed, and every line below it came back unescaped.
+        expect(prose('```\n```\rX\n<img src="https://evil.test/p.png">\n<details>\n@someone', 4000)).toBe(
+            '```\n```\nX\n\\<img src="https://evil.test/p.png">\n\\<details>\n\\@someone',
+        );
+    });
+
+    test("escapes the half of a line that follows one", () => {
+        expect(escapeBlocks(["safe\r<details>"])).toEqual(["safe", "\\<details>"]);
+    });
+
+    test("takes one out of a field asked for as one line", () => {
+        expect(flatten("first\rsecond")).toBe("first second");
+        expect(escapeInline("first\r<div>")).toBe("first \\<div>");
+    });
+});
+
+describe("a backtick fence whose info string holds a backtick", () => {
+    // CommonMark: the info string after a backtick fence may not contain a backtick. So this
+    // opens nothing, and reading it as an opener turned the escaping off for the rest.
+    test("opens no block", () => {
+        expect(fenceMap(["```x`y", "<details>", "@octocat"])).toEqual([false, false, false]);
+    });
+
+    test("leaves the lines after it escaped", () => {
+        expect(escapeBlocks(["```x`y", "<details>", "@octocat"])).toEqual([
+            "\\`\\`\\`x\\`y",
+            "\\<details>",
+            "\\@octocat",
+        ]);
+    });
+
+    test("adds no closing delimiter the renderer would read as an opener", () => {
+        expect(closeOpenFence("```x`y\ntext")).toBe("```x`y\ntext");
+    });
+
+    test("still opens a block for a tilde fence, whose info string may hold one", () => {
+        expect(fenceMap(["~~~x`y", "<details>", "~~~"])).toEqual([true, true, true]);
     });
 });

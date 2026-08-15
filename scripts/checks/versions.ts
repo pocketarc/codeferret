@@ -13,7 +13,15 @@ import type { Failures } from "./support.ts";
 
 export async function checkShippedVersions(): Promise<Failures> {
     const list: Failures = [];
-    if (!existsSync(TEMPLATE)) return list;
+
+    // The file's absence is a fault, not a condition. `/codeferret:install-workflow` reads it
+    // out of the plugin, the README links to it and `commands/install-workflow.md` names it,
+    // and returning here on a missing one left this check and `checkWorkflows` both passing in
+    // silence while every one of them broke.
+    if (!existsSync(TEMPLATE)) {
+        fail(list, TEMPLATE, "is missing, so nothing ships the workflow /codeferret:install-workflow writes");
+        return list;
+    }
 
     const template = await Bun.file(TEMPLATE).text();
 

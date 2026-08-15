@@ -19,27 +19,24 @@ describe("reviewedCommit", () => {
 });
 
 describe("readDiffArgs", () => {
-    test("splits the range from the pathspec git is given after it", async () => {
+    test("takes the range from the front, leaving the pathspec git is given after it", async () => {
         const dir = mkdtempSync(join(tmpdir(), "codeferret-args-"));
         const file = join(dir, "diff-args");
 
         await Bun.write(file, "origin/main...abc\0--\0:(top)\0:(top,exclude,glob)out/**\0");
 
-        expect(await readDiffArgs(file)).toEqual({
-            range: "origin/main...abc",
-            pathspec: ["--", ":(top)", ":(top,exclude,glob)out/**"],
-        });
+        expect(await readDiffArgs(file)).toEqual({ range: "origin/main...abc" });
 
         rmSync(dir, { recursive: true, force: true });
     });
 
-    test("a run that excluded nothing has a range and no pathspec", async () => {
+    test("reads a run that excluded nothing the same way", async () => {
         const dir = mkdtempSync(join(tmpdir(), "codeferret-args-"));
         const file = join(dir, "diff-args");
 
         await Bun.write(file, "origin/main...abc\0");
 
-        expect(await readDiffArgs(file)).toEqual({ range: "origin/main...abc", pathspec: [] });
+        expect(await readDiffArgs(file)).toEqual({ range: "origin/main...abc" });
 
         rmSync(dir, { recursive: true, force: true });
     });

@@ -105,10 +105,14 @@ export interface Survey {
     /**
      * Every url the pull request carries, which is what a review body may render as a link.
      *
-     * A wider set than the keys of `comments`, on purpose. A thread's own url is linkable
-     * whatever state the thread is in, because the pull request really does carry it; it
-     * only stands as a *comment* about a file when the thread is closed and anchored, which
-     * is what makes it evidence rather than a location.
+     * The same urls as the keys of `comments`, because `fetch-existing.ts` writes a thread's
+     * url as its first comment's and that comment is keyed here too. Named apart from them
+     * because the two answer different questions: `mention` asks only whether the pull request
+     * carries a url, and the vetting asks what the comment behind one says about which file.
+     *
+     * This was documented as the wider set and never has been one, which left a reader
+     * auditing `mention`'s bound looking for a difference no input a run makes could produce.
+     * Widening it means giving a thread a url of its own in the fetch, and a reason to.
      */
     linkable: Set<string>;
 }
@@ -137,8 +141,6 @@ export function survey(existing: Surveyed): Survey {
     for (const thread of existing.threads) {
         const closed = thread?.resolved === true;
         const file = typeof thread?.file === "string" ? thread.file : "";
-
-        if (thread?.url) linkable.add(thread.url);
 
         for (const comment of thread?.comments ?? []) take(comment, file, closed);
     }

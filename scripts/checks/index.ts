@@ -18,6 +18,7 @@ import { checkBundledSkills } from "./skills.ts";
 import { checkDefaults } from "./defaults.ts";
 import { checkFindingRules } from "./finding-rules.ts";
 import { checkGenerated } from "./generated.ts";
+import { checkLensCorrections } from "./lens-corrections.ts";
 import { checkMarketplace } from "./marketplace.ts";
 import { checkPluginManifest } from "./plugin.ts";
 import { checkPrompts } from "./prompts.ts";
@@ -41,6 +42,7 @@ export const CHECKS: Check[] = [
     ["skills", checkBundledSkills],
     ["skill-fences", checkSkillFences],
     ["provenance", checkProvenance],
+    ["lens-corrections", checkLensCorrections],
     ["defaults", checkDefaults],
     ["workflow-lenses", checkWorkflowLenses],
     ["generated", checkGenerated],

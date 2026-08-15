@@ -11,6 +11,7 @@
 **/dist/**
 out/**
 build/**
+**/out/_next/**
 apps/*/out/**
 apps/*/build/**
 packages/*/out/**

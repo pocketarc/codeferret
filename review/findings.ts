@@ -221,6 +221,22 @@ export interface Vetted {
     unmatched: number;
 }
 
+/** Every reason a suppression is reopened, which is every counter `Vetted` carries. */
+export type Reopening = Exclude<keyof Vetted, "findings">;
+
+/**
+ * All of them at zero, which is also the list of them.
+ *
+ * The counters were five `let`s incremented at five sites and reassembled into a literal at
+ * the end, so a sixth reason meant four edits and getting three of them right left a counter
+ * that was always zero with nothing saying so. `reopenedReasons` has been keyed off this
+ * union since it was written; this is the producing side catching up, and a counter added to
+ * `Vetted` now fails to compile here until it is seeded.
+ */
+function noReopenings(): Record<Reopening, number> {
+    return { untraceable: 0, unrelated: 0, unvouched: 0, unreported: 0, unmatched: 0 };
+}
+
 /**
  * Whether the previous review raised anything in this file.
  *
@@ -272,13 +288,15 @@ function raisedBefore(raisedFiles: ReadonlySet<string>, file: string): boolean {
  */
 export function vetSuppression(findings: Finding[], discussion: Survey, raisedFiles: ReadonlySet<string>): Vetted {
     const { comments } = discussion;
-    let untraceable = 0;
-    let unrelated = 0;
-    let unvouched = 0;
-    let unreported = 0;
-    let unmatched = 0;
+    const counts = noReopenings();
 
-    const reopen = (f: Finding): Finding => ({ ...f, status: "new" as const });
+    // One increment site, named by the same union the sentences are keyed off, so a reason
+    // cannot be raised without being counted or counted without being explained.
+    const reopen = (f: Finding, why: Reopening): Finding => {
+        counts[why] += 1;
+
+        return { ...f, status: "new" as const };
+    };
 
     const vetted = findings.map((f) => {
         const url = f.existing_comment_url;
@@ -299,17 +317,13 @@ export function vetSuppression(findings: Finding[], discussion: Survey, raisedFi
             // costs an attacker anything.
             const closed = cited?.onClosedThread === true && !isListed(f);
 
-            if (!cited || !(entitled(cited) || closed)) {
-                untraceable += 1;
-                return reopen(f);
-            }
+            if (!cited || !(entitled(cited) || closed)) return reopen(f, "untraceable");
 
             const about = entitled(cited) ? isAbout(cited, f.file) : cited.file !== "" && cited.file === f.file;
 
             if (about) return f;
 
-            unrelated += 1;
-            return reopen(f);
+            return reopen(f, "unrelated");
         }
 
         if (f.status === "already-reported") {
@@ -345,16 +359,12 @@ export function vetSuppression(findings: Finding[], discussion: Survey, raisedFi
             // The cost is a critical that was genuinely reported before and never commented
             // on, printed in full again on every push. Criticals are rare and that is the
             // direction to be wrong in.
-            if (isListed(f) && !(cited && entitled(cited))) {
-                unvouched += 1;
-                return reopen(f);
-            }
+            if (isListed(f) && !(cited && entitled(cited))) return reopen(f, "unvouched");
 
             if (url) {
                 if (cited && isAbout(cited, f.file)) return f;
 
-                unreported += 1;
-                return reopen(f);
+                return reopen(f, "unreported");
             }
 
             // No url is the ordinary path rather than an edge case: STEP 3 tells the
@@ -364,14 +374,13 @@ export function vetSuppression(findings: Finding[], discussion: Survey, raisedFi
             // and re-decided nowhere, and the status carries into every later run.
             if (raisedBefore(raisedFiles, f.file)) return f;
 
-            unmatched += 1;
-            return reopen(f);
+            return reopen(f, "unmatched");
         }
 
         return f;
     });
 
-    return { findings: vetted, untraceable, unrelated, unvouched, unreported, unmatched };
+    return { findings: vetted, ...counts };
 }
 
 /** Whether a parsed file is something this module can read as a run's output. */

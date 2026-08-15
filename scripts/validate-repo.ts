@@ -24,8 +24,16 @@
  * Usage: bun scripts/validate-repo.ts [<check-name>...]
  */
 
-import { CHECKS } from "./checks/index.ts";
+import { join } from "node:path";
 import type { Failures } from "./checks/support.ts";
+
+// Before the checks are loaded, and they are loaded dynamically so that it is. Every check
+// reads paths relative to the repository root; a static import would have its module body run
+// before this line, which is why the `chdir` used to sit in `support.ts`, where importing a
+// helper relocated the process.
+process.chdir(join(import.meta.dir, ".."));
+
+const { CHECKS } = await import("./checks/index.ts");
 
 const named = process.argv.slice(2);
 const unknown = named.filter((name) => !CHECKS.some(([check]) => check === name));

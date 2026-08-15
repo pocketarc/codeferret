@@ -22,8 +22,11 @@ export async function checkWorkflows(): Promise<Failures> {
 
     if (files.length === 0) fail(list, dir, "holds no workflow");
 
-    // The template sits outside .github/, so nothing else parses it, here or on GitHub.
-    if (existsSync(TEMPLATE)) files.push(TEMPLATE);
+    // The template sits outside .github/, so nothing else parses it, here or on GitHub. Pushed
+    // whether or not it is there: with the push guarded on its existence, a deleted template
+    // took the gate comparison below out with it and said nothing, and `parseYaml` names a
+    // missing file.
+    files.push(TEMPLATE);
 
     const gates = new Map<string, string>();
 

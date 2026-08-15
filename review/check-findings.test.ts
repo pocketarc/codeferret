@@ -153,14 +153,28 @@ describe("check-findings", () => {
         expect(findingsOf(written).map((f) => f.title)).toEqual(["A title"]);
     });
 
-    test("fails outright when nothing usable is left", async () => {
+    test("still posts what a run said about itself when every finding was dropped", async () => {
         const broken = finding();
         delete broken.title;
 
-        const { code, out } = await check({ findings: [broken] });
+        const { code, out, written } = await check({
+            findings: [broken],
+            lens_health: [{ lens: "codeferret:a", findings_returned: 0, ok: false }],
+        });
+
+        // 3 rather than 1: run.sh writes the marker the action posts on for 3, and the run
+        // still ends red. A red job and a pull request reading as clean is the pair to avoid.
+        expect(code).toBe(3);
+        expect(out).toContain("nothing usable");
+        expect(findingsOf(written)).toHaveLength(0);
+        expect((written as { lens_health?: unknown[] }).lens_health).toHaveLength(1);
+    });
+
+    test("fails outright on a file it cannot read as a run's output", async () => {
+        const { code, out } = await check({ summary: "no findings key" });
 
         expect(code).toBe(1);
-        expect(out).toContain("nothing usable");
+        expect(out).toContain("`findings` is missing");
     });
 
     test("drops a lens_health entry that is not an object", async () => {

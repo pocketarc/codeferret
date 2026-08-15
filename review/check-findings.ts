@@ -18,8 +18,8 @@
  *
  * Usage: bun check-findings.ts <findings.json>
  *
- * Exit: 0 nothing wrong, 3 something was dropped and the rest is worth posting,
- *       1 nothing usable is left, 2 nothing was given to check.
+ * Exit: 0 nothing wrong, 3 something was dropped and what is left is worth posting,
+ *       1 the file cannot be read as a run's output at all, 2 nothing was given to check.
  */
 
 import { dirname, join } from "node:path";
@@ -98,12 +98,23 @@ if (checked.changed) {
     if (await count.exists()) await Bun.write(count, String(checked.kept));
 }
 
-if (checked.found > 0 && checked.kept === 0) {
-    console.error(`\nnothing usable in ${path}: all ${checked.found} finding(s) were dropped.`);
-    process.exit(1);
-}
-
 const lost = checked.found - checked.kept;
+
+// A file with every finding gone is still worth posting, and 3 rather than 1 is what makes
+// the difference: run.sh writes the marker for 3 and the run still ends red. A run whose
+// findings were all unusable is the same shape as one whose lenses all died, and
+// `Composed.warned` has why that must reach the pull request: the `lens_health` block, the
+// coverage notices and every standing caveat are in the file and are the only account a
+// reader gets. Exiting 1 here left a reader with a red job and a pull request reading as
+// clean. The check above still exits 1 on a file that cannot be read as a run's output at
+// all, because there is nothing in one to declare.
+if (checked.found > 0 && checked.kept === 0) {
+    console.error(
+        `\nnothing usable in ${path}: all ${checked.found} finding(s) were dropped.` +
+            " Posting what the run said about its own coverage.",
+    );
+    process.exit(3);
+}
 
 if (lost > 0 || checked.droppedEntries > 0) {
     console.error(

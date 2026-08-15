@@ -4,13 +4,15 @@
  * Every function here is pure over strings and JSON, and each one has a failure mode
  * nothing downstream would report: markdown a model did not mean to write renders as
  * debris, and a budget that goes negative drops the findings the body exists to carry. What
- * a run produced is in `findings.ts`; what a character does to markdown is in
- * `markdown.ts`.
+ * a run produced is in `findings.ts`; what a character does to markdown is in `markdown.ts`;
+ * what the run says about itself, in the words a printed review uses too, is in `caveats.ts`.
  */
 
-import { brokenLenses, isListed, lensLabel, lineOf, LISTED, silentLenses } from "./findings.ts";
-import { STANDING_DETAIL } from "./standing-detail.ts";
-import type { Finding, LensHealth, Merged, Partitioned, Vetted } from "./findings.ts";
+import { caveatOf, COVERAGE_NOTICES, coverageOf, noticesFor } from "./caveats.ts";
+import type { Coverage, CoverageAlert, Notice, RunFacts } from "./caveats.ts";
+import { isListed, lensLabel, lineOf, LISTED } from "./findings.ts";
+import type { Finding, Merged, Partitioned } from "./findings.ts";
+import { lenses, plural } from "./words.ts";
 import {
     clamp,
     clampTo,
@@ -24,6 +26,7 @@ import {
     flatten,
     linkTarget,
     prose,
+    splitLines,
 } from "./markdown.ts";
 
 /**
@@ -33,67 +36,6 @@ import {
  * against a number typed out beside it. Nothing else outside this module reads it.
  */
 export const MAX_BODY = 60000;
-
-/**
- * A count and its noun.
- *
- * Only the noun is inflected, so the phrase around it has to read at either count: "1
- * finding were raised" is what a hard-coded plural verb next to one of these produces.
- */
-export function plural(n: number, word: string): string {
-    return `${n} ${word}${n === 1 ? "" : "s"}`;
-}
-
-/** The one noun in the review that does not take an `s`. */
-export function lenses(n: number): string {
-    return n === 1 ? "1 lens" : `${n} lenses`;
-}
-
-/** Every counter `Vetted` carries, so a new one cannot be added without a sentence. */
-type Reopening = Exclude<keyof Vetted, "findings">;
-
-/**
- * Keyed by the counter rather than listed beside it. A `Record` over the counter names turns
- * a counter added to `Vetted` into a compile error here, where an array of pairs took the new
- * one, said nothing about it, and left a reader looking at a reopened finding with no line
- * explaining why it came back.
- */
-const REOPENING: Record<Reopening, (n: number) => string> = {
-    untraceable: (n) =>
-        `${plural(n, "decline")} cited no comment from an owner, member or collaborator,` +
-        " and no resolved thread that a finding of that severity may rest on. Reporting them as new.",
-    unrelated: (n) =>
-        `${plural(n, "decline")} cited a comment that says nothing about the file the` +
-        " finding is in. Reporting them as new.",
-    unvouched: (n) =>
-        `${plural(n, "finding")} came back as already raised at a severity this review prints` +
-        " in full, with no owner, member or collaborator having said so. Reporting them as new.",
-    unreported: (n) =>
-        `${plural(n, "finding")} came back as already raised, citing a comment that is not` +
-        " on this pull request or says nothing about the file. Reporting them as new.",
-    unmatched: (n) =>
-        `${plural(n, "finding")} came back as already raised, citing no comment and naming a` +
-        " file the previous review did not. Reporting them as new.",
-};
-
-/**
- * Why suppressions were reopened, in the words a reader gets, one line per kind that applies.
- *
- * Here for the reason `caveatOf` is: `Vetted` is findings.ts's shape and these are sentences,
- * which that module keeps out on purpose. Written out at the posting path alone, they were
- * four copies of one `if (n > 0) console.error(...)`, and `print-findings.ts` ran the same
- * vetting and printed none of them, so a session reopened a suppression in silence while a
- * posted run explained it.
- *
- * The second line is counted apart from the first because it is the half of the rule a
- * maintainer feels: a decline they meant, reopened because the comment behind it named
- * nothing.
- */
-export function reopenedReasons(vetted: Vetted): string[] {
-    const names = Object.keys(REOPENING) as Reopening[];
-
-    return names.filter((name) => vetted[name] > 0).map((name) => REOPENING[name](vetted[name]));
-}
 
 // The orchestrator writes both the summary and the notes, and nothing bounds what a model
 // produces. Left unbounded, a runaway summary eats the length the findings need.
@@ -185,18 +127,15 @@ function listedIn(fresh: Finding[], to: Destination): Finding[] {
  * map is built, and the closing line is indented with the rest.
  */
 export function bullet(f: Finding): string {
-    const body = escapeBlocks(closeOpenFence(clamp(f.body, MAX_FINDING_BODY)).split("\n")).join("\n  ");
+    const body = escapeBlocks(splitLines(closeOpenFence(clamp(f.body, MAX_FINDING_BODY)))).join("\n  ");
 
-    // Flattened for the reason `title` is: the field is asked for as one line and checked
-    // only for being a string, and a newline in it ends the list item, putting whatever
-    // follows at column zero where a `#` opens a heading in the middle of the review.
-    // Checked for being a string as well, because the rule that keeps a finding with a bad
-    // category tolerates whatever the model sent: a number here reaches `escapeInline`,
-    // comes back empty, and leaves a bare `__` on a line of its own.
+    // Checked for being a string, because the rule that keeps a finding with a bad category
+    // tolerates whatever the model sent: a number here reaches `escapeInline`, comes back
+    // empty, and leaves a bare `__` on a line of its own.
     //
     // check-findings.ts keeps a finding whose category is missing rather than dropping it,
     // so this line is omitted. Rendering it anyway puts the word "undefined" under the body.
-    const label = typeof f.category === "string" ? escapeInline(flatten(f.category)) : "";
+    const label = typeof f.category === "string" ? escapeInline(f.category) : "";
     const category = label === "" ? "" : `\n\n  _${label}_`;
 
     return `- ${code(where(f))}: **${title(f)}**\n\n  ${body}${category}`;
@@ -289,46 +228,6 @@ function lensDetail(detail: string): string {
     const { kept, marker } = clampTo(flatten(detail), MAX_LENS_DETAIL);
 
     return `\n\n  ${flatten(`${escapeBlockStart(escapeInline(kept))}${marker}`)}`;
-}
-
-/**
- * What a lens could not check, whatever it reported.
- *
- * Some lenses ship without the capability their skills describe, and every step that would
- * carry that as far as the reader is a soft one: the lens is asked to write its limits down,
- * and the orchestrator to copy them into `detail`. Either can forget, and then a pull request full
- * of interface changes comes back looking as though its accessibility had been checked,
- * which is the failure `review/lens-extras/anthropic-accessibility-review.md` exists to
- * prevent. A standing sentence is worse than the lens's own words and cannot be forgotten.
- *
- * The rule for what belongs here: a lens whose `review/lens-extras/<lens>.md` opens by
- * naming a capability the session does not have gets a sentence saying so. Written down
- * because this map and that file are edited apart, and a lens left out of the map is the one
- * whose gap nothing reports.
- *
- * The sentence has to keep saying what that file rules out, and the two have drifted before:
- * this one said motion was unevaluated while the brief puts the source half of 2.2.2 and
- * 2.3.3 in scope, so a review that carried a lens's finding about motion also said motion was
- * not evaluated. `validate-repo.ts` checks that every key here has a brief and nothing more;
- * the words are a reading.
- */
-
-/**
- * The standing sentence and the lens's own words together, or nothing where there is
- * neither.
- *
- * Both, rather than whichever is there. A lens told to report what it could not check
- * usually answers about the diff ("no markup or styles in it"), and that is a different fact
- * from having had no browser to look at one. Shown the first alone, a reader takes the
- * interface for looked at and unremarkable.
- *
- * A `Map` rather than an object literal: a lens named `constructor` or `toString` gets
- * nothing back, where a literal would hand over an inherited function for `flatten` to call.
- */
-export function caveatOf(h: LensHealth): string | undefined {
-    const both = [STANDING_DETAIL.get(lensLabel(h.lens)), h.detail].filter((s) => s);
-
-    return both.length > 0 ? both.join(" ") : undefined;
 }
 
 /** The joined body, and which findings actually reached it. */
@@ -454,37 +353,22 @@ function dropEmptyDetails(body: string): string {
     return body.replace(/\n?<details(?: open)?>(?:\n<summary>[^\n]*<\/summary>)?\s*$/, "");
 }
 
-/** Everything about this posting that is not the findings themselves. */
-export interface Posting {
+/**
+ * Everything about this posting that is not the findings themselves.
+ *
+ * `RunFacts` is the half print-findings.ts reads too, so the coverage both renderers describe
+ * is derived from one shape by one function.
+ */
+export interface Posting extends RunFacts {
     /** What became of the threads the orchestrator asked to close, which the body reports. */
     resolved: Array<{ reason: string }>;
+    /** Whether the token could not close a thread, which picks the sentence the body prints. */
     resolveDenied: boolean;
-    /** How many threads judged finished that refusal left open. */
+    /** How many threads judged finished are still open, for whatever reason. */
     leftOpen: number;
     to: Destination;
     /** Every comment url the pull request carries, which is what `mention` may link. */
     linkable: ReadonlySet<string>;
-    /**
-     * What the comment fetch could not read, from `unreadOf`.
-     *
-     * A half-failed fetch reopens every suppression resting on the half that did not come
-     * back, which is the safe direction and looks to a reader like a review repeating
-     * findings they already answered. The job log carries it and the person the caveats are
-     * for never opens the job log.
-     */
-    unread: string[];
-    /**
-     * The lenses this run dispatched, from the list build-prompts.sh wrote.
-     *
-     * The body's whole account of coverage is otherwise the orchestrator's own `lens_health`,
-     * and an entry it left out takes three things with it at once: the lens goes from the
-     * list, the heading calls a smaller set "all reporting", and its `STANDING_DETAIL`
-     * sentence never reaches the body, so a pull request full of interface changes comes back
-     * as though the interface had been reviewed.
-     */
-    dispatched: string[];
-    /** The build files the session changed under the run, from `readSessionChanged`. */
-    sessionChanged: string[];
 }
 
 /** A body and the two views of the run it was built from, for the caller that posts it. */
@@ -518,92 +402,79 @@ export interface Composed {
  * run with no findings worth posting anyway), and a second derivation is a second answer.
  */
 export function composeReview(merged: Merged, posting: Posting, parts: Partitioned): Composed {
-    const health = merged.lens_health ?? [];
+    const coverage = coverageOf(merged, posting);
+    const raised = noticesFor(coverage);
+    const aboutPosting = postingNotices(posting);
 
-    const coverage: Coverage = {
-        health,
-        broken: brokenLenses(health),
-        silent: silentLenses(
-            health.map((h) => h.lens),
-            posting.dispatched,
-        ),
-        limited: health.filter((h) => caveatOf(h)),
-        unread: posting.unread,
-        sessionChanged: posting.sessionChanged,
-    };
-
-    const alerts = alertsOf(coverage, posting);
     const { listing, notice } = listingOf(parts.fresh, posting.to);
-    const tail = tailOf(merged, parts, posting, alerts);
+    const tail = tailOf(merged, parts, posting, aboutPosting);
 
     const { body, printed } = assemble(
-        headOf(merged, parts, coverage, alerts),
+        headOf(merged, parts, coverage, raised),
         listing,
         notice === null ? tail : [notice, ...tail],
     );
 
-    return { body, listed: printed, warned: Object.values(alerts).some((raised) => raised) };
-}
-
-/** Every alert the body can raise about its own coverage, so `warned` cannot miss one. */
-type Alert = "unread" | "unaccounted" | "silent" | "broken" | "limited" | "changed" | "resolveDenied";
-
-/**
- * Which of them this run raises, decided once and read by the section that prints each.
- *
- * Restated by hand as a boolean expression, `warned` had already lost one: `limited` is the
- * lenses `caveatOf` gives a sentence for, `headOf` renders it, and a run with nothing new
- * posted none of it, so a pull request full of interface changes went green with no
- * accessibility caveat anywhere.
- *
- * `limited` renders as a `[!NOTE]` rather than a `[!WARNING]`. It belongs here anyway: what
- * `warned` decides is whether a reader has to see this body, and a lens that could not render
- * the page is exactly the thing a green tick would be read as denying.
- */
-function alertsOf(coverage: Coverage, posting: Posting): Record<Alert, boolean> {
-    return {
-        // Its own alert, and not a lens missing from a list: with no `lens_health` at all
-        // there is nothing to compare the dispatch list against, so `broken` and `limited` are
-        // empty too and a run that accounted for none of its lenses would read as one with
-        // nothing to declare.
-        unaccounted: coverage.health.length === 0,
-        unread: coverage.unread.length > 0,
-        silent: coverage.silent.length > 0,
-        broken: coverage.broken.length > 0,
-        limited: coverage.limited.length > 0,
-        changed: coverage.sessionChanged.length > 0,
-        resolveDenied: posting.resolveDenied,
-    };
+    return { body, listed: printed, warned: raised.length > 0 || aboutPosting.length > 0 };
 }
 
 /**
- * What a run can say about how much of the change it covered, derived once.
+ * GitHub's alert markup for one of the run's own notices.
  *
- * A bag rather than a parameter list: `silent` and `unread` are both `string[]`, so swapping
- * the two adjacent arguments still compiled, leaving a review that reported unread comments as
- * silent lenses. `finding-rules.ts` has the same move written down: adding to what a walk
- * carries is a field here rather than another argument threaded through every call.
+ * `escapeInline` around every stretch that came from a model or from GitHub, and around
+ * nothing else: the fixed prose carries backticks of its own that a general escape would put
+ * on the page as backslashes.
  */
-interface Coverage {
-    health: LensHealth[];
-    /** The lenses that reported themselves as not having run normally. */
-    broken: LensHealth[];
-    /** The lenses that were dispatched and said nothing about themselves. */
-    silent: string[];
-    /** The lenses that named something they could not check, in their own words or a standing one. */
-    limited: LensHealth[];
-    /** The parts of the discussion the fetch could not read. */
-    unread: string[];
-    /** The build files the session changed under the run. */
-    sessionChanged: string[];
+function alertBlock(notice: Notice, coverage: Coverage): string {
+    const level = notice.level === "note" ? "NOTE" : "WARNING";
+
+    return `> [!${level}]\n> ${notice.say(coverage, escapeInline)}`;
+}
+
+/**
+ * What the body says about this posting rather than about its coverage, in the order a reader
+ * meets it.
+ *
+ * Written the way `caveats.ts` writes a coverage notice, and for the reason it gives: the
+ * union comes from this list, the record below fails to compile until a new member has a
+ * sentence, and `warned` counts what the record raised rather than a boolean restated beside
+ * it. `threadsLeftOpen` was keyed off the permission denial rather than off the fact, so a
+ * thread left open by a stale node id or a transient GraphQL error went to stderr and nowhere
+ * a reader of the pull request would find it.
+ */
+const POSTING_ORDER = ["threadsLeftOpen"] as const;
+
+type PostingAlert = (typeof POSTING_ORDER)[number];
+
+const POSTING_NOTICES: Record<PostingAlert, { raised: (p: Posting) => boolean; say: (p: Posting) => string }> = {
+    threadsLeftOpen: {
+        raised: (p) => p.leftOpen > 0,
+        say: (p) =>
+            p.resolveDenied
+                ? `${plural(p.leftOpen, "thread")} judged finished could not be resolved:` +
+                  " the workflow grants `pull-requests: write`, and `resolveReviewThread` needs `contents: write`."
+                : `${plural(p.leftOpen, "thread")} judged finished could not be closed.` +
+                  " The job log names each one and what GitHub said.",
+    },
+};
+
+/** The ones this posting raises, in the order above. */
+function postingNotices(posting: Posting): PostingAlert[] {
+    return POSTING_ORDER.filter((name) => POSTING_NOTICES[name].raised(posting));
 }
 
 /**
  * Everything above the findings: the summary, the counts, and what the run says about its
  * own coverage.
+ *
+ * The notices come out of `COVERAGE_NOTICES` in the order it declares, rather than as a
+ * branch each. Written by hand they were seven separate `if`s, and the union that decides
+ * `warned` had grown one they did not cover: a run could raise a notice, decide on the
+ * strength of it that the review was worth posting, and post a body that said nothing about
+ * why.
  */
-function headOf(merged: Merged, parts: Partitioned, coverage: Coverage, alerts: Record<Alert, boolean>): string[] {
-    const { health, broken, silent, limited, unread, sessionChanged } = coverage;
+function headOf(merged: Merged, parts: Partitioned, coverage: Coverage, raised: CoverageAlert[]): string[] {
+    const { health, broken } = coverage;
     const { fresh, suppressed, declined } = parts;
 
     const counts = [`**${plural(fresh.length, "new finding")}**`];
@@ -619,92 +490,37 @@ function headOf(merged: Merged, parts: Partitioned, coverage: Coverage, alerts: 
     const [onlyCount] = counts;
     head.push(counts.length === 1 && onlyCount ? onlyCount : counts.map((c) => `- ${c}`).join("\n"));
 
-    // Above the lens block, because it is about the counts directly above it rather than
-    // about coverage of the diff: a finding this review repeats is one whose answer went
-    // unread, and without this the reader has only the repetition to go on.
-    if (alerts.unread) {
-        head.push(
-            `> [!WARNING]\n> Part of the discussion on this pull request could not be read, so anything answered` +
-                ` there is raised again: ${escapeInline(flatten(unread.join(" ")))}`,
-        );
-    }
+    // The alert syntax is what the job summary uses for the same class of warning. What a lens
+    // could not check is the one thing here a reader has to see without opening anything: a
+    // reader takes a review of an interface change for an accessibility pass unless something
+    // names the criteria nothing evaluated.
+    for (const name of raised) head.push(alertBlock(COVERAGE_NOTICES[name], coverage));
 
-    // Above the coverage alerts, because it is what decides how much they are worth: the lens
-    // list this review counts from is one of the files it names.
-    if (alerts.changed) {
-        head.push(
-            `> [!WARNING]\n> The review session changed ${escapeInline(sessionChanged.join(", "))} under it.` +
-                " The commit these findings are lines of, and the list of lenses counted below, are that" +
-                " session's own answer rather than what this run built.",
-        );
-    }
+    // Nothing to list, and the notice above has already said so.
+    if (raised.includes("unaccounted")) return head;
 
-    if (alerts.unaccounted) {
-        // Everything a reader has for how much of this review to trust hangs off
-        // `lens_health`: the lens list, the coverage alert, and the standing sentence for a
-        // lens that ships without the capability its skill describes. `lens_health` is
-        // optional to the model, so one omitted array takes all of it out at once, and a
-        // body that stops mentioning lenses reads as a review with nothing to declare.
-        // check-findings.ts writes a warning to the job log, which the person the caveats are
-        // for never opens.
-        head.push(
-            "> [!WARNING]\n> This run reported nothing about which lenses ran or what they could not check," +
-                " so how much of the change was covered is unknown.",
-        );
-    } else {
-        // A list, not a table: GitHub gives a wide column the container and starves the
-        // rest, and most lenses report no detail at all. Punctuation a screen reader speaks,
-        // for the reason the counts above are a list.
-        const items = health
-            .map((h) => {
-                // Flattened for the reason `lensDetail` beside it is: a newline in a name
-                // the model wrote ends this item, and the rest of the lens list then lands
-                // outside the block it belongs to.
-                const name = escapeInline(flatten(lensLabel(h.lens)));
-                const flag = h.ok ? "" : ", **needs attention**";
-                const caveat = caveatOf(h);
-                const detail = caveat ? lensDetail(caveat) : "";
+    // A list, not a table: GitHub gives a wide column the container and starves the rest, and
+    // most lenses report no detail at all. Punctuation a screen reader speaks, for the reason
+    // the counts above are a list.
+    const items = health.map((h) => {
+        const name = escapeInline(lensLabel(h.lens));
+        const flag = h.ok ? "" : ", **needs attention**";
+        const caveat = caveatOf(h);
+        const detail = caveat ? lensDetail(caveat) : "";
 
-                // The colon separates the name from its count, so the one bold left in the
-                // list is the exception a reader has to see.
-                return `- ${name}: ${plural(h.findings_returned, "finding")}${flag}${detail}`;
-            });
+        // The colon separates the name from its count, so the one bold left in the list is the
+        // exception a reader has to see.
+        return `- ${name}: ${plural(h.findings_returned, "finding")}${flag}${detail}`;
+    });
 
-        // What a lens could not check is the one thing in this block a reader has to see
-        // without opening it: a reader takes a review of an interface change for an
-        // accessibility pass unless something names the criteria nothing evaluated. The
-        // alert syntax is what the job summary uses for the same class of warning.
-        //
-        // A lens missing from `lens_health` comes first, because the two counts under it are
-        // both drawn from that same list and so fall short by exactly the lenses named here.
-        if (alerts.silent) {
-            head.push(
-                `> [!WARNING]\n> ${escapeInline(silent.join(", "))} ran and reported nothing about` +
-                    " themselves, so the coverage below leaves each one out.",
-            );
-        }
+    const heading = raised.includes("broken")
+        ? `${lenses(health.length)} ran, ${broken.length} needing attention`
+        : `${lenses(health.length)} ran, all reporting`;
 
-        if (alerts.broken) {
-            head.push(
-                `> [!WARNING]\n> ${broken.length} of ${lenses(health.length)} did not report normally,` +
-                    " so this review covers less than it appears to.",
-            );
-        } else if (alerts.limited) {
-            head.push(
-                `> [!NOTE]\n> ${limited.length} of ${lenses(health.length)} named something they could not check.` +
-                    " The list below has each in its own words.",
-            );
-        }
-
-        const heading = alerts.broken
-            ? `${lenses(health.length)} ran, ${broken.length} needing attention`
-            : `${lenses(health.length)} ran, all reporting`;
-
-        // Open when a lens named a limit, not only when one broke. The note above says "the
-        // list below has each in its own words", and a `<details>` a reader has to click is
-        // not below anything: the sentence promised the words and then hid them.
-        head.push(details(heading, boundedBlock(items, "lens"), alerts.broken || alerts.limited));
-    }
+    // Open when a lens named a limit, not only when one broke. The note above says "the list
+    // below has each in its own words", and a `<details>` a reader has to click is not below
+    // anything: the sentence promised the words and then hid them.
+    head.push(details(heading, boundedBlock(items, "lens"), raised.includes("broken") || raised.includes("limited")));
 
     return head;
 }
@@ -773,9 +589,9 @@ function bounded(items: string[], noun: string): string {
  * Everything below the findings: what was suppressed, what was declined, what was closed,
  * and the run's own caveats.
  */
-function tailOf(merged: Merged, parts: Partitioned, posting: Posting, alerts: Record<Alert, boolean>): string[] {
+function tailOf(merged: Merged, parts: Partitioned, posting: Posting, aboutPosting: PostingAlert[]): string[] {
     const { suppressed, declined } = parts;
-    const { resolved, leftOpen, linkable } = posting;
+    const { resolved, linkable } = posting;
 
     const tail: string[] = [];
 
@@ -815,13 +631,7 @@ function tailOf(merged: Merged, parts: Partitioned, posting: Posting, alerts: Re
         );
     }
 
-    if (alerts.resolveDenied) {
-        tail.push(
-            `> [!WARNING]\n> ${plural(leftOpen, "thread")} judged finished could not be resolved:` +
-                ` the workflow grants \`pull-requests: write\`, and \`resolveReviewThread\` needs` +
-                ` \`contents: write\`.`,
-        );
-    }
+    for (const name of aboutPosting) tail.push(`> [!WARNING]\n> ${POSTING_NOTICES[name].say(posting)}`);
 
     if (merged.notes) tail.push(`### Caveats\n\n${prose(merged.notes, MAX_PROSE)}`);
 

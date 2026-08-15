@@ -91,13 +91,17 @@ if (last.is_error === true) {
 const models = record(last.modelUsage);
 const perModel = models ? Object.entries(models).map(([name, usage]) => [name, record(usage)] as const) : [];
 
-const outputTokens = perModel.reduce((total, [, usage]) => total + (number(usage?.outputTokens) ?? 0), 0);
+// `null` where the log carries no usage at all, for the reason the module docstring gives:
+// `0` is a measurement, and a summary reading "Cost: unknown" beside "Output tokens: 0" is
+// two answers to the same question.
+const outputTokens =
+    perModel.length === 0 ? null : perModel.reduce((total, [, usage]) => total + (number(usage?.outputTokens) ?? 0), 0);
 
 const summed = perModel.reduce((total, [, usage]) => total + (number(usage?.costUSD) ?? 0), 0);
 const reported = number(last.total_cost_usd);
 
 const costUsd = totalCost(reported, summed, perModel.length);
-const durationMs = number(last.duration_ms) ?? 0;
+const durationMs = number(last.duration_ms);
 const money = costUsd === null ? "unknown" : `$${costUsd.toFixed(2)}`;
 
 // Narrowed element by element, not just as a container. This list is read in the reporting
@@ -107,6 +111,11 @@ const denials = (Array.isArray(last.permission_denials) ? last.permission_denial
     .map(record)
     .filter((d) => d !== null);
 
+// A log with no list at all is not evidence that nothing was refused, and the job summary
+// raises its refusal warning off this number.
+const refusals = Array.isArray(last.permission_denials) ? denials.length : null;
+const refused = refusals === null ? "an unknown number of tool calls" : `${refusals} tool call(s)`;
+
 const structured = record(last.structured_output);
 const findings = structured && Array.isArray(structured.findings) ? structured.findings : null;
 
@@ -115,9 +124,9 @@ const findings = structured && Array.isArray(structured.findings) ? structured.f
 await writeRunFiles({
     [RUN_FILES.findingsCount]: findings === null ? "none reported" : String(findings.length),
     [RUN_FILES.cost]: costUsd === null ? "unknown" : costUsd.toFixed(2),
-    [RUN_FILES.outputTokens]: String(outputTokens),
-    [RUN_FILES.durationMs]: String(durationMs),
-    [RUN_FILES.permissionDenials]: String(denials.length),
+    [RUN_FILES.outputTokens]: outputTokens === null ? "unknown" : String(outputTokens),
+    [RUN_FILES.durationMs]: durationMs === null ? "unknown" : String(durationMs),
+    [RUN_FILES.permissionDenials]: refusals === null ? "unknown" : String(refusals),
 });
 
 if (!structured || findings === null) {
@@ -127,7 +136,7 @@ if (!structured || findings === null) {
     // still returned nothing leaves the least behind, and is the case this line is for.
     if (last.is_error !== true) console.error(`the run ended: ${failureReason(last)}`);
 
-    console.error(`it cost ${money} and was refused ${denials.length} tool call(s)`);
+    console.error(`it cost ${money} and was refused ${refused}`);
     process.exit(1);
 }
 
@@ -147,8 +156,8 @@ const broken = health.filter((h) => h.ok === false);
 console.log(`findings: ${findings.length}`);
 console.log(`lenses reported: ${health.length}`);
 console.log(`cost: ${money}`);
-console.log(`output tokens: ${outputTokens.toLocaleString("en-GB")}`);
-console.log(`wall clock: ${(durationMs / 60000).toFixed(1)} min`);
+console.log(`output tokens: ${outputTokens === null ? "unknown" : outputTokens.toLocaleString("en-GB")}`);
+console.log(`wall clock: ${durationMs === null ? "unknown" : `${(durationMs / 60000).toFixed(1)} min`}`);
 
 for (const [model, usage] of perModel) {
     const tokens = (number(usage?.outputTokens) ?? 0).toLocaleString("en-GB");

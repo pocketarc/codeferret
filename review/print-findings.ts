@@ -10,17 +10,20 @@
  * What differs from the posted body is what suits a terminal. Findings are grouped by file
  * rather than ordered by severity, because whoever reads this opens the files next. Nothing
  * is escaped, because nothing here goes through GitHub's renderer. Severity and lens
- * agreement stay out for the reason `review/README.md` gives: both are in the findings file.
+ * agreement stay out for the reason `review/DECISIONS.md` gives: both are in the findings file.
  *
  * Usage: bun print-findings.ts <findings.json>
  */
 
 import { dirname } from "node:path";
-import { brokenLenses, lensLabel, lineOf, partition, silentLenses } from "./findings.ts";
+import { caveatOf, COVERAGE_NOTICES, coverageOf, noticesFor, reopenedReasons } from "./caveats.ts";
+import { unreadOf } from "./existing.ts";
+import { lensLabel, lineOf, partition } from "./findings.ts";
 import { readMerged, vetAgainstExisting } from "./read-run.ts";
 import type { Finding } from "./findings.ts";
-import { caveatOf, plural, reopenedReasons, where } from "./review-body.ts";
+import { where } from "./review-body.ts";
 import { readDispatched, readSessionChanged } from "./run-files.ts";
+import { plural } from "./words.ts";
 
 const [findingsPath] = process.argv.slice(2);
 
@@ -76,38 +79,19 @@ if (older.length > 0) {
     }
 }
 
-const health = merged.lens_health ?? [];
-const broken = brokenLenses(health);
+// The same derivation and the same sentences the posted body uses, in the same order, with
+// nothing escaped: this goes to a terminal rather than through GitHub's renderer. The
+// hand-built version had already lost the sentence about a half-read discussion, so a session
+// printed reopened findings with nothing saying why, while a posted run explained it.
+const coverage = coverageOf(merged, {
+    dispatched: await readDispatched(dirname(findingsFile)),
+    sessionChanged: await readSessionChanged(dirname(findingsFile)),
+    unread: unreadOf(vetted.existing),
+});
 
-// For the reason the posted body says it: a lens the orchestrator left out of `lens_health`
-// is a lens this listing has nothing at all to say about, and silence here is taken for a
-// lens that had nothing to report.
-const silent = silentLenses(
-    health.map((h) => h.lens),
-    await readDispatched(dirname(findingsFile)),
-);
+for (const name of noticesFor(coverage)) out.push(COVERAGE_NOTICES[name].say(coverage, (text) => text));
 
-// Above the coverage lines, for the reason `headOf` puts it there.
-const changed = await readSessionChanged(dirname(findingsFile));
-
-if (changed.length > 0) {
-    out.push(
-        `The review session changed ${changed.join(", ")} under it. The commit these findings are` +
-            " lines of, and the lenses named below, are that session's own answer rather than what this run built.",
-    );
-}
-
-// The same two branches the posted body has, in the same order.
-if (health.length === 0) {
-    out.push(
-        "This run reported nothing about which lenses ran or what they could not check," +
-            " so how much of the change was covered is unknown.",
-    );
-} else if (silent.length > 0) {
-    out.push(`${silent.join(", ")} ran and reported nothing about themselves, so this leaves each one out.`);
-}
-
-for (const h of broken) {
+for (const h of coverage.broken) {
     out.push(`${lensLabel(h.lens)} did not report normally: ${caveatOf(h) ?? "no detail given"}`);
 }
 
@@ -115,7 +99,7 @@ for (const h of broken) {
 // a lens that ships without the capability its skill describes. `caveatOf` rather than
 // `detail`, because a terminal that leaves out "no page was rendered" reads as an
 // accessibility pass just as a posted body would.
-for (const h of health) {
+for (const h of coverage.health) {
     if (!h.ok) continue;
 
     const caveat = caveatOf(h);
