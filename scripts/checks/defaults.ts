@@ -18,6 +18,8 @@ export async function checkDefaults(): Promise<Failures> {
         }
     }
 
-    console.log("OK action.yml: every default lens has a bundled skill");
+    if (list.length === 0) {
+        console.log("OK action.yml: every default lens has a bundled skill");
+    }
     return list;
 }

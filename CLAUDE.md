@@ -173,13 +173,23 @@ is in `review/README.md`.
   `run.sh`: the token would have to come back into the script that started the agent to be
   used there, and by then `bun` and the action's own scripts are files that session has had a
   whole review to replace. The refetch costs one extra pair of API calls and picks up
-  whatever was said during the run. The rest is settled by the run having two directories
-  rather than one: `run_dirs` makes `session/` for the session, which every prompt path is
-  under, and keeps `build/` for the run's own record, which no prompt names and everything
-  downstream reads. So a session that rewrote `diff-args` or `previous.json` rewrote a copy.
-  `run.sh` compares what it handed over and reports a difference, because nothing else in a
-  run would show a lens rewriting the diff the others read. Before that split the two jobs
-  shared one directory, and every file had to be copied aside, compared and put back.
+  whatever was said during the run. `previous.json` gets the same treatment and used to get
+  none: `vetSuppression` reads it through `filesRaisedBefore`, and that set is the whole of
+  what settles an `already-reported` finding citing no comment, which `orchestrator.md` makes
+  the ordinary case. So `run.sh` empties that file too and the action's posting step calls
+  `fetch_previous` beside `fetch_existing`. The local paths do not, because `ownWorkflow`
+  answers null where nothing names a workflow and every artifact is then refused.
+  The run having two directories rather than one does not settle any of this. `run_dirs` makes
+  `session/` for the session, which every prompt path is under, and keeps `build/` for the
+  run's own record, which no prompt names; but `--plugin-dir` is handed the directory both sit
+  under, and a lens with `Bash` runs as this user. What the split buys is a comparison: a
+  session copy that stopped matching its original means a lens rewrote the diff the others
+  read, and nothing else in a run would show that. For `diff-args` and `lenses.txt`, which
+  something reads after the session and nothing can fetch again, `run.sh` holds a `shasum`
+  digest in its own shell variables and compares against that. A digest written to a file
+  would be a file the session can rewrite alongside what it describes, and so would a second
+  copy: measured against the `cmp` this replaced, a session that wrote identical bytes to both
+  copies passed it in silence.
 - An input that names what a review may do has to reach the code that does it.
   `resolve-threads` reached the orchestrator's prompt and nothing else until
   `post-review.ts` was given `RESOLVE_THREADS`, and the upload step read `artifact-path`
@@ -327,9 +337,13 @@ and every entry here was once written that way.
   runs with `Bash` and the token is in the environment it inherits. A lens holding `Bash`
   holds `curl` too, which is a shorter route than writing a token into a finding and waiting
   for a download. What bounds it is the condition on the shipped workflow, which runs no
-  review for a fork or for anyone outside the repository, and `action.yml`'s first step, which
-  now refuses both cases itself rather than trusting a gate it cannot see. The artifact is no
-  bound on it under any `artifact-path`: `findings.json` is the session's own prose, every
+  review for a fork or for anyone outside the repository. `action.yml`'s first step covers the
+  fork half of that on its own, wherever the event names a head repository: the two spellings
+  are `pull_request`'s and `workflow_run`'s, and `pull_request_target` is refused outright. The
+  step covers neither half where the event names none, which is `issue_comment` and every
+  dispatch, and it says so on stderr rather than passing quietly. The association half is the
+  workflow's `if:` alone, and nothing in the action can see it. The artifact is no bound on it
+  under any `artifact-path`: `findings.json` is the session's own prose, every
   title, body, summary and detail of it, published for 14 days to anyone who asks on a public
   repository. What the narrowing changed is what else goes up beside it. This repository's own
   workflow named `.`, which is the whole build directory, `existing.json` and `previous.json`

@@ -80,11 +80,16 @@ Its workflow does not.
   second. A hit area is a computed box, not a declared width. Reporting either where the
   source does not settle it produces a WCAG failure nobody measured, which teaches the author
   that this review's accessibility claims are guesses.
-- Do not enter Step 3.1 or Step 3.3. Between them they are the fixing loop, and every other
-  lens is reading this same checkout while you run. Report each fix as a finding and change
-  nothing. Step 3.2 stays: its selector and component searches and its file patterns are how
-  you get from a piece of markup to the rules that style it, and none of them writes
-  anything.
+- Do not enter Step 3.3. It is the fixing loop, and every other lens is reading this same
+  checkout while you run. Report each fix as a finding and change nothing. Steps 3.1 and 3.2
+  stay, and neither writes anything: 3.1 is a priority matrix, and 3.2's selector and
+  component searches and file patterns are how you get from a piece of markup to the rules
+  that style it.
+- Grade on the schema's `severity` field and nothing else. Step 2.2's tables carry a
+  `Severity` column, Step 3.1 is a P1 to P3 matrix, and `references/visual-checklist.md` ends
+  with a P0 to P3 one. Those are three of upstream's own scales and none of them is the
+  enum you have to return, so read each as a statement about how much a defect matters and
+  then choose a value from the schema.
 - Leave the Output Format's "Issues Fixed", "Fixed File" and "Fix Details" alone. Your
   output is the JSON schema and nothing else.
 

@@ -20,9 +20,9 @@ findings file it wrote as an artifact, which is what the next run reads to know 
 already been said.
 
 Every lens reads source and nothing else. Some of the bundled lenses were written for more
-than that, and assume a browser or a running application the session does not have. Each one
-has a file under `review/lens-extras/` setting out what the gap puts out of reach, and that
-file is also what the lens itself reads.
+than that, and assume a browser, a running application or a connected database the session
+does not have. Each one has a file under `review/lens-extras/` setting out what the gap puts
+out of reach, and that file is also what the lens itself reads.
 `review/lens-extras/anthropic-accessibility-review.md` does it criterion by criterion.
 `lens_health` in the posted review holds what each lens reported it could not check, and
 `review-body.ts` adds a standing sentence for each lens in `STANDING_DETAIL`, so a review
@@ -319,19 +319,46 @@ A run keeps two directories for that reason. `session/` holds the files the sess
 while it runs (`diff-args`, `diff.sh`, `existing.json` and `previous.json`), and every path in
 a prompt is one of those. `build/` holds the run's own record, which no prompt names and which
 everything downstream reads. Each file under `session/` is a copy, so a session that rewrote
-one rewrote what it reads itself and nothing else, and `run.sh` copies nothing back. It does
-compare them and report a difference on stderr, because nothing else in a run would show a
-lens rewriting the diff the others read.
+one rewrote what it reads itself, and `run.sh` copies nothing back. It does compare them and
+report a difference on stderr, because nothing else in a run would show a lens rewriting the
+diff the others read.
 
-`existing.json` gets more than that: `run.sh` replaces the build directory's copy with the
-empty form once the session has exited, and the post and print paths fetch it again. That
+The split is not a boundary. `--plugin-dir` is handed the directory both of these sit under,
+and a lens with `Bash` runs as this user, so `build/` is one path segment from a path the
+prompt names. Everything below is what stands in place of a boundary there.
+
+`existing.json` and `previous.json` get more than a comparison: `run.sh` replaces the build
+directory's copies with their empty forms once the session has exited, and a step that holds a
+credential of its own fetches them again. The action's posting step fetches both, and that
 fetch also picks up whatever was said during the twenty minutes the review took.
+`local-post.sh` and `local-print.sh` fetch only `existing.json`, because `ownWorkflow` in
+`fetch-previous.ts` answers null where nothing names a workflow and every artifact is then
+refused, so the second call would spend requests to write the empty form that is already
+there.
 
-It matches against two files. `build/previous.json` holds what the last run reported, and
-that is where a repeat is caught. `build/existing.json` holds the discussion on the pull
-request, every author included. A defect a human already raised does not need raising
-again, and a reply is where the answer to a finding lives: "we don't want that" makes a
-finding `declined`, which the review reports separately from the ones merely said before.
+Leaving `previous.json` off that list opened a hole.
+`vetSuppression` reads it through `filesRaisedBefore`, and the set that comes back is the
+whole of what settles an `already-reported` finding citing no comment, which `orchestrator.md`
+makes the ordinary case. A session writing `{"findings": [{"file": "..."}]}` into the build
+copy settled every non-critical, non-high finding in the files it named, and `markPosted`
+writes the vetted status into the artifact, so that suppression carried into every later run
+for as long as the pull request lived.
+
+`diff-args` and `lenses.txt` cannot be fetched again: `reviewed-commit.ts` takes the commit
+the review is recorded against out of the first, and `readDispatched` reads the second for
+which lenses ran. For those two `run.sh` takes a `shasum` digest before the session and
+holds it in its own shell variables. A file of digests would be a file the session can rewrite
+alongside what it describes, and comparing the two copies has the same flaw: the same session
+writes both, so identical replacements pass `cmp` in silence. What a lens cannot reach without
+ptrace on an ancestor is the memory of the process that started the agent. Where there is no
+`shasum`, the run says so, because a reader could not tell two empty comparisons from nothing
+having changed.
+
+The orchestrator matches against two files. `build/previous.json` holds what the last run
+reported, and that is where a repeat is caught. `build/existing.json` holds the discussion on
+the pull request, every author included. A defect a human already raised does not need
+raising again, and a reply is where the answer to a finding lives: "we don't want that" makes
+a finding `declined`, which the review reports separately from the ones merely said before.
 Two things a reply cannot do, both in `orchestrator.md`: it cannot make a security defect
 safe by asserting the code is intentional, and it cannot settle a finding it does not
 address.
@@ -450,7 +477,23 @@ run, with nothing downstream to show when the text went to the wrong lens or to 
 What the directory holds is what a vendored skill assumes and this run cannot provide:
 that there is no browser and no running site for `copilot-web-design-reviewer`, that a
 criterion needing a rendered page is out of reach for the accessibility lens, and that the
-SQL lens's offer of a whole-project pass does not apply.
+SQL lens has no database behind it, so its offer of a whole-project pass does not apply and
+neither do the sections of its skill that ask for a plan or an index-usage statistic.
+
+It is also where a correction to a vendored skill goes. Editing the skill itself would put
+the correction among the rewrites `scripts/rewrite-markdown.ts` reproduces at vendor time, so
+a re-vendor at a new `PROVENANCE.tsv` pin would revert it with nothing saying so. The one
+class of problem an extras file cannot answer is a broken markdown fence: the SQL skill's
+Issue Template nests three-backtick blocks inside a three-backtick block, so the outer
+delimiter was raised to four by hand, which is what `prepare-skill.ts` describes in its header
+and what `checkSkillFences` fails the repository over. Everything after an open fence is
+inside the block, and no wording in a prompt reaches that far.
+
+Keep those two facts here rather than in the extras file. That file is read by an agent, and
+usually by one pointed at somebody else's repository, where `rewrite-markdown.ts`,
+`PROVENANCE.tsv`, `prepare-skill.ts` and `checkSkillFences` are all names of things that are
+not there. A lens sent after a file it cannot find goes hunting and reports the hunt, which is
+why `stripDeadLinks` exists at all.
 
 Read a change to one of these files yourself, against the skill it overrides. When
 CodeFerret reviews this repository, the file under review is the instruction that the lens
@@ -525,9 +568,12 @@ A resolved thread also settles its finding: `resolved: true` marks it `declined`
 reading of replies. That makes resolving a thread the way to dismiss a finding for good.
 It also takes write access, which commenting does not.
 
-Outside CI the review posts under a person's own account, so `RESOLVE_THREADS=0` renders
-`resolve-none.md` in place of `resolve-judge.md` and the orchestrator closes nothing. Each
-policy is its own file, so the prompt states one policy whichever way the run goes.
+Outside CI the review posts under a person's own account, so `resolve-none.md` is rendered in
+place of `resolve-judge.md` and the orchestrator closes nothing. Each policy is its own file,
+so the prompt states one policy whichever way the run goes. `RESOLVE_THREADS=1` picks
+`resolve-judge.md`, and anything else picks `resolve-none.md`: `post-review.ts` tests the same
+value the same way, so a caller who sets nothing, or who sets a value neither script
+recognises, gets a run that asks the orchestrator for nothing it could then act on.
 
 ### The review is one comment
 
@@ -692,14 +738,14 @@ of them did not, and each left the plaintext credential in the run directory wit
 running that would have cleared it: under `/codeferret:review` that is a developer's own `gh`
 token, staged by a script that then `exec`s, so no trap of its own survives.
 
-`run.sh` used to refetch `existing.json` after the session as well, and the post and print
-paths do that now. Both `bun` and the scripts under `$GITHUB_ACTION_PATH` are files
-this user owns — `install: auto` installs the first with `npm install -g` — so a session with
-`Bash` has the length of a review to replace either, and any credential handed over
-afterwards goes to code a lens chose. Moving the fetch does not make that untrue; it means
-the run authenticates once after the session rather than twice, at a step that holds a token
-for its own work anyway, and `run.sh` drops the value before an agent starts rather than
-holding it across the review.
+`run.sh` used to refetch `existing.json` after the session as well, and the steps that post
+and print do that now, `previous.json` with it. Both `bun` and the scripts under
+`$GITHUB_ACTION_PATH` are files this user owns — `install: auto` installs the first with
+`npm install -g` — so a session with `Bash` has the length of a review to replace either, and
+any credential handed over afterwards goes to code a lens chose. Moving the fetch does not
+make that untrue; it means the run authenticates once after the session rather than twice, at
+a step that holds a token for its own work anyway, and `run.sh` drops the value before an
+agent starts rather than holding it across the review.
 
 What is left is worth naming. The token stays in `run.sh`'s shell memory for the two fetches,
 and reading that takes ptrace on an ancestor, which is off under Yama's default scope. The

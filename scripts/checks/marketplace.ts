@@ -47,6 +47,8 @@ export async function checkMarketplace(): Promise<Failures> {
         }
     }
 
-    console.log(`OK ${file}: marketplace '${marketplace.name}', ${plugins.length} plugin(s)`);
+    if (list.length === 0) {
+        console.log(`OK ${file}: marketplace '${marketplace.name}', ${plugins.length} plugin(s)`);
+    }
     return list;
 }

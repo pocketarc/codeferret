@@ -79,15 +79,17 @@ inputs:
             workspaces put one in every package, and no application routes on a directory a
             package manager writes.
 
-            `.next` and `.vercel` are matched at any depth with nothing given up. Both are
-            tool-written output, gitignored by `create-next-app` and by `vercel`
-            respectively, and nobody edits either by hand, so neither holds a file a lens
-            should read. Not because the segment begins with a dot: the App Router's one
-            documented convention for taking a directory out of routing is the underscore
-            prefix, and whether a dot-prefixed folder becomes a route is contested in practice
-            (`app/.well-known/`). Anything added here on the strength of the dot would hide a
-            live route from every lens. In a monorepo `vercel build` writes to
-            `apps/<app>/.vercel/output/` beside that app's `.next/`.
+            `.next`, `.vercel` and `.open-next` are matched at any depth with nothing given
+            up. All three are tool-written output, gitignored by `create-next-app`, by
+            `vercel` and by `@opennextjs/aws` respectively, and nobody edits any of them by
+            hand, so none holds a file a lens should read. Not because the segment begins
+            with a dot: the App Router's one documented convention for taking a directory out
+            of routing is the underscore prefix, and whether a dot-prefixed folder becomes a
+            route is contested in practice (`app/.well-known/`). Anything added here on the
+            strength of the dot would hide a live route from every lens. In a monorepo
+            `vercel build` writes to `apps/<app>/.vercel/output/` beside that app's `.next/`,
+            and `npx @opennextjs/aws build` writes a bundled server and a copy of the static
+            assets to `apps/<app>/.open-next/`.
 
             `next-env.d.ts` is deliberately not excluded, though it is generated. Next.js
             rewrites it on every build and it opens with a line saying not to edit it, so the
@@ -105,6 +107,7 @@ inputs:
             **/vendor/**
             **/.next/**
             **/.vercel/**
+            **/.open-next/**
             **/dist/**
             out/**
             build/**
@@ -244,6 +247,12 @@ inputs:
             The name is not configurable. A later run looks for `codeferret-run` and
             nothing else.
 
+            Each line names one file or directory, relative to the build directory. An
+            absolute path and a glob are both refused, in the job's first seconds and with
+            the line quoted back: the review body is written from whether the findings file
+            is among what goes up, and with either of those that question stays open until
+            the upload has already run.
+
             Weigh what each file holds before you add it. On a public repository anyone can
             download an artifact for 14 days, and its contents are not secret-masked the way
             a step log is. `run.json` is the orchestrator's final result object, and its
@@ -303,13 +312,23 @@ runs:
         # `Bash` under `bypassPermissions` over it, in a job holding the OAuth token and
         # `pull-requests: write`.
         #
+        # `workflow_run` is the other trigger that pairs a fork's commit with the secrets, and
+        # the one people reach for after reading that `pull_request_target` is refused. That
+        # event fires with the workflow file as the default branch has it, and its payload
+        # carries the head sha of whatever ran before it, a fork's pull request included. The
+        # `head-sha` input is what turns that into a checkout, so the head repository it names
+        # is tested here under its own spelling.
+        #
         # The action refuses rather than warns, and refuses here rather than after a review
-        # that took twenty minutes.
+        # that took twenty minutes. Where an event names no head repository at all, there is
+        # nothing to test and the step says so rather than passing in silence.
         - name: Refuse to review a fork's code
           shell: bash
           env:
               EVENT: ${{ github.event_name }}
               HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+              RUN_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
+              HEAD_SHA: ${{ inputs.head-sha }}
               THIS_REPO: ${{ github.repository }}
           run: |
               if [ "$EVENT" = "pull_request_target" ]; then
@@ -319,15 +338,28 @@ runs:
                   exit 1
               fi
 
-              # Empty outside a pull request event, which is every other way this action is
-              # started: workflow_dispatch with pr-number, a merge queue, a push.
-              if [ -n "$HEAD_REPO" ] && [ "$HEAD_REPO" != "$THIS_REPO" ]; then
-                  echo "This pull request's branch is on $HEAD_REPO, not on $THIS_REPO." >&2
-                  echo "CodeFerret runs an agent with Bash over the branch it reviews, in the" >&2
-                  echo "job holding your tokens, so it reviews only a branch from this repository." >&2
-                  echo "Add the head-repo test to the job's if: to skip such a pull request" >&2
-                  echo "rather than fail on it." >&2
-                  exit 1
+              # The two payload fields that name where a commit came from, each spelled its
+              # own way: `pull_request` and its review events fill `HEAD_REPO`, `workflow_run`
+              # fills `RUN_REPO`, and every other event fills neither.
+              for named in "$HEAD_REPO" "$RUN_REPO"; do
+                  if [ -n "$named" ] && [ "$named" != "$THIS_REPO" ]; then
+                      echo "The commit this run would review is on $named, not on $THIS_REPO." >&2
+                      echo "CodeFerret runs an agent with Bash over the branch it reviews, in the" >&2
+                      echo "job holding your tokens, so it reviews only a branch from this repository." >&2
+                      echo "Add the head-repo test to the job's if: to skip such a run" >&2
+                      echo "rather than fail on it." >&2
+                      exit 1
+                  fi
+              done
+
+              # Said rather than refused. A workflow_dispatch or a repository_dispatch takes
+              # write access to start, so a head-sha arriving on one was chosen by somebody who
+              # could have pushed the commit anyway. An issue_comment takes only the ability to
+              # comment, and its payload carries no head sha of its own, so whoever wired that
+              # trigger chose where the value came from and this step cannot see their choice.
+              if [ -n "$HEAD_SHA" ] && [ -z "$HEAD_REPO" ] && [ -z "$RUN_REPO" ]; then
+                  echo "head-sha names the commit to review and $EVENT carries no head repository" >&2
+                  echo "to check it against, so the job's if: is the only gate on whose code runs here." >&2
               fi
 
         # actions/checkout cleans by default, deleting whatever an earlier step in the
@@ -618,37 +650,29 @@ runs:
                   echo "pass head-sha, or drop checkout: skip, to make the two agree." >&2
               fi
 
-              # The discussion post-review.ts vets every suppression against. run.sh leaves
-              # the file empty because it must not still hold a credential once the session
-              # it started has run; this step holds one already, so the fetch is here.
-              # lib.sh has the argument. A failure leaves the empty file and every
-              # suppression reopened.
+              # The two records post-review.ts vets every suppression against. run.sh leaves
+              # both files empty because it must not still hold a credential once the session
+              # it started has run; this step holds one already, so the fetches are here.
+              # lib.sh has the argument. A failure leaves the file it fetches empty and every
+              # suppression resting on it reopened.
               printf '%s' "$POST_TOKEN" | fetch_existing \
                   "$GITHUB_ACTION_PATH" "$BUILD_DIR" "$PR" "$OWN_LOGIN"
 
-              # `docker compose exec` starts a process with the container's environment and
-              # not this shell's, so under a command prefix every value post-review.ts reads
-              # has to be named. Without the repository it exits before posting; without the
-              # run it takes the review for one posted from somebody's own machine and
-              # inlines every finding instead of linking the artifact. The token goes over
-              # stdin, which `-T` passes through, rather than into an argument list every
-              # other process can read.
-              #
-              # GITHUB_TOKEN is emptied rather than left alone, because
-              # `tokenFromStdinOrEnv` reads it ahead of stdin and a job or workflow that
-              # declares one for `gh` would have the review posted under that token instead
-              # of the `github-token` input, with nothing said either way.
+              printf '%s' "$POST_TOKEN" | fetch_previous \
+                  "$GITHUB_ACTION_PATH" "$BUILD_DIR" "$PR"
+
+              # Through `run_tool`, which lib.sh has the argument for. What is named here is the
+              # rest of what post-review.ts reads: without `GITHUB_RUN_ID` it takes the review
+              # for one posted from somebody's own machine and inlines every finding instead of
+              # linking the artifact, and the last two are inputs that say what this review may
+              # do.
               printf '%s' "$POST_TOKEN" |
-                  $PREFIX env \
-                      "GITHUB_TOKEN=" \
-                      "GITHUB_REPOSITORY=$GITHUB_REPOSITORY" \
+                  run_tool "$GITHUB_ACTION_PATH" post-review.ts \
                       "GITHUB_SERVER_URL=$GITHUB_SERVER_URL" \
                       "GITHUB_RUN_ID=$GITHUB_RUN_ID" \
                       "ARTIFACT_HAS_FINDINGS=$ARTIFACT_HAS_FINDINGS" \
                       "RESOLVE_THREADS=$RESOLVE_THREADS" \
-                      bun --config=/dev/null "$GITHUB_ACTION_PATH/review/post-review.ts" \
-                      "$BUILD_DIR/findings.json" \
-                      "$HEAD" "$PR"
+                      -- "$BUILD_DIR/findings.json" "$HEAD" "$PR"
 
         # Last, and after the posting step. `post-review.ts` writes the `posted` record
         # into the findings file once GitHub has accepted the review, and a later run steps

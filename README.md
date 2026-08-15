@@ -69,7 +69,10 @@ The trigger is `pull_request`, and the action refuses to start under `pull_reque
 That trigger runs with the secrets available against the fork's commit, which is how an
 action holding a token comes to run somebody else's code. Dropping the head-branch test from
 the `if:` reaches the same place, so the action refuses that too rather than reviewing a
-branch it does not own.
+branch it does not own, and it tests a `workflow_run` the same way, which is the other
+trigger that pairs a fork's commit with your secrets. On a trigger that names no head
+repository at all, such as `issue_comment`, there is nothing for the action to test and it
+says so in the log: the job's `if:` is then the only gate.
 
 The action's own artifact is kept for 14 days, and whoever can read the repository's
 artifacts can read every finding in `findings.json`, the suppressed ones included.

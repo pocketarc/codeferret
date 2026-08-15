@@ -48,19 +48,6 @@ export function lenses(n: number): string {
     return n === 1 ? "1 lens" : `${n} lenses`;
 }
 
-/**
- * Why suppressions were reopened, in the words a reader gets, one line per kind that applies.
- *
- * Here for the reason `caveatOf` is: `Vetted` is findings.ts's shape and these are sentences,
- * which that module keeps out on purpose. Written out at the posting path alone, they were
- * four copies of one `if (n > 0) console.error(...)`, and `print-findings.ts` ran the same
- * vetting and printed none of them, so a session reopened a suppression in silence while a
- * posted run explained it.
- *
- * The second line is counted apart from the first because it is the half of the rule a
- * maintainer feels: a decline they meant, reopened because the comment behind it named
- * nothing.
- */
 /** Every counter `Vetted` carries, so a new one cannot be added without a sentence. */
 type Reopening = Exclude<keyof Vetted, "findings">;
 
@@ -88,6 +75,19 @@ const REOPENING: Record<Reopening, (n: number) => string> = {
         " file the previous review did not. Reporting them as new.",
 };
 
+/**
+ * Why suppressions were reopened, in the words a reader gets, one line per kind that applies.
+ *
+ * Here for the reason `caveatOf` is: `Vetted` is findings.ts's shape and these are sentences,
+ * which that module keeps out on purpose. Written out at the posting path alone, they were
+ * four copies of one `if (n > 0) console.error(...)`, and `print-findings.ts` ran the same
+ * vetting and printed none of them, so a session reopened a suppression in silence while a
+ * posted run explained it.
+ *
+ * The second line is counted apart from the first because it is the half of the rule a
+ * maintainer feels: a decline they meant, reopened because the comment behind it named
+ * nothing.
+ */
 export function reopenedReasons(vetted: Vetted): string[] {
     const names = Object.keys(REOPENING) as Reopening[];
 
@@ -509,17 +509,22 @@ export interface Composed {
  */
 export function composeReview(merged: Merged, posting: Posting, parts: Partitioned): Composed {
     const health = merged.lens_health ?? [];
-    const broken = brokenLenses(health);
-    const silent = silentLenses(
-        health.map((h) => h.lens),
-        posting.dispatched,
-    );
+
+    const coverage: Coverage = {
+        health,
+        broken: brokenLenses(health),
+        silent: silentLenses(
+            health.map((h) => h.lens),
+            posting.dispatched,
+        ),
+        unread: posting.unread,
+    };
 
     const { listing, notice } = listingOf(parts.fresh, posting.to);
     const tail = tailOf(merged, parts, posting);
 
     const { body, printed } = assemble(
-        headOf(merged, parts, health, broken, silent, posting.unread),
+        headOf(merged, parts, coverage),
         listing,
         notice === null ? tail : [notice, ...tail],
     );
@@ -529,27 +534,39 @@ export function composeReview(merged: Merged, posting: Posting, parts: Partition
     // `silent` is empty too, and a run that accounted for none of its lenses would read as
     // one with nothing to declare.
     const warned =
-        health.length === 0 ||
-        broken.length > 0 ||
-        silent.length > 0 ||
-        posting.unread.length > 0 ||
+        coverage.health.length === 0 ||
+        coverage.broken.length > 0 ||
+        coverage.silent.length > 0 ||
+        coverage.unread.length > 0 ||
         posting.resolveDenied;
 
     return { body, listed: printed, warned };
 }
 
 /**
+ * What a run can say about how much of the change it covered, derived once.
+ *
+ * A bag rather than a parameter list: `silent` and `unread` are both `string[]`, so swapping
+ * the two adjacent arguments still compiled, leaving a review that reported unread comments as
+ * silent lenses. `finding-rules.ts` has the same move written down: adding to what a walk
+ * carries is a field here rather than another argument threaded through every call.
+ */
+interface Coverage {
+    health: LensHealth[];
+    /** The lenses that reported themselves as not having run normally. */
+    broken: LensHealth[];
+    /** The lenses that were dispatched and said nothing about themselves. */
+    silent: string[];
+    /** The parts of the discussion the fetch could not read. */
+    unread: string[];
+}
+
+/**
  * Everything above the findings: the summary, the counts, and what the run says about its
  * own coverage.
  */
-function headOf(
-    merged: Merged,
-    parts: Partitioned,
-    health: LensHealth[],
-    broken: LensHealth[],
-    silent: string[],
-    unread: string[],
-): string[] {
+function headOf(merged: Merged, parts: Partitioned, coverage: Coverage): string[] {
+    const { health, broken, silent, unread } = coverage;
     const { fresh, suppressed, declined } = parts;
 
     const limited = health.filter((h) => caveatOf(h));

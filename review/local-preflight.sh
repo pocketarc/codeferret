@@ -133,9 +133,8 @@ else
     say shallow no
 fi
 
-# Untracked files cannot appear in any diff, so they say nothing about whether the review
-# still describes the tree. Counting them as dirty would block posting over a scratch file.
-say dirty "$(git status --porcelain --untracked-files=no | wc -l | tr -d '[:space:]')"
+# local-post.sh re-decides this number as the gate that refuses to post.
+say dirty "$(dirty_tracked)"
 say untracked "$(git ls-files --others --exclude-standard | wc -l | tr -d '[:space:]')"
 
 open_pr

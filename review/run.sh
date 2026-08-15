@@ -16,6 +16,7 @@
 #                     wants the set minus one without restating the rest.
 #   EXCLUDE_PATHS     newline-separated globs kept out of the diff.
 #   MODEL             defaults to opus.
+#   EFFORT            low, medium, high, xhigh or max. Empty leaves the model's own default.
 #   PERMISSION_MODE   defaults to bypassPermissions, which suits a disposable runner.
 #                     Use `auto` on somebody's own machine: it passes the reads a lens
 #                     needs and refuses the rest, and refusals land in the run log.
@@ -26,7 +27,8 @@
 #   OWN_LOGIN         the account the review posts under. fetch-existing.ts marks a thread
 #                     `mine` when the login and the marker earlier versions wrote both
 #                     match.
-#   RESOLVE_THREADS   0 to close no threads. Use 0 everywhere except CI.
+#   RESOLVE_THREADS   1 to close the threads the review judges finished. Anything else
+#                     closes none, which is right everywhere except CI.
 #   GITHUB_TOKEN_FILE a file holding the token the GitHub fetches use, which this script
 #                     reads and deletes. Needed with GITHUB_REPOSITORY when PR is set. A
 #                     file rather than a variable: the block that reads it has why.
@@ -235,19 +237,45 @@ status=0
 # what anything else once read. `diff.sh` and `diff-args` are between them the diff every lens
 # read; `existing.json` and `previous.json` are the record its own suppressions are decided
 # against. Each is a copy under `$SESSION`, and the original stays in the build directory,
-# which no prompt names and which everything downstream reads: reviewed-commit.ts takes the
-# reviewed commit out of `diff-args`, check-findings.ts reads `lenses.txt` for the one check
-# that catches a lens that ran and reported nothing about itself, and `vetSuppression` reads
-# `previous.json` for whether the last review raised anything in the file of a finding this
-# run says was raised before.
+# which no prompt names.
 #
 # This used to be one directory, so every one of those files had to be copied aside before the
 # session, compared afterwards and put back, with the comparison and the restore sharing a
 # list because doing either alone fails. Two directories cost one `cp` and leave nothing to
-# put back. What is left of that is the comparison below, which is the half that was never
-# about correctness: a lens with Bash runs as this user and can find either directory, so what
-# the split buys is that a rewritten file is reported rather than believed.
+# put back. What the split does not buy is safety: `--plugin-dir` is handed the directory both
+# of these sit under, and a lens with Bash runs as this user, so it reaches either. The
+# comparison below reports a session copy that stopped matching the original, which means the
+# lenses did not all read the same diff.
 HANDED=(diff-args diff.sh existing.json previous.json)
+
+# The build files something reads after the session, which nothing can fetch again.
+# reviewed-commit.ts takes the commit the review is recorded against out of `diff-args`, and
+# `readDispatched` reads `lenses.txt` for which lenses ran, which is what catches a lens that
+# said nothing about itself. `existing.json` and `previous.json` are not here because they are
+# replaced outright below.
+RECORDED=(diff-args lenses.txt)
+
+# Their digests, kept in this shell's own variables. A file of digests would be a file the
+# session can rewrite alongside what it describes, and `cmp` against the session's copy is no
+# better: the same session writes both, so identical replacements pass it in silence. What a
+# lens cannot reach without ptrace on an ancestor is the memory of the process that started it.
+#
+# `shasum` because a runner and a developer's Mac both have that spelling and only one of them
+# has `sha256sum`. Where it is missing, the check says so rather than comparing two empty
+# strings, which a reader could not tell from nothing having changed.
+digest() {
+    (cd "$BUILD" && shasum -a 256 "$1")
+}
+
+RECORDED_BEFORE=()
+
+if command -v shasum >/dev/null 2>&1; then
+    for recorded in "${RECORDED[@]}"; do
+        RECORDED_BEFORE+=("$(digest "$recorded")")
+    done
+else
+    echo "no shasum on PATH, so what this run reads after the session goes unchecked." >&2
+fi
 
 # WebFetch and WebSearch are denied for the reason scripts/build-lens-agents.ts gives for
 # leaving them off every lens. Agent has to stay: STEP 1 of the orchestrator prompt
@@ -287,13 +315,29 @@ HANDED=(diff-args diff.sh existing.json previous.json)
 
 # What the build directory holds, against what the session was given. Nothing is copied back,
 # because nothing downstream reads a session copy: this is the report, and it is worth having
-# because a difference means that the lenses did not all read the same diff, or that the
-# record the vetting decides against was rewritten by the thing being vetted.
+# because a difference means that the lenses did not all read the same diff.
 #
 # Before the deletions below, so that `existing.json` is still the file the fetch wrote.
 for handed in "${HANDED[@]}"; do
     cmp -s "$BUILD/$handed" "$SESSION/$handed" 2>/dev/null ||
         echo "$handed changed during the review, so what the session read is not what it was given." >&2
+done
+
+# And the build copies nothing puts back, against the digests this shell took before the
+# session. A difference here means the commit the review is recorded against, or which lenses
+# this run reports as dispatched, is the session's own answer.
+#
+# The `+` expansion because the array is empty where there was no `shasum`, and bash 3.2, which
+# is what a Mac runs, reads `"${arr[@]}"` on an empty array as an unbound variable under
+# `set -u`.
+recorded_at=0
+
+for recorded in "${RECORDED_BEFORE[@]+"${RECORDED_BEFORE[@]}"}"; do
+    if [ "$recorded" != "$(digest "${RECORDED[$recorded_at]}")" ]; then
+        echo "${RECORDED[$recorded_at]} changed during the review, so what is read from here on is not what was built." >&2
+    fi
+
+    recorded_at=$((recorded_at + 1))
 done
 
 # The orchestrator ran with Bash under bypassPermissions, so a directory no prompt names is
@@ -303,12 +347,20 @@ done
 #
 # findings.json and findings-checked are what the action posts on. post-review.ts and
 # print-findings.ts re-decide every suppression and every thread closure against
-# existing.json, so it is replaced with the empty form, which reopens every suppression, and
-# the first of the two to run calls `fetch_existing` for a copy taken after the session ended.
-# The fetch is theirs rather than this script's because the token would have to come back into
-# this shell to be used here, and lib.sh has the rest of that argument.
-rm -f "$BUILD/findings.json" "$BUILD/findings-checked" "$BUILD/existing.json"
+# existing.json and previous.json, so both are replaced with their empty forms, which reopens
+# every suppression, and the first of the two to run calls `fetch_existing` and
+# `fetch_previous` for copies taken after the session ended. The fetches are theirs rather than
+# this script's because the token would have to come back into this shell to be used here, and
+# lib.sh has the rest of that argument.
+#
+# `previous.json` is on this list for the same reason `existing.json` is: `vetSuppression`
+# reads it through `filesRaisedBefore`, and that set is the whole of what settles an
+# `already-reported` finding citing no comment, which orchestrator.md makes the ordinary case.
+# The session held the path to its own copy in the same prompt as the rule, and the build copy
+# is one directory along from it.
+rm -f "$BUILD/findings.json" "$BUILD/findings-checked" "$BUILD/existing.json" "$BUILD/previous.json"
 empty_existing "$BUILD/existing.json"
+empty_previous "$BUILD/previous.json"
 
 # `-f` and not `-s`: a session killed before it wrote a byte leaves this file empty, and that
 # is the run extract-findings.ts writes `none reported` and `unknown` for. Skip it and the run

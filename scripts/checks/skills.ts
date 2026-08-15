@@ -53,6 +53,8 @@ export async function checkBundledSkills(): Promise<Failures> {
         } else seen.set(declared, skillFile);
     }
 
-    console.log(`OK lenses/skills: ${seen.size} bundled lens(es), names unique`);
+    if (list.length === 0) {
+        console.log(`OK lenses/skills: ${seen.size} bundled lens(es), names unique`);
+    }
     return list;
 }

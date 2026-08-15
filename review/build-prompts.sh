@@ -13,8 +13,8 @@
 #
 # Lens names arrive on stdin, one per line.
 #
-# Set RESOLVE_THREADS=0 where the review posts under somebody's own account rather than
-# CodeFerret's, which is every run outside CI.
+# Set RESOLVE_THREADS=1 where the review posts under CodeFerret's own account, which is CI.
+# Anywhere else the review is posted as whoever ran it.
 #
 # Usage: build-prompts.sh <base-ref> <action-path> <plugin-out-dir> <workspace>
 set -euo pipefail
@@ -24,7 +24,12 @@ ACTION=${2:?missing action path}
 PLUGIN=${3:?missing plugin output dir}
 WORKSPACE=${4:?missing workspace}
 
-RESOLVE_THREADS=${RESOLVE_THREADS:-1}
+# Off unless the value is exactly `1`, which is the test post-review.ts makes. The two
+# decide one thing between them: this script renders the prompt that asks the orchestrator
+# which threads to close, and post-review.ts decides whether anything acts on the answer.
+# Defaulting the other way here sent a by-hand run.sh through a step of the review whose
+# output post-review.ts then refused, and the only sign was a line saying so at the end.
+RESOLVE_THREADS=${RESOLVE_THREADS:-0}
 
 # Absolute, because every `bun` below runs from the build directory rather than from the
 # tree under review, where this script is started. Each one takes `--config=/dev/null` as
@@ -271,10 +276,10 @@ DIFF_SCRIPT
 # Only CodeFerret's own account can tell its threads from a person's. Anywhere else the
 # review is posted as whoever ran it, and closing a thread would take their words off the
 # page along with everyone else's.
-if [ "$RESOLVE_THREADS" = "0" ]; then
-    RESOLVE_FILE="$ACTION/review/resolve-none.md"
-else
+if [ "$RESOLVE_THREADS" = "1" ]; then
     RESOLVE_FILE="$ACTION/review/resolve-judge.md"
+else
+    RESOLVE_FILE="$ACTION/review/resolve-none.md"
 fi
 
 (
@@ -295,7 +300,7 @@ fi
 # branch with no pull request is the ordinary case in a session, so the empty form reaches
 # the step that decides what to suppress on most runs of `/codeferret:review`.
 empty_existing "$BUILD/existing.json"
-printf '{"findings": []}\n' >"$BUILD/previous.json"
+empty_previous "$BUILD/previous.json"
 
 # The files the session opens while it runs, copied to the paths the prompts above name.
 # `diff.sh` and `diff-args` are copied together because the script reads its arguments from

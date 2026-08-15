@@ -64,6 +64,57 @@ empty_existing() {
     printf '{"threads": [], "conversation": []}\n' >"$1"
 }
 
+# What previous.json says when there was no pull request to fetch it from, when the fetch came
+# back with nothing, or when the copy on disk is the session's own work rather than the fetch's.
+#
+# Beside `empty_existing` and for its reason. `filesRaisedBefore` reads a missing `findings` as
+# an empty set, so a copy that drifts costs nothing visible and reopens every suppression that
+# cited no comment.
+empty_previous() {
+    printf '{"findings": []}\n' >"$1"
+}
+
+# ---- Running one of this run's scripts, with a credential and across a container boundary ----
+
+# One of the scripts under `review/`, given the environment it needs and nothing else. The
+# token comes in on stdin.
+#
+# `docker compose exec` starts a process with the container's environment rather than this
+# shell's, so under `command-prefix` every value a script reads has to be named. `GITHUB_TOKEN`
+# is emptied rather than passed, because `tokenFromStdinOrEnv` reads the environment ahead of
+# stdin: a job or a developer's shell exporting one of its own would otherwise decide which
+# account read the pull request or posted the review, with nothing said either way. The token
+# goes over stdin, which `-T` passes through, rather than into an argument list every other
+# process on the machine can read. And `--config=/dev/null`, like every other bun a run starts.
+#
+# One home because each of those is easy to leave out and none of them fails visibly. It was
+# written out three times, and one of the three had the pipe and not the blanking: under
+# `command-prefix` that reads the previous run's artifact as the container's own account, which
+# shows up only as findings repeated or suppressed.
+#
+# Anything a script needs beyond the two named here is an assignment the caller passes, so a
+# variable it forgot is a variable the script finds empty rather than one this shell happens
+# to hold.
+#
+# Usage: run_tool <root> <script> [<NAME=value>...] -- <args...>, token on stdin.
+run_tool() {
+    local root=$1 script=$2
+    shift 2
+
+    local passed=("GITHUB_TOKEN=" "GITHUB_REPOSITORY=${GITHUB_REPOSITORY:-}")
+
+    while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
+        passed+=("$1")
+        shift
+    done
+
+    if [ "$#" -gt 0 ]; then
+        shift
+    fi
+
+    ${PREFIX:-} env "${passed[@]}" bun --config=/dev/null "$root/review/$script" "$@"
+}
+
 # What puts a real one back, once the session has exited. The token comes in on stdin.
 #
 # The orchestrator is handed this path in the same prompt as the rule `vetSuppression`
@@ -77,31 +128,22 @@ empty_existing() {
 # belongs to the post and print paths, each of which already holds a credential for its own
 # work and runs once the session is gone.
 #
-# The token goes over stdin for the reason run.sh gives where it hands one to the fetch that
-# runs before the session. GITHUB_TOKEN is emptied across the boundary as well, because
-# `tokenFromStdinOrEnv` reads the environment ahead of stdin: a job or a developer's shell
-# exporting one of its own would otherwise decide which account read the pull request, with
-# nothing said either way.
-#
 # Usage: fetch_existing <root> <build-dir> <pr> [<own-login>], token on stdin.
 fetch_existing() {
     local root=$1 build=$2 pr=$3 login=${4:-}
 
-    ${PREFIX:-} env \
-        "GITHUB_TOKEN=" \
-        "GITHUB_REPOSITORY=${GITHUB_REPOSITORY:-}" \
-        bun --config=/dev/null "$root/review/fetch-existing.ts" \
-        "$pr" "$build/existing.json" ${login:+"$login"} ||
+    run_tool "$root" fetch-existing.ts -- "$pr" "$build/existing.json" ${login:+"$login"} ||
         echo "could not read all of this pull request's comments. Whatever went unread counts as new." >&2
 }
 
 # What the last run raised, out of its `codeferret-run` artifact. The token comes in on stdin.
 #
-# Beside `fetch_existing` with one caller, because the two share the pieces that are easy to
-# leave out and impossible to see missing: a token on stdin, and `GITHUB_TOKEN` emptied across
-# the boundary. This call had the pipe and not the blanking, and under `command-prefix` that
-# means the artifact is read under the container's own `GITHUB_TOKEN`, which shows up only as
-# findings repeated or suppressed.
+# Called twice by the action, before the session and again from the posting step, for the
+# reason written above `fetch_existing`: `vetSuppression` decides against this file too, and
+# the session was handed the path to its own copy of it. `local-post.sh` and `local-print.sh`
+# do not call it, because `ownWorkflow` in fetch-previous.ts answers null where nothing names a
+# workflow and every artifact is then refused, so the second call would spend requests to write
+# the empty form run.sh has already written.
 #
 # Reading it needs `actions: read`. The shipped workflow grants it and a consumer can decline
 # it, so an empty answer is allowed: fetch-previous.ts reports its own failures, and the
@@ -111,12 +153,8 @@ fetch_existing() {
 fetch_previous() {
     local root=$1 build=$2 pr=$3
 
-    ${PREFIX:-} env \
-        "GITHUB_TOKEN=" \
-        "GITHUB_REPOSITORY=${GITHUB_REPOSITORY:-}" \
-        "GITHUB_RUN_ID=${GITHUB_RUN_ID:-}" \
-        bun --config=/dev/null "$root/review/fetch-previous.ts" \
-        "$pr" "$build/previous.json" ||
+    run_tool "$root" fetch-previous.ts "GITHUB_RUN_ID=${GITHUB_RUN_ID:-}" \
+        -- "$pr" "$build/previous.json" ||
         echo "could not read the previous run's findings. Every finding will count as new." >&2
 }
 
@@ -312,6 +350,18 @@ open_pr() {
     PR=$(printf '%s' "$line" | cut -f1)
     PR_BASE=$(printf '%s' "$line" | cut -f2)
     PR_HEAD=$(printf '%s' "$line" | cut -f3)
+}
+
+# How many tracked files are uncommitted, as a bare number.
+#
+# What it decides is whether a review still describes the tree the lenses read. They read the
+# working tree as they find it, so a review taken over a dirty one quotes lines that are in no
+# commit and sends a reader of the pull request to code GitHub does not hold.
+#
+# Untracked files are left out. Nothing untracked reaches a diff, so counting one would block
+# posting over a scratch file.
+dirty_tracked() {
+    git status --porcelain --untracked-files=no | wc -l | tr -d '[:space:]'
 }
 
 # Origin's default branch name, or nothing. Answered once per shell, because the fallback

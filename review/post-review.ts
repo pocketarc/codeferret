@@ -18,6 +18,7 @@
  *        GITHUB_SERVER_URL and GITHUB_RUN_ID link the run, when a runner sets them.
  *        ARTIFACT_HAS_FINDINGS=true where the run keeps findings.json for a reader.
  *        RESOLVE_THREADS=1 to close the threads the orchestrator judged finished.
+ *        DRY_RUN=1 to print the review instead of posting it.
  */
 
 import { dirname, join } from "node:path";
@@ -40,6 +41,23 @@ if (!findingsPath || !headSha || !prNumber || !token || !repo) {
 
 requireRepository(repo);
 requirePullNumber(prNumber);
+
+// Read once, and on the value rather than on the variable being set. `destinationOf` carries
+// the first half of that rule for the variables it reads: a second reading is a second chance
+// for the body and the log beside it to describe different reviews. The second half is the one
+// build-prompts.sh writes down beside `INCLUDE_WORKING_TREE`: a model following
+// commands/review.md composes this value and writes `DRY_RUN=0` rather than leaving it out,
+// which a presence test reads as on. Anything else is refused here rather than guessed at,
+// because guessing wrong on `DRY_RUN=true` posts the review somebody asked to have printed.
+// Before the two GitHub reads below, so a misspelt value costs nothing.
+const dryRunInput = process.env.DRY_RUN ?? "";
+
+if (dryRunInput !== "" && dryRunInput !== "0" && dryRunInput !== "1") {
+    console.error(`DRY_RUN is '${dryRunInput}'. It has to be 0 or 1.`);
+    process.exit(2);
+}
+
+const dryRun = dryRunInput === "1";
 
 const findingsFile: string = findingsPath;
 const buildDir = dirname(findingsFile);
@@ -107,11 +125,6 @@ const asked = merged.resolve ?? [];
 // Unset means off, so a caller who forgets to pass it closes no thread rather than closing
 // one nobody sanctioned.
 const mayResolve = process.env.RESOLVE_THREADS === "1";
-
-// Read once. `destinationOf` carries the same rule for the variables it reads, and for the
-// same reason: a second reading is a second chance for the body and the log beside it to
-// describe different reviews.
-const dryRun = Boolean(process.env.DRY_RUN);
 
 if (!mayResolve && asked.length > 0) {
     console.error(

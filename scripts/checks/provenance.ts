@@ -31,6 +31,8 @@ export async function checkProvenance(): Promise<Failures> {
         if (!bundled.has(lens)) fail(list, file, `records '${lens}', which is not bundled`);
     }
 
-    console.log(`OK ${file}: ${recorded.size} row(s), one per bundled lens`);
+    if (list.length === 0) {
+        console.log(`OK ${file}: ${recorded.size} row(s), one per bundled lens`);
+    }
     return list;
 }

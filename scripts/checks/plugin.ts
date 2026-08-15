@@ -30,6 +30,8 @@ export async function checkPluginManifest(): Promise<Failures> {
         fail(list, "review/build-prompts.sh", `NAMESPACE is '${hardcoded}', but ${MANIFEST_FILE} declares '${manifest.name}'`);
     }
 
-    console.log(`OK ${MANIFEST_FILE}: plugin '${manifest.name}' ${manifest.version}`);
+    if (list.length === 0) {
+        console.log(`OK ${MANIFEST_FILE}: plugin '${manifest.name}' ${manifest.version}`);
+    }
     return list;
 }

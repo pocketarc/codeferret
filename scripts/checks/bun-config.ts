@@ -13,6 +13,34 @@
  * Not lint.yml or lefthook.yml: both run over a checkout of this repository, and lint.yml's
  * fork job holds no secrets and no write permissions, which is why it may run a fork's tests
  * at all.
+ *
+ * An invocation is matched as the pair `bun ... <a script this repository owns>`, and that
+ * pairing is what separates one from the many other times these files write the word. Most of
+ * those are prose, but throwing comment lines away is not enough on its own: `command -v bun`,
+ * `say bun ok`, `bun@$BUN_VERSION` and `echo "bun and claude are already on PATH"` are all live
+ * shell that names bun without running it, and every input description in action.yml that
+ * mentions bun is a block scalar rather than a comment. So a rule reading "a bare `bun` must be
+ * followed by the flag" trades this pairing for a maintained list of things that are not
+ * invocations.
+ *
+ * The second half of the pair used to be a literal `.ts`, which stopped matching the one that
+ * matters most the day `run_tool` in lib.sh took the script name as an argument: `bun
+ * --config=/dev/null "$root/review/$script"` names no file the scanner could read, and three
+ * invocations went behind that helper at once. A path under `review/` or `scripts/` counts as
+ * well now, so a script named through a variable is still matched. The cost is that a comment
+ * putting `bun` before such a path on one line is read as an invocation, which fails the
+ * check. That is the right way round: a line anybody could paste has to carry the flag
+ * whether it runs, prints or explains.
+ *
+ * What the pair still does not match is `bun run`, `bun test` and `bunx`, none of which a
+ * review starts. Whoever writes the first one has to widen this again.
+ *
+ * A helper in lib.sh that always emits the flag does not replace any of it, which is why
+ * `run_tool` exists and this check still runs: nothing stops the next script writing `bun`
+ * itself. Nor is there a way to make the flag unnecessary. Measured on bun 1.3.5,
+ * `BUN_CONFIG_FILE=/dev/null bun main.ts` ran the `preload` the working directory's
+ * `bunfig.toml` named; `bun --config=/dev/null main.ts` did not. A check inside the script
+ * would be later still, because the preload runs first.
  */
 
 import { readdirSync } from "node:fs";
@@ -58,7 +86,7 @@ export async function checkBunConfig(): Promise<Failures> {
         // the ones most worth checking were the ones being skipped.
         const text = (await Bun.file(file).text()).replace(/\\\n\s*/g, " ");
 
-        for (const match of text.matchAll(/\bbun\b([^\n]*?)([\w$"'{}/.-]*\.ts)\b/g)) {
+        for (const match of text.matchAll(/\bbun\b([^\n]*?)([\w$"'{}/.-]*(?:\.ts\b|(?:review|scripts)\/[\w$"'{}/.-]*))/g)) {
             const [, flags, script] = match;
             const before = text.slice(text.lastIndexOf("\n", match.index) + 1, match.index);
 

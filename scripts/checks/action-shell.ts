@@ -53,6 +53,8 @@ export async function checkActionShell(): Promise<Failures> {
         rmSync(dir, { recursive: true, force: true });
     }
 
-    console.log(`OK action.yml: ${steps.length} shell step(s) pass shellcheck`);
+    if (list.length === 0) {
+        console.log(`OK action.yml: ${steps.length} shell step(s) pass shellcheck`);
+    }
     return list;
 }

@@ -50,14 +50,10 @@ if [ "$REVIEWED_HEAD" != "$LOCAL_HEAD" ]; then
     exit 1
 fi
 
-# The one condition in commands/review.md's posting gate that nothing but prose enforced.
-# The two comparisons around it settle which commit the review names; neither covers the files
-# the lenses read, and they read the working tree as they find it. So a review taken over a
-# dirty tree quotes lines that are in no commit, and sends a reader of the pull request to
-# code GitHub does not hold. Untracked files are not counted, for the reason
-# local-preflight.sh gives where it reports the same number: nothing untracked reaches a diff,
-# so a scratch file would otherwise block posting.
-DIRTY=$(git status --porcelain --untracked-files=no | wc -l | tr -d '[:space:]')
+# The one condition in commands/review.md's posting gate that nothing but prose enforced. The
+# two comparisons around it settle which commit the review names; neither covers the files the
+# lenses read.
+DIRTY=$(dirty_tracked)
 
 if [ "$DIRTY" != "0" ]; then
     echo "$DIRTY tracked file(s) are uncommitted, and the lenses read files as they find them." >&2

@@ -2,17 +2,19 @@ import { describe, expect, test } from "bun:test";
 import { asExisting, survey } from "./existing.ts";
 import { isListed, lineOf, partition, vetSuppression } from "./findings.ts";
 import type { Finding } from "./findings.ts";
+import { filesRaisedBefore } from "./previous.ts";
 import { finding } from "./test-fixtures.ts";
 
 /**
  * `vetSuppression` against a case written as the file on disk.
  *
- * It takes the walked discussion, because the caller that posts already has one and a second
- * walk is a second answer. A case here is still clearest written as the JSON, so the
- * narrowing and the walk happen at this boundary instead.
+ * It takes the walked discussion and the set of files the last review raised something in,
+ * because the caller that posts has both already and doing either twice is a second answer. A
+ * case here is still clearest written as the two JSON documents, so the narrowing happens at
+ * this boundary instead.
  */
 const vet = (findings: Finding[], existing: unknown, previous?: unknown): ReturnType<typeof vetSuppression> =>
-    vetSuppression(findings, survey(asExisting(existing)), previous);
+    vetSuppression(findings, survey(asExisting(existing)), filesRaisedBefore(previous));
 
 describe("partition", () => {
     test("splits on status and orders by severity", () => {

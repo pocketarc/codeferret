@@ -19,15 +19,17 @@
  */
 
 import { dirname, join } from "node:path";
+import type { LensHealth } from "./findings.ts";
 import { number, record, string } from "./json.ts";
 import { RUN_FILES } from "./run-files.ts";
 
-interface LensHealth {
-    lens?: unknown;
-    findings_returned?: unknown;
-    ok?: unknown;
-    detail?: unknown;
-}
+/**
+ * `LensHealth` as it arrives, before anything has checked a field.
+ *
+ * Every value is `unknown` because this module reads a run log a session wrote, and the
+ * summary lines below narrow each field where they print it.
+ */
+type RawLensHealth = { [K in keyof LensHealth]?: unknown };
 
 const [runPath, outPath] = process.argv.slice(2);
 
@@ -198,8 +200,8 @@ await Bun.write(outPath, `${JSON.stringify(structured, null, 2)}\n`);
 // The elements too, not just the container. `Array.isArray` says nothing about what is in
 // the list, and a `null` entry reaches `h.ok` below and throws — after the findings file has
 // been written, so a complete review dies on its own summary line.
-const health: LensHealth[] = (Array.isArray(structured.lens_health) ? structured.lens_health : []).filter(
-    (h): h is LensHealth => record(h) !== null,
+const health: RawLensHealth[] = (Array.isArray(structured.lens_health) ? structured.lens_health : []).filter(
+    (h): h is RawLensHealth => record(h) !== null,
 );
 const broken = health.filter((h) => h.ok === false);
 

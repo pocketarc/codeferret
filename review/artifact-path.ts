@@ -56,13 +56,27 @@ function normalise(entry: string): string {
 }
 
 /**
+ * The characters that make an entry a pattern rather than a name.
+ *
+ * `upload-artifact` reads `path` through `@actions/glob`, so any of these decides what goes
+ * up by matching rather than by naming, and this module cannot then say whether the findings
+ * file is among what goes up. `*` used to answer `false` and take the findings up anyway, which
+ * costs a comment carrying every finding beside an artifact that already held them; answering
+ * `true` wrongly costs a review that links a file nobody kept, which is the defect this module
+ * exists to prevent. A leading `!` is the exclusion form and belongs with them: it takes paths
+ * back out of a list rather than adding one.
+ */
+const PATTERN_CHARS = /[*?[\]{}]/;
+
+/**
  * The two answers, or a refusal.
  *
- * The refusals are `upload-artifact`'s own limits, checked here so a bad input fails a job in
- * its first seconds rather than after a review that took twenty minutes and cost real money.
- * A `..` segment escapes the build directory, and a `.` segment is a pattern the upload
- * refuses outright: every segment of what it receives is past the front, because the build
- * directory is prepended.
+ * The refusals are `upload-artifact`'s own limits and this module's own, checked here so a bad
+ * input fails a job in its first seconds rather than after a review that took twenty minutes
+ * and cost real money. A `..` segment escapes the build directory, and a `.` segment is a
+ * pattern the upload refuses outright: every segment of what it receives is past the front,
+ * because the build directory is prepended. An absolute path and a glob are this module's own,
+ * and each has its reason written beside it.
  *
  * The input is a list, because `upload-artifact` reads `path` as one and the whole point of
  * this repository's own narrowing is naming files rather than a directory. A YAML block
@@ -94,6 +108,20 @@ export function resolveArtifactPath(input: string, buildDir: string): Kept {
 
         if (segments.includes(".")) {
             throw new ArtifactPathRefused(`artifact-path must name no '.' directory: ${entry}`);
+        }
+
+        // Every entry is resolved against the build directory, so a leading slash is somebody
+        // asking for a path this cannot give them. It used to be prepended anyway, and
+        // `/findings.json` then uploaded the findings under a doubled slash while answering
+        // `false` for the body.
+        if (entry.startsWith("/")) {
+            throw new ArtifactPathRefused(
+                `artifact-path is resolved against the build directory, so it takes no absolute path: ${entry}`,
+            );
+        }
+
+        if (PATTERN_CHARS.test(entry) || entry.startsWith("!")) {
+            throw new ArtifactPathRefused(`artifact-path names a file rather than a pattern: ${entry}`);
         }
     }
 

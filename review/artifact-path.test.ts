@@ -96,4 +96,16 @@ describe("resolveArtifactPath: what it refuses", () => {
     test("a dot inside a name escapes nothing and is kept", () => {
         expect(resolve("tool-report..json").paths).toEqual([`${BUILD}/tool-report..json`]);
     });
+
+    for (const input of ["/findings.json", "//findings.json", "/etc/passwd", "findings.json\n/run.json"]) {
+        test(`'${input}' is absolute, and everything here resolves against the build directory`, () => {
+            expect(() => resolve(input)).toThrow(ArtifactPathRefused);
+        });
+    }
+
+    for (const input of ["*", "**", "?indings.json", "sub/*.json", "[abc].json", "a{b,c}.json", "!run.json"]) {
+        test(`'${input}' is a pattern rather than a name`, () => {
+            expect(() => resolve(input)).toThrow(ArtifactPathRefused);
+        });
+    }
 });

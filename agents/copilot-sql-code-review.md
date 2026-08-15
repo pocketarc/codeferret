@@ -62,9 +62,22 @@ that file to decide the finding, and anchor it to the line in that file, even wh
 does not touch it. The fix for a sequential scan or a missing composite index is usually in
 a migration, and an author sent to the query instead has to find that for themselves.
 
-The skill is wrong in the places below. Correcting them here rather than in the vendored file
-keeps that file to the rewrites `scripts/rewrite-markdown.ts` reproduces at vendor time, so a
-re-vendor at a new PROVENANCE.tsv pin cannot revert a correction.
+The skill is wrong in the places below.
+
+Its first performance example, under "Query Structure Analysis", is the one an author meets
+first, and its two queries do not return the same rows. The BAD query is
+`SELECT DISTINCT u.*` over a three-table join; the GOOD one drops the `DISTINCT`, so a user
+with twelve matching orders comes back twelve times. Naming `u.id` in the projection does not
+fix that: it only stops two different users collapsing into one. The `products` join
+disappears as well, and in the BAD query that join filters: an order whose `product_id`
+matches no row in `products` is excluded there and included here. Recommend the shape that
+preserves the result set, which is a semi-join carrying the same date range: `SELECT u.id,
+u.name, u.email FROM users u WHERE EXISTS (SELECT 1 FROM orders o JOIN products p ON p.id =
+o.product_id WHERE o.user_id = u.id AND o.order_date >= '2024-01-01' AND o.order_date <
+'2025-01-01')`. Bare date strings rather than the `DATE '2024-01-01'` typed literal, which
+SQL Server has no syntax for. The range condition on `order_date` in place of
+`YEAR(o.order_date)` is the part of the skill's rewrite that is right, and it is the part
+worth teaching.
 
 Its "Overuse of DISTINCT" example replaces `SELECT DISTINCT u.name` with the same query under
 `GROUP BY u.name`, presented as a fix for the join. It is not: the grouping deduplicates the
@@ -85,14 +98,22 @@ skill itself uses to illustrate sensitive columns. Recommend a batched fetch on 
 table keyed by the parent ids already in hand, with the columns named: `SELECT o.user_id,
 o.id, o.total, o.order_date FROM orders o WHERE o.user_id = ANY($1)`.
 
-Its "SECURE" examples select `*` from `users`, which is the table the same skill uses to
+Its "SECURE" examples are wrong twice over, and neither half is what an application author
+needs. The projection is `SELECT *` from `users`, which is the table the same skill uses to
 illustrate sensitive columns, and which appears as a defect in its own Data Protection list
-and in its checklist. The parameterisation those examples demonstrate is right and the
-projection beside it is not. The replacement under "Function Misuse in WHERE Clauses" keeps
-`SELECT *` on `orders` in the same way: the range condition it teaches is right and the
-projection carried over from the bad example is not. So do not read a green tick as
-permission for the projection it carries: name the columns, and raise `SELECT *` in the diff
-on the skill's own rule.
+and in its checklist. And the parameterisation is `PREPARE stmt FROM '...'` with a `?`
+placeholder and `EXECUTE stmt USING @user_id`, labelled PostgreSQL and MySQL. That syntax is
+MySQL's alone; PostgreSQL spells it `PREPARE stmt (int) AS SELECT id, email FROM users WHERE
+id = $1;` and then `EXECUTE stmt(42);`. Worse, a server-side prepare driven by a session
+variable settles nothing about injection, because nothing there says how `@user_id` came to
+hold the untrusted value: an application that built `SET @user_id = ...` by concatenation is
+still injectable. What to recommend to an author is a value bound through the driver
+alongside the statement text (`db.query('SELECT id, email FROM users WHERE id = $1',
+[userId])`, and its equivalent in whatever client the diff uses), with the columns named.
+The replacement under "Function Misuse in WHERE Clauses" keeps `SELECT *` on `orders` in the
+same way: the range condition it teaches is right and the projection carried over from the
+bad example is not. So do not read a green tick as permission for the projection it carries:
+name the columns, and raise `SELECT *` in the diff on the skill's own rule.
 
 Its N+1 example is the one most likely to reach an author, and its replacement is worse than
 the loop it replaces. The skill offers `SELECT u.*, o.* FROM users u LEFT JOIN orders o ON
@@ -107,13 +128,6 @@ application. Recommend that shape, and raise the skill's own example if it appea
 Its Issue Template, and the output format, scores and priority actions around it, are
 upstream's own reporting shape, and none of it applies: your output is the JSON schema in the
 brief above and nothing else.
-
-That template is the one problem here not answered in prose. It nested three-backtick blocks
-inside a three-backtick block, so the outer delimiter in the vendored file was raised to four
-backticks by hand, which is what `scripts/prepare-skill.ts` describes in its header and what
-`checkSkillFences` fails the repository over. A fence left open swallows the rest of the
-file, and no wording here could reach that far, so it could not be a correction of the kind
-above.
 
 Where you have nothing to report, say in `notes` which surfaces you ruled out and how:
 literal SQL in strings and fenced blocks, ORM and query-builder calls, migration and schema

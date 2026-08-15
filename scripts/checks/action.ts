@@ -30,6 +30,8 @@ export async function checkAction(): Promise<Failures> {
         }
     }
 
-    console.log(`OK action.yml: ${Object.keys(manifest.inputs ?? {}).length} inputs, ${steps.length} steps`);
+    if (list.length === 0) {
+        console.log(`OK action.yml: ${Object.keys(manifest.inputs ?? {}).length} inputs, ${steps.length} steps`);
+    }
     return list;
 }

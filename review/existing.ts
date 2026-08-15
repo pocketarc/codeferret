@@ -7,9 +7,10 @@
  * `post-review.ts` re-narrowed the same bytes to get them back. One declaration here, and a
  * field `fetch-existing.ts` renames stops compiling rather than reading as absent.
  *
- * Every field is optional and nothing is trusted. `run.sh` refetches this file after the
- * session, but a by-hand run reads whatever is on disk, and a half-written one has to come
- * back as a file that says nothing rather than as a crash.
+ * Every field is optional and nothing is trusted. `run.sh` empties this file once the session
+ * has exited, and the paths that post and print fetch it again, so what is read here is
+ * ordinarily a copy taken minutes ago; a half-written one still has to come back as a file
+ * that says nothing rather than as a crash.
  */
 
 import { join } from "node:path";

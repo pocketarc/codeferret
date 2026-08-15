@@ -265,14 +265,16 @@ function raisedBefore(raisedFiles: ReadonlySet<string>, file: string): boolean {
  * suppression resting on it is reopened. That costs a comment somebody has already answered,
  * and the other way costs a finding nobody sees.
  *
- * The discussion arrives already walked. Taking `unknown` and calling `survey(asExisting(…))`
- * here re-narrowed a value that already carried the guarantee, and walked it a second time
- * after post-review.ts had walked it for its linkable urls, which is exactly the double walk
- * `survey` exists to prevent.
+ * Both inputs arrive already narrowed, at the boundary where the file each comes from is read.
+ * Taking `unknown` and calling `survey(asExisting(…))` here re-narrowed a value that already
+ * carried the guarantee, and walked it a second time after post-review.ts had walked it for
+ * its linkable urls, which is exactly the double walk `survey` exists to prevent. `raisedFiles`
+ * was the same mistake one step behind: an `unknown` defaulted to `{}`, so a caller that passed
+ * nothing got an empty set and every uncited `already-reported` finding reopened, and the
+ * signature said that was a legitimate way to call this.
  */
-export function vetSuppression(findings: Finding[], discussion: Survey, previous: unknown = {}): Vetted {
+export function vetSuppression(findings: Finding[], discussion: Survey, raisedFiles: ReadonlySet<string>): Vetted {
     const { comments } = discussion;
-    const raisedFiles = filesRaisedBefore(previous);
     let untraceable = 0;
     let unrelated = 0;
     let unvouched = 0;
@@ -433,16 +435,20 @@ async function readPrevious(path: string): Promise<unknown> {
  * findings against different files, and so the sentence saying what an unreadable file costs
  * is written once.
  *
- * `run.sh` refetches `existing.json` and restores `previous.json` once the orchestrator has
- * exited, and the comments there have why: the orchestrator was handed both paths, so it
- * could have written the evidence its own suppressions are checked against.
+ * Neither file is the copy the orchestrator was handed. The orchestrator held both paths in
+ * the same prompt as the rules applied here, so it could have written the evidence its own
+ * suppressions are checked against. `run.sh` replaces both with their empty forms once the
+ * session has exited, and the paths that hold a credential of their own fetch them again: the
+ * action's posting step for both, and `local-post.sh` and `local-print.sh` for
+ * `existing.json`. An empty file reopens every suppression resting on it, which is the
+ * direction to fail in.
  */
 export async function vetAgainstExisting(findings: Finding[], buildDir: string): Promise<Vetting> {
     const existing = await readExisting(buildDir, (line) => console.error(line));
-    const previous = await readPrevious(join(buildDir, "previous.json"));
+    const raisedBefore = filesRaisedBefore(await readPrevious(join(buildDir, "previous.json")));
     const walked = survey(existing);
 
-    return { existing, survey: walked, ...vetSuppression(findings, walked, previous) };
+    return { existing, survey: walked, ...vetSuppression(findings, walked, raisedBefore) };
 }
 
 /**
