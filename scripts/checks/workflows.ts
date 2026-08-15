@@ -44,6 +44,12 @@ export async function checkWorkflows(): Promise<Failures> {
 
     const own = `${dir}/codeferret.yml`;
 
+    // Required rather than compared only when both happen to be present: a gate silently
+    // missing from either file is the drift this check exists to catch, not a reason to skip
+    // the comparison.
+    if (!gates.has(own)) fail(list, own, "declares no jobs.review.if, so nothing gates whose code the agent runs on");
+    if (!gates.has(TEMPLATE)) fail(list, TEMPLATE, "declares no jobs.review.if, so nothing gates whose code the agent runs on");
+
     if (gates.has(own) && gates.has(TEMPLATE) && gates.get(own) !== gates.get(TEMPLATE)) {
         fail(list, TEMPLATE, `jobs.review.if does not match ${own}`);
     }

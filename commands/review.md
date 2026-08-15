@@ -24,8 +24,15 @@ a semicolon, and do not pass it on.
 ## 1. Find out what this checkout supports
 
 ```sh
-CLAUDE_PLUGIN_ROOT="<plugin>" bash "<plugin>/review/local-preflight.sh" "<base-ref if the user gave one>"
+CLAUDE_PLUGIN_ROOT="<plugin>" bash "<plugin>/review/local-preflight.sh" <<'BASE_REF'
+<base-ref if the user gave one, one line, empty if not>
+BASE_REF
 ```
+
+The ref goes on stdin, inside a heredoc whose delimiter is quoted, rather than into the
+command line as an argument: quoting the delimiter (`<<'BASE_REF'`, not `<<BASE_REF`) stops
+the shell expanding anything inside the body, which is what keeps a `$(...)`, a backtick or a
+stray `"` in what the user typed from running before the script does.
 
 It prints one `key=value` per line. Read them all before doing anything else.
 
@@ -161,7 +168,9 @@ Run the preflight again first. Step 1's answers were taken before a run that too
 minutes, and the user was invited to carry on committing through it:
 
 ```sh
-CLAUDE_PLUGIN_ROOT="<plugin>" bash "<plugin>/review/local-preflight.sh" "<base>"
+CLAUDE_PLUGIN_ROOT="<plugin>" bash "<plugin>/review/local-preflight.sh" <<'BASE_REF'
+<base>
+BASE_REF
 ```
 
 Offer to post only when the fresh output says `pr` is a number, `gh=ok`, `pushed=yes` and

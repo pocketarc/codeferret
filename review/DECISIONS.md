@@ -344,9 +344,13 @@ released, every thread this run has seen carries the marker, and markup anyone c
 proves nothing about who wrote a comment, in a test whose whole job is to be narrow. So it
 went.
 
-A resolved thread also settles its finding: `resolved: true` marks it `declined` with no
-reading of replies. That makes resolving a thread the way to dismiss a finding for good.
-It also takes write access, which commenting does not.
+A resolved thread settles a finding only where the body prints no more than one line for it:
+`vetSuppression` reopens `resolved: true` at critical, high, or a severity nothing
+recognises, and holds those to the same author-association bar as a reply. Closing a thread
+takes repository write or authorship of the pull request, and `resolveReviewThread` grants
+neither: on a branch from an outside contributor, the only account that can close a thread
+is the one whose work is under review, which is not the standing that commenting takes. What
+closure settles is bound to the file the thread is anchored to, and no other.
 
 Outside CI the review posts under a person's own account, so `resolve-none.md` is rendered in
 place of `resolve-judge.md` and the orchestrator closes nothing. Each policy is its own file,

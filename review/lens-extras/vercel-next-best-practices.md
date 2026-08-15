@@ -24,6 +24,17 @@ Next.js, not for its workflow. Every finding you make comes from source.
   `/_next/mcp`, and its second half runs `next build --debug-build-paths`.
 - Skip the Bundle Analysis section of `bundling.md` and the Debugging step of
   `hydration-error.md`. Both need a rendered page or an interactive analyser.
+- Do not run a codemod. `npx @next/codemod@latest upgrade` in `file-conventions.md` and
+  `npx @next/codemod@latest next-async-request-api .` in `async-patterns.md` both rewrite
+  every matching call site across the checkout, which corrupts the diff every other lens in
+  this run is reading and, being an `npx` call, fetches and runs code from the network
+  besides. A codemod the diff needs is a finding to report, never a command to run.
+- Do not run `npm run build`, `pm2 start ecosystem.config.js`, `npx create-sst@latest`, or
+  `npx @opennextjs/aws build`. None names `next` on the command line, but each starts a
+  build or a server the same way the first two bullets rule out: they are `self-hosting.md`'s
+  Pre-Deployment Checklist, its PM2 example, and its OpenNext section. The last one also
+  writes `.open-next/`, which the default `exclude-paths` hides, so its writes would be
+  invisible rather than absent.
 
 Your scope is everything in the skill except what the bullets above take out, which is most
 of it. Start with the server and client boundary and what crosses it, `async` `params`,

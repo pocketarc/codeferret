@@ -24,7 +24,29 @@ import { action, fail, inputLines, parseYaml } from "./support.ts";
 import type { Failures } from "./support.ts";
 
 /** The line that gives an end date to a lens this repository has switched off. */
-const EXCLUSION_EXPIRES = /^\s*#\s*Expires (\d{4}-\d{2}-\d{2})\b/m;
+const EXCLUSION_EXPIRES = /^[ \t]*#\s*Expires (\d{4}-\d{2}-\d{2})\b/gm;
+
+/**
+ * The comment lines directly above `key`, and nowhere else in the file.
+ *
+ * An expiry date is bound to the block it explains, not to whichever `# Expires` line the
+ * file happens to contain first: unanchored, a date left behind by a rewritten block would
+ * satisfy an exclusion it says nothing about.
+ */
+function commentAbove(raw: string, key: string): string {
+    const lines = raw.split("\n");
+    const keyLine = lines.findIndex((line) => line.trimStart().startsWith(key));
+    if (keyLine === -1) return "";
+
+    let start = keyLine;
+    while (start > 0) {
+        const prior = lines[start - 1];
+        if (!prior?.trimStart().startsWith("#")) break;
+        start--;
+    }
+
+    return lines.slice(start, keyLine).join("\n");
+}
 
 export async function checkWorkflowLenses(): Promise<Failures> {
     const list: Failures = [];
@@ -34,7 +56,16 @@ export async function checkWorkflowLenses(): Promise<Failures> {
 
     const parsed = record(await parseYaml(list, path));
     const job = record(record(parsed?.jobs)?.review);
-    const steps = Array.isArray(job?.steps) ? job.steps : [];
+
+    // Addressed by name rather than assumed present: a `review` job renamed or removed left
+    // `steps` at `[]`, `dropped` at `[]`, and this check printed an OK line for an exclusion it
+    // never looked at.
+    if (!job) {
+        fail(list, path, "declares no jobs.review, so its exclude-lenses cannot be checked against action.yml");
+        return list;
+    }
+
+    const steps = Array.isArray(job.steps) ? job.steps : [];
     const shipped = inputLines(list, "action.yml", "lenses", manifest.inputs?.lenses?.default);
 
     for (const step of steps) {
@@ -59,21 +90,29 @@ export async function checkWorkflowLenses(): Promise<Failures> {
     );
 
     if (dropped.length > 0) {
-        const on = (await Bun.file(path).text()).match(EXCLUSION_EXPIRES)?.[1];
+        const block = commentAbove(await Bun.file(path).text(), "exclude-lenses:");
+        const [date, ...extra] = [...block.matchAll(EXCLUSION_EXPIRES)].map((match) => match[1]);
         const today = new Date().toISOString().slice(0, 10);
 
-        if (!on) {
+        if (date === undefined) {
             fail(
                 list,
                 path,
-                "switches a lens off with no `# Expires YYYY-MM-DD:` line above it," +
+                "switches a lens off with no `# Expires YYYY-MM-DD:` line directly above `exclude-lenses:`," +
                     " so nothing ever asks whether it should come back on",
             );
-        } else if (on < today) {
+        } else if (extra.length > 0) {
             fail(
                 list,
                 path,
-                `switched ${dropped.join(" and ")} off until ${on}, which has passed.` +
+                `carries ${1 + extra.length} \`# Expires\` dates directly above \`exclude-lenses:\`,` +
+                    " so which one governs the exclusion is ambiguous",
+            );
+        } else if (date < today) {
+            fail(
+                list,
+                path,
+                `switched ${dropped.join(" and ")} off until ${date}, which has passed.` +
                     " Turn them back on, or set a new date and say what changed.",
             );
         }

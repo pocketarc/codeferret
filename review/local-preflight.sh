@@ -9,10 +9,18 @@
 # Output is one key=value per line. A key whose value is `missing` or `no` is not an
 # error: most of them only rule out posting.
 #
-# Usage: local-preflight.sh [<base-ref>]
+# The base ref comes in on stdin, one line, empty for none, rather than as an argument. What
+# a model has typed there is what the user typed, and an argument position is text the caller
+# composes into the command line before this script or its guards ever run: `$(...)`, a
+# backtick or a bare `"` closing the surrounding quotes early would all reach a real shell to
+# interpret first. A quoted heredoc disables every expansion in its body, and a git ref cannot
+# hold the newline that would let one collide with its terminator, so nothing the user typed
+# reaches a shell as anything but bytes until `plain_ref` below has read it.
+#
+# Usage: printf '%s\n' "<base-ref>" | local-preflight.sh
 set -uo pipefail
 
-WANTED_BASE=${1:-}
+IFS= read -r WANTED_BASE || WANTED_BASE=""
 
 say() {
     printf '%s=%s\n' "$1" "$2"

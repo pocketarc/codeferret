@@ -22,14 +22,13 @@
  */
 
 import { dirname, join } from "node:path";
-import { ownThreads, planResolution, unreadOf } from "./existing.ts";
+import { ownThreads, planResolution } from "./existing.ts";
 import { partition } from "./findings.ts";
-import { readMerged, vetAgainstExisting } from "./read-run.ts";
+import { readMerged, runFacts, vetAgainstExisting } from "./read-run.ts";
 import { graphql, graphqlFailure, requirePullNumber, requireRepository, rest, tokenFromStdinOrEnv } from "./github.ts";
 import { reason } from "./json.ts";
 import { reopenedReasons } from "./caveats.ts";
 import { composeReview, destinationOf } from "./review-body.ts";
-import { readDispatched, readSessionChanged } from "./run-files.ts";
 import { plural } from "./words.ts";
 
 const [findingsPath, headSha, prNumber] = process.argv.slice(2);
@@ -203,9 +202,7 @@ const {
         leftOpen,
         to,
         linkable: vetted.survey.linkable,
-        unread: unreadOf(existing),
-        dispatched: await readDispatched(buildDir),
-        sessionChanged: await readSessionChanged(buildDir),
+        ...(await runFacts(buildDir, existing)),
     },
     parts,
 );

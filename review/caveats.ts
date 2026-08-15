@@ -23,6 +23,10 @@ import { lenses, plural } from "./words.ts";
  * a counter added to `Vetted` into a compile error here, where an array of pairs took the new
  * one, said nothing about it, and left a reader looking at a reopened finding with no line
  * explaining why it came back.
+ *
+ * Declared in the order a reader meets these reasons, which `REOPENING_ORDER` below reads off
+ * this object rather than restating: reorder a property here and the reader-facing order moves
+ * with it, on purpose, the same way it would for `COVERAGE_ORDER` or `POSTING_ORDER`.
  */
 const REOPENING: Record<Reopening, (n: number) => string> = {
     untraceable: (n) =>
@@ -43,6 +47,19 @@ const REOPENING: Record<Reopening, (n: number) => string> = {
 };
 
 /**
+ * `REOPENING`'s own keys, read once rather than on every call.
+ *
+ * `COVERAGE_ORDER` and `POSTING_ORDER` are hand-written tuples because they are each the one
+ * place their alert union is defined. `Reopening` is not defined here (it is
+ * `Exclude<keyof Vetted, "findings">` in findings.ts), so a hand-written tuple here would be a
+ * second list a counter added to `Vetted` could fall out of step with, silently dropping its
+ * reason from the review. Reading the keys off `REOPENING` instead stays complete for free:
+ * `REOPENING`'s own `Record<Reopening, ...>` annotation above already forces every reason to be
+ * there before this line ever runs.
+ */
+const REOPENING_ORDER = Object.keys(REOPENING) as readonly Reopening[];
+
+/**
  * Why suppressions were reopened, in the words a reader gets, one line per kind that applies.
  *
  * Here for the reason the coverage sentences below are: `Vetted` is findings.ts's shape and
@@ -56,9 +73,7 @@ const REOPENING: Record<Reopening, (n: number) => string> = {
  * nothing.
  */
 export function reopenedReasons(vetted: Vetted): string[] {
-    const names = Object.keys(REOPENING) as Reopening[];
-
-    return names.filter((name) => vetted[name] > 0).map((name) => REOPENING[name](vetted[name]));
+    return REOPENING_ORDER.filter((name) => vetted[name] > 0).map((name) => REOPENING[name](vetted[name]));
 }
 
 /**
@@ -159,18 +174,25 @@ const MAX_UNREAD = 500;
 /** An escape for the stretch of a sentence that came from a model or from GitHub. */
 export type Escape = (text: string) => string;
 
-/** One thing a run has to tell a reader about its own coverage. */
-export interface Notice {
+/**
+ * One thing a run has to tell a reader, about its coverage or about the posting itself.
+ *
+ * Generic over the subject a notice is raised against, rather than one interface per caller:
+ * `COVERAGE_NOTICES` below reads `Coverage`, and `review-body.ts`'s `POSTING_NOTICES` reads
+ * `Posting`. Both are an order list, a union derived from it, and a table keyed by that union:
+ * the same shape once rather than kept in step by hand between two files.
+ */
+export interface Notice<T> {
     /** How much of a reader's attention it asks for. A page renders it as GitHub's alert of that name. */
     level: "warning" | "note";
     /** Whether this run raises it. */
-    raised: (coverage: Coverage) => boolean;
+    raised: (subject: T) => boolean;
     /**
      * The sentence. `escape` goes around every stretch that came from a model, from GitHub or
      * from a file the review session could write, and around nothing else: a renderer for a
      * page passes the escaping it needs and a terminal passes the text through.
      */
-    say: (coverage: Coverage, escape: Escape) => string;
+    say: (subject: T, escape: Escape) => string;
 }
 
 /**
@@ -186,7 +208,7 @@ const COVERAGE_ORDER = ["unread", "changed", "unaccounted", "silent", "broken", 
 
 export type CoverageAlert = (typeof COVERAGE_ORDER)[number];
 
-export const COVERAGE_NOTICES: Record<CoverageAlert, Notice> = {
+export const COVERAGE_NOTICES: Record<CoverageAlert, Notice<Coverage>> = {
     // First, because it is about the counts a reader has just read rather than about coverage
     // of the diff: a finding this review repeats is one whose answer went unread, and without
     // this the reader has only the repetition to go on.
@@ -259,7 +281,17 @@ export const COVERAGE_NOTICES: Record<CoverageAlert, Notice> = {
     },
 };
 
+/**
+ * The names in `order` whose notice `table` raises against `subject`, in `order`'s order.
+ *
+ * The one filter both notice tables use. `review-body.ts`'s `POSTING_NOTICES` is a `Notice<Posting>`
+ * table with its own order tuple, and calls this the same way rather than repeating the filter.
+ */
+export function raisedIn<K extends string, T>(order: readonly K[], table: Record<K, Notice<T>>, subject: T): K[] {
+    return order.filter((name) => table[name].raised(subject));
+}
+
 /** The notices this run raises, in the order above. */
 export function noticesFor(coverage: Coverage): CoverageAlert[] {
-    return COVERAGE_ORDER.filter((name) => COVERAGE_NOTICES[name].raised(coverage));
+    return raisedIn(COVERAGE_ORDER, COVERAGE_NOTICES, coverage);
 }

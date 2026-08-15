@@ -66,12 +66,16 @@ Its workflow does not.
 - Skip Step 2's visual inspection, Step 4's re-verification and the viewport sweep. Read
   `references/visual-checklist.md`, which the skill links from nowhere and which holds the
   checks Step 2.2 only summarises. Apply the sections the source settles without a rendered
-  page: text handling and fonts under Typography, Color Consistency, the markup halves of
-  Buttons, Links and Form Elements, Keyboard Navigation, alt text under Images, and
+  page: Fonts and the declared half of Text Handling under Typography (whether a block that
+  holds unbreakable text declares `overflow-wrap` or `text-overflow`, not whether it visibly
+  clips or an ellipsis renders), Color Consistency, the markup halves of Buttons, Links and
+  Form Elements, the source half of Keyboard Navigation (whether an interactive element is
+  reachable at all, whether a modal declares a trap, whether a skip link exists, not
+  whether the resulting tab order is logical), alt text under Images, and
   `prefers-reduced-motion` under Motion. Anything else readable from the source is in scope
-  whether or not it is named there: a declared fixed width on a fluid container, a block
-  with no `overflow-wrap` or `text-overflow` around text that cannot wrap, whether a focus
-  state is declared at all, and a font or a colour that matches no other in the change.
+  whether or not it is named there: a declared fixed width on a fluid container, whether a
+  focus state is declared at all, and a font or a colour that matches no other in the
+  change.
 - Report a contrast ratio only where the source settles both the text colour and everything
   painting behind it, in this diff or in a file you can read alongside it, and never where a
   theme layer, an opacity or an inherited background leaves the backdrop open. A ratio is a

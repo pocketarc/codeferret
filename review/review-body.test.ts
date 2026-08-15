@@ -662,6 +662,35 @@ describe("composeReview", () => {
             ).toBe(false);
         });
 
+        // The test above is this repository's own dispatched set: action.yml's default minus
+        // `comment-review` and `writing-review`, which .github/workflows/codeferret.yml
+        // excludes. A consumer who does not exclude them runs all twelve, and neither has a
+        // `STANDING_DETAIL` entry, so this covers the same ground with the full default rather
+        // than trusting that the two missing names cannot matter.
+        test("the full shipped default, twelve lenses, stays quiet too", () => {
+            const lenses = [
+                "caveman-review",
+                "anthropic-code-review",
+                "wshobson-code-review-excellence",
+                "cursor-thermo-nuclear-review",
+                "sentry-security-review",
+                "copilot-security-review",
+                "vercel-next-best-practices",
+                "copilot-web-design-reviewer",
+                "copilot-sql-code-review",
+                "anthropic-accessibility-review",
+                "comment-review",
+                "writing-review",
+            ].map((name) => `codeferret:${name}`);
+
+            expect(
+                warnedBy(
+                    { lens_health: lenses.map((lens) => ({ lens, findings_returned: 0, ok: true })) },
+                    { dispatched: lenses },
+                ),
+            ).toBe(false);
+        });
+
         test("an input the session changed under the run", () => {
             expect(
                 warnedBy({ lens_health: [healthy] }, { dispatched: ["codeferret:caveman-review"], sessionChanged: ["lenses.txt"] }),

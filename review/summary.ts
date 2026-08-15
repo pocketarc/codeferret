@@ -60,13 +60,19 @@ const findings = (await value(RUN_FILES.findingsCount)) ?? "none reported";
 const cost = await value(RUN_FILES.cost);
 const tokens = count(await value(RUN_FILES.outputTokens));
 const durationMs = count(await value(RUN_FILES.durationMs));
-const denials = count(await value(RUN_FILES.permissionDenials)) ?? 0;
+
+// Left as the `null` a log with no `permission_denials` list produces, rather than folded
+// into 0: extract-findings.ts writes `unknown` for that reason, because a log with no list at
+// all is not evidence that nothing was refused, and collapsing it to 0 here would print the
+// one figure that reason exists to keep apart from a clean run as though it were one.
+const denials = count(await value(RUN_FILES.permissionDenials));
 
 const rows: Array<[string, string]> = [
     ["Findings", findings],
     ["Cost", cost === null || cost === "unknown" ? "unknown" : `$${cost}`],
     ["Output tokens", tokens === null ? "unknown" : tokens.toLocaleString("en-GB")],
     ["Wall clock", durationMs === null ? "unknown" : wallClock(durationMs)],
+    ["Refusals", denials === null ? "unknown" : String(denials)],
 ];
 
 const table = `### CodeFerret\n\n| Measure | Value |\n|---|---|\n${rows
@@ -76,9 +82,12 @@ const table = `### CodeFerret\n\n| Measure | Value |\n|---|---|\n${rows
 const refused = denials === 1 ? "1 tool call was" : `${denials} tool calls were`;
 
 const refusals =
-    denials > 0
-        ? `\n> [!WARNING]\n> ${refused} refused. The review covers less than this summary suggests.\n`
-        : "";
+    denials === null
+        ? "\n> [!WARNING]\n> Whether any tool call was refused could not be read from this run's log." +
+          " The review may cover less than this summary suggests.\n"
+        : denials > 0
+          ? `\n> [!WARNING]\n> ${refused} refused. The review covers less than this summary suggests.\n`
+          : "";
 
 const failed =
     exitStatus !== undefined && exitStatus !== "0"

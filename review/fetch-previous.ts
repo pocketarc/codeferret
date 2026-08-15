@@ -274,13 +274,24 @@ let findings: Previous[] = [];
 try {
     own = await ownWorkflow();
 
-    const previous = await previousRun();
-
-    if (previous) {
-        from = previous.from;
-        findings = previous.findings;
+    // `openArtifact` refuses every candidate once `own` is null, whatever `previousRun` finds,
+    // so the walk always ends at the same `{ findings: [] }` this writes directly. Skipped
+    // rather than run to that guaranteed conclusion: `previousRun` costs a pull request lookup
+    // and up to `MAX_PAGES` of artifact listing, and each candidate that `openArtifact` still
+    // opens costs the line `firstPosted` prints for it, on every local review with an open pull
+    // request. The refusal itself is unconditional either way; this only skips reaching it the
+    // long way round.
+    if (own === null) {
+        console.error("previous findings: this run names no workflow, so no artifact can be tied to it and none may suppress");
     } else {
-        console.error(`previous findings: no posted '${ARTIFACT}' artifact for this branch`);
+        const previous = await previousRun();
+
+        if (previous) {
+            from = previous.from;
+            findings = previous.findings;
+        } else {
+            console.error(`previous findings: no posted '${ARTIFACT}' artifact for this branch`);
+        }
     }
 } catch (error) {
     // Every one of these means the same thing downstream: nothing to match against. The

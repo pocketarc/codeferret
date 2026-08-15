@@ -8,7 +8,7 @@
  * what the run says about itself, in the words a printed review uses too, is in `caveats.ts`.
  */
 
-import { caveatOf, COVERAGE_NOTICES, coverageOf, noticesFor } from "./caveats.ts";
+import { caveatOf, COVERAGE_NOTICES, coverageOf, noticesFor, raisedIn } from "./caveats.ts";
 import type { Coverage, CoverageAlert, Notice, RunFacts } from "./caveats.ts";
 import { isListed, lensLabel, lineOf, LISTED } from "./findings.ts";
 import type { Finding, Merged, Partitioned } from "./findings.ts";
@@ -223,11 +223,13 @@ export function mention(f: Finding, link: string, linkable: ReadonlySet<string>)
  *
  * The line starts at the item's own content column, where a `#` or a `>` opens a block of
  * its own, and `escapeInline` leaves both alone.
+ *
+ * The cut-then-escape-then-marker ordering is `oneLine`'s, applied here through the same
+ * function rather than copied: the policy is stated once and every caller of either gets it
+ * identically.
  */
 function lensDetail(detail: string): string {
-    const { kept, marker } = clampTo(flatten(detail), MAX_LENS_DETAIL);
-
-    return `\n\n  ${flatten(`${escapeBlockStart(escapeInline(kept))}${marker}`)}`;
+    return `\n\n  ${oneLine(detail, MAX_LENS_DETAIL)}`;
 }
 
 /** The joined body, and which findings actually reached it. */
@@ -428,24 +430,24 @@ export function composeReview(merged: Merged, posting: Posting, parts: Partition
 }
 
 /**
- * GitHub's alert markup for one of the run's own notices.
+ * GitHub's alert markup for one of the run's own notices, coverage or posting alike.
  *
  * `escapeInline` around every stretch that came from a model or from GitHub, and around
  * nothing else: the fixed prose carries backticks of its own that a general escape would put
  * on the page as backslashes.
  */
-function alertBlock(notice: Notice, coverage: Coverage): string {
+function alertBlock<T>(notice: Notice<T>, subject: T): string {
     const level = notice.level === "note" ? "NOTE" : "WARNING";
 
-    return `> [!${level}]\n> ${notice.say(coverage, escapeInline)}`;
+    return `> [!${level}]\n> ${notice.say(subject, escapeInline)}`;
 }
 
 /**
  * What the body says about this posting rather than about its coverage, in the order a reader
  * meets it.
  *
- * Written the way `caveats.ts` writes a coverage notice, and for the reason it gives: the
- * union comes from this list, the record below fails to compile until a new member has a
+ * A `Notice<Posting>` table, the same shape as `COVERAGE_NOTICES`, a `Notice<Coverage>` table:
+ * the union comes from this list, the record below fails to compile until a new member has a
  * sentence, and `warned` counts what the record raised rather than a boolean restated beside
  * it. `threadsLeftOpen` was keyed off the permission denial rather than off the fact, so a
  * thread left open by a stale node id or a transient GraphQL error went to stderr and nowhere
@@ -455,8 +457,9 @@ const POSTING_ORDER = ["threadsLeftOpen"] as const;
 
 type PostingAlert = (typeof POSTING_ORDER)[number];
 
-const POSTING_NOTICES: Record<PostingAlert, { raised: (p: Posting) => boolean; say: (p: Posting) => string }> = {
+const POSTING_NOTICES: Record<PostingAlert, Notice<Posting>> = {
     threadsLeftOpen: {
+        level: "warning",
         raised: (p) => p.leftOpen > 0,
         say: (p) =>
             p.resolveDenied
@@ -469,7 +472,7 @@ const POSTING_NOTICES: Record<PostingAlert, { raised: (p: Posting) => boolean; s
 
 /** The ones this posting raises, in the order above. */
 function postingNotices(posting: Posting): PostingAlert[] {
-    return POSTING_ORDER.filter((name) => POSTING_NOTICES[name].raised(posting));
+    return raisedIn(POSTING_ORDER, POSTING_NOTICES, posting);
 }
 
 /**
@@ -640,7 +643,7 @@ function tailOf(merged: Merged, parts: Partitioned, posting: Posting, aboutPosti
         );
     }
 
-    for (const name of aboutPosting) tail.push(`> [!WARNING]\n> ${POSTING_NOTICES[name].say(posting)}`);
+    for (const name of aboutPosting) tail.push(alertBlock(POSTING_NOTICES[name], posting));
 
     if (merged.notes) tail.push(`### Caveats\n\n${prose(merged.notes, MAX_PROSE)}`);
 

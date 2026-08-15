@@ -64,6 +64,21 @@ empty_existing() {
     printf '{"threads": [], "conversation": []}\n' >"$1"
 }
 
+# What existing.json says when the fetch meant to write it failed before it wrote anything at
+# all: the same shape as `empty_existing`, naming why.
+#
+# Not what a *partial* failure leaves. fetch-existing.ts writes `error` or `conversation_error`
+# itself, ahead of exiting non-zero, when one half of the fetch failed and the other did not;
+# `fetch_existing` below checks for that and leaves it alone. This is for the failure that the
+# script cannot report on its own: a crash, a missing `bun`, an exit before line one runs. Then
+# the path this writes to still holds whatever `run.sh` put there before the session, which is
+# `empty_existing`'s output and carries neither field, so `unreadOf` stays silent and
+# `vetSuppression` reopens every suppression resting on this file with nothing on the page
+# saying why.
+failed_existing() {
+    printf '{"threads": [], "conversation": [], "error": "%s"}\n' "$2" >"$1"
+}
+
 # What previous.json says when there was no pull request to fetch it from, when the fetch came
 # back with nothing, or when the copy on disk is the session's own work rather than the fetch's.
 #
@@ -131,9 +146,17 @@ run_tool() {
 # Usage: fetch_existing <root> <build-dir> <pr> [<own-login>], token on stdin.
 fetch_existing() {
     local root=$1 build=$2 pr=$3 login=${4:-}
+    local target="$build/existing.json"
 
-    run_tool "$root" fetch-existing.ts -- "$pr" "$build/existing.json" ${login:+"$login"} ||
+    if ! run_tool "$root" fetch-existing.ts -- "$pr" "$target" ${login:+"$login"}; then
         echo "could not read all of this pull request's comments. Whatever went unread counts as new." >&2
+
+        # A whole-process failure only: `grep` finds `error"` in what fetch-existing.ts wrote
+        # itself for a partial one, which is the more precise reason and stays.
+        if ! grep -q 'error"' "$target" 2>/dev/null; then
+            failed_existing "$target" "the fetch failed before it could read anything"
+        fi
+    fi
 }
 
 # What the last run raised, out of its `codeferret-run` artifact. The token comes in on stdin.

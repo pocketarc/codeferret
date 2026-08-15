@@ -79,4 +79,22 @@ describe("applyRules", () => {
         expect(out.merged.posted).toBeUndefined();
         expect(out.repairs[0]).toContain("posted");
     });
+
+    // A blank title or file renders as debris (`****`, or an unbalanced code span from `` `` ``)
+    // rather than a claim a reader can act on. `title` and `file` are schema-typed strings with
+    // no `POLICY.tolerated` entry, so the walk's own "is empty" check is fatal for both and the
+    // finding is dropped whole before review-body.ts ever sees it.
+    test("a blank title is dropped rather than rendered as bare emphasis", () => {
+        const out = check({ findings: [finding({ title: "   " })] });
+
+        expect(out.kept).toBe(0);
+        expect(out.dropped[0]?.message).toBe("is empty");
+    });
+
+    test("a blank file is dropped rather than rendered as an unbalanced code span", () => {
+        const out = check({ findings: [finding({ file: "" })] });
+
+        expect(out.kept).toBe(0);
+        expect(out.dropped[0]?.message).toBe("is empty");
+    });
 });

@@ -61,10 +61,16 @@ jobs:
                   # derived from it: run.sh writes it from `check-findings.ts`'s exit code once
                   # the session has ended, and the posting step posts nothing without it, so a
                   # maintainer asking why a paid-for review was never posted reads it here.
+                  #
+                  # `session-changed.txt` is the one file below that says whether any of the
+                  # rest may be the session's own answer rather than what this run built. The
+                  # posted review already carries the warning it feeds; a maintainer reading
+                  # the artifact instead of the pull request gets it only if it is here too.
                   artifact-path: |
                       findings.json
                       run.json
                       lens-list.txt
+                      session-changed.txt
                       cost-usd
                       duration-ms
                       permission-denials

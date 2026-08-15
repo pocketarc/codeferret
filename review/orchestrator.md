@@ -91,10 +91,12 @@ For each merged finding, set `status`:
   evidence about the pull request and nothing more: leave the finding as it stands and say
   in `notes` that the claim was made.
 
-  Copy the `url` of the reply you took the decline from into `existing_comment_url`, or the
-  thread `url` when the thread is resolved. Not the first comment of the thread unless the
-  decline is in that comment: the url is checked again against the association of whoever
-  wrote it, and a decline citing anything else is posted as `new`.
+  When the decline rests on a reply, copy that reply's `url` into `existing_comment_url`.
+  When it rests on the thread being resolved instead, copy the thread's `url`, the same
+  value as its opening comment's, since that is what a thread's `url` is here. Either
+  way, what you copy is checked again: a reply's url against the association of whoever
+  wrote it, the thread's url against the thread actually being resolved. A decline citing
+  anything else is posted as `new`.
 
   What the comment is about is checked again too. A reply on a thread anchored to the
   finding's own file passes on that alone; anything else, a conversation comment included,

@@ -41,18 +41,30 @@ const CORRECTIONS: Correction[] = [
         quotes: [
             // The DISTINCT example, whose two queries do not return the same rows.
             "SELECT DISTINCT u.*",
+            // The same example's BAD query, whose products join excludes rows the GOOD query
+            // includes.
+            "FROM users u, orders o, products p",
             // The "Overuse of DISTINCT" rewrite, which deduplicates at the same cost.
             "GROUP BY u.name",
             // The N+1 replacement, which reads every user and every order.
             "SELECT u.*, o.*",
+            // The "SECURE" example's projection, SELECT * on the table the same skill uses to
+            // illustrate sensitive columns.
+            "SELECT * FROM users WHERE id = ?",
             // The "SECURE" parameterisation, which is MySQL's syntax labelled as PostgreSQL's.
             "PREPARE stmt FROM",
+            // The "Function Misuse in WHERE Clauses" replacement, which keeps SELECT * on orders.
+            "SELECT * FROM orders ",
             // The columnstore statement, which does not parse in T-SQL.
             "CREATE COLUMNSTORE INDEX idx_sales_cs ON sales",
             // The formatting example's LEFT JOIN, filtered in the WHERE clause.
             "  AND o.order_date >= '2024-01-01';",
             // The checklist line the corrections above go the other way on.
             "Subqueries are optimized or converted to JOINs",
+            // The MySQL sessions table, with no index on the column its sweep query filters.
+            "    expires TIMESTAMP",
+            // The PostgreSQL array table, with no key and no foreign key to posts.
+            "    tag_names TEXT[]",
         ],
     },
     {
@@ -63,11 +75,18 @@ const CORRECTIONS: Correction[] = [
         // is still there while keeping one that has moved.
         quotes: [
             "### 1.1 URL Confirmation",
+            "### 1.2 Understanding Project Structure",
+            "### 1.3 Automatic Project Detection",
+            "### 1.4 Identifying Styling Method",
             "## Step 2: Visual Inspection Phase",
             "### 2.3 Viewport Testing (Responsive)",
+            "### 2.2 Inspection Items",
+            "### 3.1 Issue Prioritization",
+            "### 3.2 Identifying Source Files",
             "### 3.3 Applying Fixes",
             "## Step 4: Re-verification Phase",
             "| Issues Fixed |",
+            "**Fixed File**",
         ],
     },
     {
@@ -75,7 +94,19 @@ const CORRECTIONS: Correction[] = [
         // the skill links to this file, so nothing else would notice it going.
         file: "copilot-web-design-reviewer/references/visual-checklist.md",
         extras: "review/lens-extras/copilot-web-design-reviewer.md",
-        quotes: ["## 2. Typography Verification", "### Color Consistency", "### Text Handling"],
+        quotes: [
+            "## 2. Typography Verification",
+            "### Color Consistency",
+            "### Text Handling",
+            "### Fonts",
+            "### Buttons",
+            "### Links",
+            "### Form Elements",
+            "### Keyboard Navigation",
+            "### Images",
+            "### Motion",
+            "## Priority Matrix",
+        ],
     },
 ];
 

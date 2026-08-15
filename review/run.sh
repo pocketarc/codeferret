@@ -340,6 +340,23 @@ fi
 # looking finds this too. Like everything else here, the split raises the cost rather than
 # closing the channel.
 
+# `run.json` above and `lens-list.txt` from build-prompts.sh are each written once, before or
+# during the session, and nothing reads either back to notice a change: `run.json` is not in
+# `RECORDED` below, because reading it again would mean opening the path this shell already
+# holds a descriptor to, and `lens-list.txt` is prose for a maintainer that no script parses.
+# Both are named in `artifact-path`, and `upload-artifact` follows a symbolic link to whatever
+# it points at, so a session that replaced either with one would have this run publish an
+# arbitrary runner file under CodeFerret's own name. Removed rather than trusted: a missing
+# `run.json` is already the shape a killed session leaves, which the check below treats as
+# nothing to extract, and a missing `lens-list.txt` costs a maintainer one file of a review
+# that still posts.
+for guarded in "$BUILD/run.json" "$BUILD/lens-list.txt"; do
+    if [ -L "$guarded" ] || { [ -e "$guarded" ] && [ ! -f "$guarded" ]; }; then
+        echo "$guarded was not a plain file after the session, so it was removed rather than trusted." >&2
+        rm -f "$guarded"
+    fi
+done
+
 # What the build directory holds, against what the session was given. Nothing is copied back,
 # because nothing downstream reads a session copy: this is the report, and it is worth having
 # because a difference means that the lenses did not all read the same diff.

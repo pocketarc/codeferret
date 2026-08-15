@@ -3,8 +3,17 @@
  *
  * A pinned version in one of those files is the one escape hatch from the mutable `@v1`.
  * Advice naming a tag nobody cut fails a consumer's job at load with "unable to find
- * version", and the release procedure moves the tag and `version` together, so the manifest
- * is what they have to agree with.
+ * version", and the release procedure is meant to move the tag and `version` together, so
+ * agreement with the manifest is what this checks.
+ *
+ * That is a narrower claim than a tag actually existing. Both the manifest and this file's
+ * own prose are edited in the same commit, so a version bumped ahead of the tag that will
+ * eventually carry it reads as agreement here whether or not that tag has been cut yet: a
+ * shallow CI checkout has no tags to compare against (`fetch-tags` defaults to `false` on
+ * `actions/checkout`), and a network call to check one from a local pre-commit hook has its
+ * own cost. `CLAUDE.md`'s "Nothing has shipped" section is the read on that gap for as long as
+ * it holds: check `git tag -l` for what is actually cut before trusting the advice a shipped
+ * file gives.
  */
 
 import { existsSync } from "node:fs";

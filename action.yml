@@ -76,7 +76,13 @@ inputs:
             Next.js path and an underscore-prefixed segment, which is the App Router's one
             documented convention for a folder that is never a route, so this hides no
             routable file the way `**/out/**` would. The `out/` parent keeps it away from a
-            hand-written `app/_next/`. The exported `out/*.html` still comes through.
+            hand-written `app/_next/`. Only the hashed assets are covered: the exported
+            pages, one `.html` per prerendered route, their `.txt` React Server Component
+            prefetch payloads, and a copy of everything under `public/` all still reach
+            every lens. Add `<your-root>/out/**` to `exclude-paths` if the export lives
+            somewhere other than the repository root, `apps/*` or `packages/*`: not
+            `**/out/**/*.html` or `**/out/**/*.txt`, which would also hide a hand-written
+            `app/out/` route segment.
 
             `dist` and `vendor` are matched at any depth, and that is a trade rather than a
             rule. A package's `dist/` and a Composer `vendor/` both turn up at depths no
@@ -88,10 +94,16 @@ inputs:
             workspaces put one in every package, and no application routes on a directory a
             package manager writes.
 
-            `.next`, `.vercel` and `.open-next` are matched at any depth with nothing given
-            up. All three are tool-written output, gitignored by `create-next-app`, by
-            `vercel` and by `@opennextjs/aws` respectively, and nobody edits any of them by
-            hand, so none holds a file a lens should read. Not because the segment begins
+            `.next`, `.vercel` and `.open-next` are matched at any depth. `.next` and
+            `.open-next` give up nothing: both are tool-written output, gitignored by
+            `create-next-app` and by `@opennextjs/aws` respectively, and nobody edits either
+            by hand. `.vercel` is excluded on the same reasoning for an ordinary Next.js
+            application, where it is the `vercel` CLI's own output, but Vercel's Build
+            Output API specifies `.vercel/output/config.json` and each function's
+            `.vc-config.json` as a contract a framework, an adapter or a custom build writes
+            by hand, so a repository that hand-writes to that contract should drop this line
+            from `exclude-paths`, or its routing and function configuration is invisible to
+            every lens. Not because the segment begins
             with a dot: the App Router's one documented convention for taking a directory out
             of routing is the underscore prefix, and whether a dot-prefixed folder becomes a
             route is contested in practice (`app/.well-known/`). Anything added here on the
@@ -100,11 +112,13 @@ inputs:
             and `npx @opennextjs/aws build` writes a bundled server and a copy of the static
             assets to `apps/<app>/.open-next/`.
 
-            `next-env.d.ts` is deliberately not excluded, though it is generated. Next.js
-            rewrites it on every build and it opens with a line saying not to edit it, so the
-            only way it reaches a pull request is that somebody edited it by hand. The next
-            build silently discards that edit. A generated file in a diff is usually noise;
-            this one is the defect.
+            `next-env.d.ts` is deliberately not excluded, though it is generated:
+            `create-next-app`'s default gitignore does not track it, but plenty of
+            applications do. Next.js rewrites it on every build, and it normally changes only
+            where the build behaviour that fills it changes too: a Next.js version upgrade,
+            most often, or `typedRoutes` toggled on or off. What is worth a finding is a
+            change that fits neither: the file opens with a line saying not to edit it by
+            hand, and the next build silently discards whatever else got written there.
         required: false
         default: |
             **/*.lock

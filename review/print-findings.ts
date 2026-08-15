@@ -17,12 +17,10 @@
 
 import { dirname } from "node:path";
 import { caveatOf, COVERAGE_NOTICES, coverageOf, noticesFor, reopenedReasons } from "./caveats.ts";
-import { unreadOf } from "./existing.ts";
 import { lensLabel, lineOf, partition } from "./findings.ts";
-import { readMerged, vetAgainstExisting } from "./read-run.ts";
+import { readMerged, runFacts, vetAgainstExisting } from "./read-run.ts";
 import type { Finding } from "./findings.ts";
 import { where } from "./review-body.ts";
-import { readDispatched, readSessionChanged } from "./run-files.ts";
 import { plural } from "./words.ts";
 
 const [findingsPath] = process.argv.slice(2);
@@ -33,11 +31,12 @@ if (!findingsPath) {
 }
 
 const findingsFile: string = findingsPath;
+const buildDir = dirname(findingsFile);
 const merged = await readMerged(findingsFile, (line) => console.error(line));
 
 // A suppression the posting path would overturn has to be overturned here too, or a session
 // reports as settled a finding a posted review would raise.
-const vetted = await vetAgainstExisting(merged.findings, dirname(findingsFile), (line) => console.error(line));
+const vetted = await vetAgainstExisting(merged.findings, buildDir, (line) => console.error(line));
 const { fresh, suppressed, declined } = partition(vetted.findings);
 
 // The same sentences the posted path writes. Without them a session reopened a suppression
@@ -83,11 +82,7 @@ if (older.length > 0) {
 // nothing escaped: this goes to a terminal rather than through GitHub's renderer. The
 // hand-built version had already lost the sentence about a half-read discussion, so a session
 // printed reopened findings with nothing saying why, while a posted run explained it.
-const coverage = coverageOf(merged, {
-    dispatched: await readDispatched(dirname(findingsFile)),
-    sessionChanged: await readSessionChanged(dirname(findingsFile)),
-    unread: unreadOf(vetted.existing),
-});
+const coverage = coverageOf(merged, await runFacts(buildDir, vetted.existing));
 
 for (const name of noticesFor(coverage)) out.push(COVERAGE_NOTICES[name].say(coverage, (text) => text));
 

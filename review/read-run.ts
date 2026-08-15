@@ -5,12 +5,14 @@
  */
 
 import { join } from "node:path";
-import { readExisting, survey } from "./existing.ts";
+import type { RunFacts } from "./caveats.ts";
+import { readExisting, survey, unreadOf } from "./existing.ts";
 import type { Survey, Surveyed } from "./existing.ts";
 import type { Finding, Merged, Vetted } from "./findings.ts";
 import { isMerged, vetSuppression } from "./findings.ts";
 import { reason } from "./json.ts";
 import { filesRaisedBefore } from "./previous.ts";
+import { readDispatched, readSessionChanged } from "./run-files.ts";
 
 /** What a reader is told, so a caller decides where a line goes. */
 export type Report = (line: string) => void;
@@ -90,4 +92,21 @@ export async function vetAgainstExisting(findings: Finding[], buildDir: string, 
     const walked = survey(existing);
 
     return { existing, survey: walked, ...vetSuppression(findings, walked, raisedBefore) };
+}
+
+/**
+ * What `coverageOf` needs beyond a run's own findings, read off the build directory and the
+ * vetting already done against it.
+ *
+ * Shared for the reason the rest of this module is: `post-review.ts` and `print-findings.ts`
+ * built this bag of three reads independently, from the same directory and the same vetting
+ * result, so a caller that named the wrong directory or read `unread` from a different
+ * `Surveyed` compiled anyway. One function here is the one place a fourth read would join it.
+ */
+export async function runFacts(buildDir: string, existing: Surveyed): Promise<RunFacts> {
+    return {
+        unread: unreadOf(existing),
+        dispatched: await readDispatched(buildDir),
+        sessionChanged: await readSessionChanged(buildDir),
+    };
 }

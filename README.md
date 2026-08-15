@@ -9,9 +9,9 @@ it, so agreement between them stays visible.
 Every lens reads source. The accessibility, web design and Next.js lenses have no browser,
 no running application and no rendered page, so any criterion that needs one of those,
 contrast and focus order among them, goes unchecked. Which criteria those are is written out
-one by one in
-[`review/lens-extras/anthropic-accessibility-review.md`](review/lens-extras/anthropic-accessibility-review.md),
-and every review says what each lens could not check, in that lens's own words.
+one by one in each lens's own file under
+[`review/lens-extras/`](review/lens-extras/), and every review says what each lens could not
+check, in that lens's own words.
 
 There are two ways to run it: as a GitHub action on every pull request, or as a Claude
 Code plugin on the branch in front of you.

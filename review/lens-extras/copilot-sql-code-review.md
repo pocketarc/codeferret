@@ -67,7 +67,11 @@ alongside the statement text (`db.query('SELECT id, email FROM users WHERE id = 
 The replacement under "Function Misuse in WHERE Clauses" keeps `SELECT *` on `orders` in the
 same way: the range condition it teaches is right and the projection carried over from the
 bad example is not. So do not read a green tick as permission for the projection it carries:
-name the columns, and raise `SELECT *` in the diff on the skill's own rule.
+name the columns. Raise a `SELECT *` in the diff where it crosses a boundary (a result set
+an application consumes, a view definition, or the source of an `INSERT ... SELECT` into a
+table whose shape can drift), which is the skill's own rule, narrower than these examples
+apply it: not `EXISTS (SELECT * FROM ...)`, the standard idiom for an existence test whose
+star is never materialised, and not `COUNT(*)`, which is not a star projection at all.
 
 Its "SQL Style & Formatting" example carries a green tick on a join that does not do what it
 says. The GOOD query leaves `o.order_date >= '2024-01-01'` in the `WHERE` clause of a
@@ -102,6 +106,30 @@ which needs one. They are not interchangeable, and the comment above it ("Column
 for analytics") means the clustered form. The statement sits under a heading the skill presents
 as best practice with no cross beside it, so recommend the clustered form and never quote the
 statement as written: an author pastes it into a migration and gets a syntax error.
+
+Its MySQL "Database-Specific Best Practices" example carries the same standing and the same
+gap: `CREATE TABLE sessions (id VARCHAR(128) PRIMARY KEY, data TEXT, expires TIMESTAMP)
+ENGINE=InnoDB;` has no index on `expires`, though the only query a sessions table gets
+besides the primary-key lookup is the garbage-collection sweep, `DELETE FROM sessions WHERE
+expires < NOW()`, which against this DDL is a full table scan taking row locks across the
+whole table. `TIMESTAMP` rather than `DATETIME` also caps the column at 2038-01-19 UTC, and
+on a server where `explicit_defaults_for_timestamp` is off (the default on 5.7 and on an
+8.0 instance that has not turned it on), the first `TIMESTAMP` column in a table is
+implicitly `NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`, so every write
+to `data` silently resets `expires` to now. Recommend `expires DATETIME NOT NULL` with an
+explicit `KEY idx_sessions_expires (expires)`, and raise the same gap where a reviewed diff
+copies this shape.
+
+Its PostgreSQL "Database-Specific Best Practices" example, `CREATE TABLE tags (post_id INT,
+tag_names TEXT[]);`, illustrates the `TEXT[]` type and is not a schema to copy: it has no
+primary key, no `NOT NULL`, and no foreign key from `post_id` to `posts`, which its own
+Schema Design Review bullet and checklist both ask for. An array column is right where the
+values are attributes of the row and are never joined to or constrained on their own:
+`tag_names TEXT[] NOT NULL DEFAULT '{}'` on a `posts` row, with `post_id` a real key and a
+GIN index for containment queries. A join table is right where they are entities, which is
+what the name `tags` implies: `post_tags (post_id, tag_id)` with both foreign keys and a
+composite primary key. Recommend whichever the diff's own use calls for, not the array table
+as given.
 
 Its Issue Template, and the output format, scores and priority actions around it, are
 upstream's own reporting shape, and none of it applies: your output is the JSON schema in the
