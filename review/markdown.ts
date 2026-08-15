@@ -297,6 +297,24 @@ function escapeTags(text: string): string {
 }
 
 /**
+ * Whether a line is a GFM table's delimiter row.
+ *
+ * The delimiter row is what makes a table: without it the line above is prose, and with it
+ * that line becomes a header. So this is the line to defuse, and matching the header
+ * instead would defuse ordinary prose holding a pipe.
+ *
+ * Split rather than matched whole. A one-column table's row is `| --- |`, and a pattern
+ * reading the pipes as separators alone counts one cell too few and lets it through.
+ */
+function tableDelimiter(line: string): boolean {
+    if (!line.includes("|")) return false;
+
+    const cells = line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|");
+
+    return cells.every((cell) => /^\s*:?-+:?\s*$/.test(cell));
+}
+
+/**
  * Escape the block a line would otherwise open on its own.
  *
  * The review's own headings are an h2 and h3s below it, so a model's line opening with `#`
@@ -304,11 +322,20 @@ function escapeTags(text: string): string {
  * navigates by. `>` at the start of a line inside a list item opens a blockquote. A line
  * that is nothing but a run of `-`, `=`, `*` or `_` is a thematic break, and one directly
  * under a line of prose turns that prose into a heading instead.
+ *
+ * A table is the last of them. `review/lens-brief.md` tells a lens to write none in these
+ * fields, for the reason `headOf` gives against tables in the review's own markup. Several
+ * vendored skills write their output template as a table, so a body arrives as one anyway,
+ * and `bullet` indents it to the list item's content column where it renders as a real grid
+ * among prose bullets.
+ *
+ * The thematic-break test runs first either way, so a bare `---` keeps the handling it had.
  */
 export function escapeBlockStart(line: string): string {
     const escaped = line.replace(/^(\s*)([#>])/, "$1\\$2");
+    const opens = /^\s*(=+|-+|\*{3,}|_{3,})\s*$/.test(escaped) || tableDelimiter(escaped);
 
-    return /^\s*(=+|-+|\*{3,}|_{3,})\s*$/.test(escaped) ? escaped.replace(/^(\s*)(.)/, "$1\\$2") : escaped;
+    return opens ? escaped.replace(/^(\s*)(.)/, "$1\\$2") : escaped;
 }
 
 /** Whether a line is blank, which is what starts and ends an indented code block. */

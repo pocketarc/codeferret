@@ -14,6 +14,7 @@
  * cannot import it.
  */
 import { join } from "node:path";
+import { lines } from "./lines.ts";
 
 export const RUN_FILES = {
     findingsCount: "findings-count",
@@ -45,10 +46,7 @@ export const DISPATCHED_FILE = "lenses.txt";
 
 /** The lenses a run dispatched, out of that file's text. */
 export function dispatchedFrom(text: string): string[] {
-    return text
-        .split("\n")
-        .map((line) => line.trim())
-        .filter((line) => line !== "");
+    return lines(text);
 }
 
 /**

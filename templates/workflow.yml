@@ -1,5 +1,10 @@
 name: CodeFerret
 
+# `pull_request` and never `pull_request_target`. That trigger runs with the secrets
+# available against a head sha that is the fork's commit, which is the usual way an action
+# holding a token comes to run somebody else's code. The action refuses to start under it, so
+# changing this line does not get external pull requests reviewed, and neither does dropping
+# the head-repo test from the gate below.
 on:
     pull_request:
         types: [opened, synchronize, ready_for_review, reopened]

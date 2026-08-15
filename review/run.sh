@@ -48,15 +48,12 @@ MODEL=${MODEL:-opus}
 EFFORT=${EFFORT:-}
 PERMISSION_MODE=${PERMISSION_MODE:-bypassPermissions}
 
-: "${LENSES:?no lenses given}"
-
 # shellcheck source=review/lib.sh
 . "$ACTION/review/lib.sh"
 
 run_dirs "$OUT"
 BUILD=$BUILD_DIR
-
-prefix_reaches "$ACTION"
+SESSION=$SESSION_DIR
 
 # The two GitHub fetches below need a token that can read the pull request. The
 # orchestrator must not have it: every lens it dispatches carries Bash, and
@@ -88,11 +85,14 @@ if [ -n "${GITHUB_TOKEN_FILE:-}" ] && [ -f "$GITHUB_TOKEN_FILE" ]; then
     rm -f "$GITHUB_TOKEN_FILE"
 fi
 
-# After the file above is consumed, not before. A rejected value exits, and exiting while the
-# caller's credential is still sitting in the run directory leaves it there with nothing left
-# running to clear it: /codeferret:review stages somebody's own `gh` token and then execs, so
-# no trap of its own survives to tidy up. Still ahead of build-prompts, both fetches and the
-# session, which is what keeps a misspelling from being found by a CLI usage error minutes in.
+# Every guard on what the caller asked for sits below the block above rather than beside the
+# value it checks. A rejected value exits, and exiting while the caller's credential is still
+# sitting in the run directory leaves it there with nothing left running to clear it:
+# /codeferret:review stages somebody's own `gh` token and then execs, so no trap of its own
+# survives to tidy up. The lens check and `prefix_reaches` used to sit above the block and
+# left a plaintext token behind on every exit they took. Every guard is still ahead of
+# build-prompts, both fetches and the session, which is what keeps a misspelt input from
+# being found by a CLI usage error twenty minutes in.
 case ${EFFORT:-} in
 "" | low | medium | high | xhigh | max) ;;
 *)
@@ -100,6 +100,10 @@ case ${EFFORT:-} in
     exit 1
     ;;
 esac
+
+: "${LENSES:?no lenses given}"
+
+prefix_reaches "$ACTION"
 
 # Everything below is weaker than the file, and it is here for the credentials this script
 # does not own. A caller's job may declare GITHUB_TOKEN of its own, and the runner puts
@@ -142,46 +146,15 @@ for name in $(compgen -e | grep '^INPUT_' || true); do
     unset -v "$name"
 done
 
-# Subtraction, so that a caller wanting the shipped set minus one need not restate the rest.
-# A restated list is a copy, and a copy goes stale the day a lens is added to the default,
-# with the only symptom a review covering less than it says it does.
+# Which lenses this run dispatches, decided in review/select-lenses.ts, which has why the
+# subtraction exists and why an exclusion that matches nothing is a line on stderr rather than
+# a failure. It was a `trim`, a `while read` loop and a `grep -vxF` here, and nothing tested
+# any of it: a case no test covered reached shipped configuration and killed every consumer run.
 #
-# A name that matched nothing is reported on stderr rather than failed on. The list it
-# subtracts from is somebody else's to change, and a lens dropped upstream would otherwise
-# fail every job that had asked not to run it. Running one lens more than intended is noisier,
-# not quieter, which is the direction to be wrong in here.
-#
-# `plain_name` first: these become path components and prompt lines downstream, and this one
-# comes from a workflow input like every other.
-#
-# Both sides are trimmed before they meet, because the match has to be a whole line and
-# build-prompts.sh reads its own list with `read`, which trims. Without the trim an indented
-# name would pass through here and be used there, and the run would report the exclusion as
-# matching nothing while the lens ran.
-trim() {
-    sed 's/^[[:blank:]]*//; s/[[:blank:]]*$//' | grep -v '^$' || true
-}
-
-kept=$(printf '%s\n' "$LENSES" | trim)
-
-while read -r drop; do
-    # `<<<` feeds one empty line for an empty string however the value was trimmed, so an
-    # unset EXCLUDE_LENSES arrived here as a name of "". That is the shipped default, and
-    # `plain_name` refuses it, so every consumer run died before the prompts were built.
-    [ -n "$drop" ] || continue
-
-    if ! plain_name "$drop"; then
-        echo "exclude-lenses holds '$drop', which is not a plain lens name." >&2
-        exit 1
-    fi
-
-    before=$kept
-    kept=$(printf '%s\n' "$kept" | grep -vxF "$drop" || true)
-
-    if [ "$before" = "$kept" ]; then
-        echo "exclude-lenses names '$drop', which this run was not going to use anyway." >&2
-    fi
-done <<<"$(printf '%s\n' "${EXCLUDE_LENSES:-}" | trim)"
+# This `bun` writes nothing, so it cannot be the one that creates the build directory inside
+# a container and leaves `prefix_reaches` answering yes about a path only the container has.
+kept=$($PREFIX bun --config=/dev/null "$ACTION/review/select-lenses.ts" \
+    "$LENSES" "${EXCLUDE_LENSES:-}")
 
 # PREFIX goes with it because build-prompts.sh runs bun too, to render an agent for a lens
 # the action does not bundle, and because the build directory's own reachability is checked
@@ -230,16 +203,15 @@ if [ -n "${PR:-}" ]; then
     # whole file as empty would not be.
     printf '%s' "$token" | fetch_existing "$ACTION" "$BUILD" "$PR" "${OWN_LOGIN:-}"
 
-    # What the last run raised is in its own findings file, which needs `actions: read` to
-    # read back. The shipped workflow grants it and a consumer can decline it, so this is
-    # allowed to come back empty. fetch-previous.ts reports its own failures, so the `||`
-    # is for a failure before it can.
-    printf '%s' "$token" |
-        $PREFIX env "GITHUB_REPOSITORY=${GITHUB_REPOSITORY:-}" "GITHUB_RUN_ID=${GITHUB_RUN_ID:-}" \
-            bun --config=/dev/null "$ACTION/review/fetch-previous.ts" \
-            "$PR" "$BUILD/previous.json" ||
-        echo "could not read the previous run's findings. Every finding will count as new." >&2
+    # What the last run raised is in its own findings file. `fetch_previous` in lib.sh has
+    # what that read needs and why it may come back empty.
+    printf '%s' "$token" | fetch_previous "$ACTION" "$BUILD" "$PR"
 fi
+
+# The session reads its own copies, at the paths its prompts name. build-prompts.sh put the
+# empty forms there; both fetches above write into the build directory, so the copies are
+# taken again once they have run rather than being written twice.
+cp "$BUILD/existing.json" "$BUILD/previous.json" "$SESSION/"
 
 # Both fetches are done, and nothing this script runs from here on needs a credential. The
 # reason is what comes after the session: `install: auto` puts `bun` on PATH with `npm
@@ -259,36 +231,23 @@ token=""
 # looks for findings, and a run that failed is the one those numbers matter most for.
 status=0
 
-# Copied before the session and put back after it, for the reason the block below the
-# orchestrator gives. Each decides something once the review has ended: `diff.sh` and
-# `diff-args` are between them the diff every lens read, and reviewed-commit.ts takes from
-# the second the commit local-post.sh refuses to post against; check-findings.ts reads
-# `lenses.txt` for the one check that catches a lens that ran and reported nothing about
-# itself; and `vetSuppression` reads `previous.json` for whether the last review raised
-# anything in the file of a finding this run says was raised before. None of them can move
-# out of the build directory (diff.sh reads its arguments from beside itself, and the prompts
-# name every path), so a copy is what there is. A lens with Bash could find this one too;
-# what it buys is that a rewritten file is reported instead of believed.
+# The files the session was handed, which are the whole of what it could have rewritten of
+# what anything else once read. `diff.sh` and `diff-args` are between them the diff every lens
+# read; `existing.json` and `previous.json` are the record its own suppressions are decided
+# against. Each is a copy under `$SESSION`, and the original stays in the build directory,
+# which no prompt names and which everything downstream reads: reviewed-commit.ts takes the
+# reviewed commit out of `diff-args`, check-findings.ts reads `lenses.txt` for the one check
+# that catches a lens that ran and reported nothing about itself, and `vetSuppression` reads
+# `previous.json` for whether the last review raised anything in the file of a finding this
+# run says was raised before.
 #
-# One list, used twice. Copied without comparing, tampering with a file goes unreported;
-# compared without copying, `cmp` and then `cp` both fail against a file that is not there
-# and `set -e` kills the job after the review has been paid for.
-PINNED=(diff-args diff.sh lens-list.txt lenses.txt previous.json)
-
-# Beside the build directory rather than under `mktemp -d`. `command-prefix` is asked to
-# mount `$RUN_DIR` and nothing else, so a path outside it is one the container cannot see:
-# extract-findings.ts is handed this directory and read the run log through the prefix, and
-# on that path it was reading a directory that does not exist there. Obscurity is unchanged
-# either way, and it was never the point: a lens with Bash can list either location. What the
-# copy buys is that a rewritten file is reported rather than believed.
-PRISTINE="$RUN_DIR/pristine"
-rm -rf "$PRISTINE"
-mkdir -p "$PRISTINE"
-trap 'rm -rf "$PRISTINE"' EXIT
-
-for pinned in "${PINNED[@]}"; do
-    cp "$BUILD/$pinned" "$PRISTINE/"
-done
+# This used to be one directory, so every one of those files had to be copied aside before the
+# session, compared afterwards and put back, with the comparison and the restore sharing a
+# list because doing either alone fails. Two directories cost one `cp` and leave nothing to
+# put back. What is left of that is the comparison below, which is the half that was never
+# about correctness: a lens with Bash runs as this user and can find either directory, so what
+# the split buys is that a rewritten file is reported rather than believed.
+HANDED=(diff-args diff.sh existing.json previous.json)
 
 # WebFetch and WebSearch are denied for the reason scripts/build-lens-agents.ts gives for
 # leaving them off every lens. Agent has to stay: STEP 1 of the orchestrator prompt
@@ -312,68 +271,54 @@ done
             --no-session-persistence \
             --disallowed-tools Edit Write NotebookEdit WebFetch WebSearch \
             --plugin-dir "$OUT"
-) >"$PRISTINE/run.json" || status=$?
+) >"$BUILD/run.json" || status=$?
 
-# Not into the build directory, which findings.json is derived from and which the session
-# knows: its dispatch prompt names `build/diff-args`. The shell holds the redirect, so a lens
+# Into the build directory, which no prompt names. The shell holds the redirect, so a lens
 # cannot corrupt the bytes claude is writing, but anything appended past the end survives and
 # extract-findings.ts reads exactly that. Trailing bytes fail the whole-file parse, the
 # line-by-line fallback runs, and the last line whose `type` is `result` becomes the merged
 # findings the review is built from, posted under the account that holds `pull-requests:
-# write`. Deleting findings.json below covers the file the review is built from; this covers
-# the file that one is extracted from.
+# write`. That is what the session directory is for: every path the session was given is under
+# it, and this file is not one of them.
 #
-# `$PRISTINE` sits beside the build directory, for the reason given above, and is named in no
-# prompt. Like the copies taken into it, that raises the cost rather than closing the channel:
-# a lens with Bash runs as this user and can look.
-#
-# Not fatal. A session killed before it wrote a byte already reaches the `-f` test below, and
-# dying here instead would lose the cost and the refusals that run wrote.
-cp "$PRISTINE/run.json" "$BUILD/run.json" ||
-    echo "the run log could not be put beside the findings. Nothing will be extracted from it." >&2
+# `--plugin-dir` is handed `$OUT`, which both directories sit under, so a lens that goes
+# looking finds this too. Like everything else here, the split raises the cost rather than
+# closing the channel.
 
-# The orchestrator ran with Bash under bypassPermissions and knows this directory: its
-# dispatch prompt names `build/diff-args`, and build-prompts.sh puts the two json paths into
-# the prompt itself. Every file below decides something after the session has ended, and
-# none of them is evidence unless the step that earns it wrote it during this run. So each
-# path is cleared here, and what comes next puts it back or it does not.
+# What the build directory holds, against what the session was given. Nothing is copied back,
+# because nothing downstream reads a session copy: this is the report, and it is worth having
+# because a difference means that the lenses did not all read the same diff, or that the
+# record the vetting decides against was rewritten by the thing being vetted.
+#
+# Before the deletions below, so that `existing.json` is still the file the fetch wrote.
+for handed in "${HANDED[@]}"; do
+    cmp -s "$BUILD/$handed" "$SESSION/$handed" 2>/dev/null ||
+        echo "$handed changed during the review, so what the session read is not what it was given." >&2
+done
+
+# The orchestrator ran with Bash under bypassPermissions, so a directory no prompt names is
+# still a directory it can list. Every file below decides something after the session has
+# ended, and none of them is evidence unless the step that earns it wrote it during this run.
+# So each path is cleared here, and what comes next puts it back or it does not.
 #
 # findings.json and findings-checked are what the action posts on. post-review.ts and
 # print-findings.ts re-decide every suppression and every thread closure against
-# existing.json, and the orchestrator could have written the copy it was handed. So it is
-# replaced with the empty form, which reopens every suppression, and the first of the two to
-# run calls `fetch_existing` for a copy the session had no hand in. The fetch is theirs rather
-# than this script's because the token would have to come back into this shell to be used
-# here, and lib.sh has the rest of that argument.
-#
-# The rest cannot be re-derived here without running build-prompts.sh again or paying for
-# another artifact download, so the copies taken before the session go back instead. A
-# difference is reported rather than swallowed: it means the session rewrote what the lenses
-# were diffing, or the record its own suppressions are checked against.
+# existing.json, so it is replaced with the empty form, which reopens every suppression, and
+# the first of the two to run calls `fetch_existing` for a copy taken after the session ended.
+# The fetch is theirs rather than this script's because the token would have to come back into
+# this shell to be used here, and lib.sh has the rest of that argument.
 rm -f "$BUILD/findings.json" "$BUILD/findings-checked" "$BUILD/existing.json"
 empty_existing "$BUILD/existing.json"
-
-for pinned in "${PINNED[@]}"; do
-    if ! cmp -s "$PRISTINE/$pinned" "$BUILD/$pinned"; then
-        echo "$pinned changed during the review. The lenses did not all read the same diff." >&2
-    fi
-
-    cp "$PRISTINE/$pinned" "$BUILD/$pinned"
-done
 
 # `-f` and not `-s`: a session killed before it wrote a byte leaves this file empty, and that
 # is the run extract-findings.ts writes `none reported` and `unknown` for. Skip it and the run
 # files are never written at all, and the action's `findings-count` output comes back as an
 # empty string, which action.yml documents as `none reported`.
-if [ -f "$PRISTINE/run.json" ]; then
+if [ -f "$BUILD/run.json" ]; then
     extracted=0
 
-    # Read from the pristine copy, not the one beside the findings. The copy exists so a
-    # maintainer reading the artifact has the log next to what was built from it, and the
-    # session knows that directory: extracting from the copy would put the appendable file
-    # back in the path this whole block exists to keep it out of.
     $PREFIX bun --config=/dev/null "$ACTION/review/extract-findings.ts" \
-        "$PRISTINE/run.json" "$BUILD/findings.json" || extracted=$?
+        "$BUILD/run.json" "$BUILD/findings.json" || extracted=$?
 
     if [ "$status" -eq 0 ]; then
         status=$extracted

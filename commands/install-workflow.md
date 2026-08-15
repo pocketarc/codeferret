@@ -26,6 +26,15 @@ permission below is within reach of a review talked into running a command, `pul
 write` included. What would take posting out of that reach is a second job that never runs
 the agent, which is a change to make in the workflow rather than in the action.
 
+Say what the trigger does before you say what the permissions are for, because the trigger is
+the half a later edit undoes. The template runs on `pull_request`, and its `if:` skips a pull
+request whose branch is on a fork; those two lines together are what keeps the agent off code
+nobody here wrote. Name `pull_request_target` and say not to use it: under that trigger the
+secrets reach a job whose head sha is the fork's commit, and the action fails its first step
+rather than review anything. Dropping the head-repo test from the `if:` reaches the same
+place, and the action fails on that too, so anybody who wants external pull requests reviewed
+cannot get there by loosening this file.
+
 `contents: read` is what the template ships, and everything works under it. The one thing
 `contents: write` adds is closing the inline threads CodeFerret left on this repository
 before `v1.1.0`: a review is one body now and opens no thread of its own, so

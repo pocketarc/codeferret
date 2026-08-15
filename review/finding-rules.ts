@@ -403,8 +403,9 @@ export interface SelfCheck {
  * A key in `POLICY` the schema has no field for is a rule that stopped running, and a
  * findings file that rule would have caught is still reported `shape valid`. A rename in the
  * schema, or a typo in the table, is a problem with this repository and is answerable
- * without running a review, which is why `checkFindingRules` in scripts/validate-repo.ts is
- * what fails on it, rather than anything on the path a review takes.
+ * without running a review, which is why `checkFindingRules` in
+ * scripts/checks/finding-rules.ts is what fails on it, rather than anything on the path a
+ * review takes.
  *
  * The walk runs both ways. A field of a finding with no entry either way is fatal by
  * default, because the walk reports it and nothing tolerates the report, and that is a

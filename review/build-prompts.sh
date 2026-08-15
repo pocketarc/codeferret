@@ -40,6 +40,7 @@ PREFIX=${PREFIX:-}
 
 run_dirs "$PLUGIN"
 BUILD=$BUILD_DIR
+SESSION=$SESSION_DIR
 
 if ! plain_ref "$BASE"; then
     echo "base ref '$BASE' is not a plain git ref" >&2
@@ -101,7 +102,7 @@ fi
 rm -rf "$PLUGIN"
 
 # Agents and skills must share one plugin to share a namespace.
-mkdir -p "$BUILD" "$PLUGIN/.claude-plugin" "$PLUGIN/agents" "$PLUGIN/skills"
+mkdir -p "$BUILD" "$SESSION" "$PLUGIN/.claude-plugin" "$PLUGIN/agents" "$PLUGIN/skills"
 
 # Before anything that can exit, so a run that dies halfway leaves a directory the next run
 # may clear. `prefix_reaches` below exits 1, and without the marker already down that exit
@@ -120,16 +121,13 @@ printf '{"name": "%s", "version": "0.0.0", "description": "CodeFerret run plugin
 
 LENSES=()
 while IFS= read -r lens; do
-    lens=$(printf '%s' "$lens" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
-    [ -z "$lens" ] && continue
-
     if ! plain_name "$lens"; then
         echo "lens name '$lens' is not a plain name" >&2
         exit 1
     fi
 
     LENSES+=("$lens")
-done
+done < <(trim_lines)
 
 if [ "${#LENSES[@]}" -eq 0 ]; then
     echo "no lenses given" >&2
@@ -146,9 +144,6 @@ fi
 # and says nothing about the rest of the change.
 PATHSPEC_ARGS=()
 while IFS= read -r glob; do
-    glob=$(printf '%s' "$glob" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
-    [ -z "$glob" ] && continue
-
     # The list reaches git as argv, through the NUL-separated file written further down, so
     # no shell reads it on the way. The check is what keeps that true: a glob refused here
     # cannot be the one that turns up in a prompt or a command line the day somebody hands
@@ -168,7 +163,7 @@ while IFS= read -r glob; do
     # in, which is where `next build` writes in a repository holding one app. Under glob
     # magic `out/**` and `build/**` stay anchored at the root, as they are meant to.
     PATHSPEC_ARGS+=(":(top,exclude,glob)$glob")
-done <<<"${EXCLUDE_PATHS:-}"
+done < <(printf '%s\n' "${EXCLUDE_PATHS:-}" | trim_lines)
 
 for lens in "${LENSES[@]}"; do
     if [ -f "$ACTION/lenses/skills/$lens/SKILL.md" ]; then
@@ -257,6 +252,10 @@ git diff "${args[@]}"
 DIFF_SCRIPT
 
 # The dispatch prompt is indented so that it sits as a block inside the orchestrator's.
+#
+# Every path named in a prompt is under `$SESSION`, and the copies there are written at the
+# end of this script. Nothing downstream reads one: the originals stay in `$BUILD`, which no
+# prompt names and which is where the run's own record of what the lenses read is taken from.
 (
     cd "$BUILD" &&
         $PREFIX bun --config=/dev/null "$ACTION/scripts/render-prompt.ts" \
@@ -265,8 +264,8 @@ DIFF_SCRIPT
             "__BASE__=$BASE" \
             "__HEAD__=$HEAD_SHA" \
             "__RANGE__=$RANGE" \
-            "__DIFF_SCRIPT__=$BUILD/diff.sh" \
-            "__DIFF_ARGS__=$BUILD/diff-args"
+            "__DIFF_SCRIPT__=$SESSION/diff.sh" \
+            "__DIFF_ARGS__=$SESSION/diff-args"
 )
 
 # Only CodeFerret's own account can tell its threads from a person's. Anywhere else the
@@ -284,8 +283,8 @@ fi
             "$ACTION/review/orchestrator.md" "$BUILD/orchestrator.txt" \
             "__BASE__=$BASE" \
             "__HEAD__=$HEAD_SHA" \
-            "__EXISTING__=$BUILD/existing.json" \
-            "__PREVIOUS__=$BUILD/previous.json" \
+            "__EXISTING__=$SESSION/existing.json" \
+            "__PREVIOUS__=$SESSION/previous.json" \
             "__LENS_LIST__@$BUILD/lens-list.txt" \
             "__DISPATCH__@$BUILD/dispatch.txt" \
             "__RESOLVE__@$RESOLVE_FILE"
@@ -297,6 +296,15 @@ fi
 # the step that decides what to suppress on most runs of `/codeferret:review`.
 empty_existing "$BUILD/existing.json"
 printf '{"findings": []}\n' >"$BUILD/previous.json"
+
+# The files the session opens while it runs, copied to the paths the prompts above name.
+# `diff.sh` and `diff-args` are copied together because the script reads its arguments from
+# beside itself. run.sh copies the two json files again once the fetches have rewritten them.
+#
+# The copies are what leaves everything in `$BUILD` readable as the run's own record. Neither
+# `lens-list.txt` nor `orchestrator.txt` is here, because the prompts splice their contents
+# rather than naming them, so the session never opens either.
+cp "$BUILD/diff-args" "$BUILD/diff.sh" "$BUILD/existing.json" "$BUILD/previous.json" "$SESSION/"
 
 echo "built ${#LENSES[@]} lens(es): ${LENSES[*]}"
 echo "  plugin: $PLUGIN"

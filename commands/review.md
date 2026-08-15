@@ -118,8 +118,10 @@ the base to it. Add to that command line where these apply:
   reasoning effort on the orchestrator's session. Leave it out for the model's own default.
   Whether it reaches each lens is unmeasured, and so is what turning it down costs a review.
 
-Everything the run writes lands in `<git-dir>/codeferret/run/build/`, where `<git-dir>` is
-the `repo=` value from step 1, and the findings in `findings.json` beside `run.json`.
+Everything the run keeps lands in `<git-dir>/codeferret/run/build/`, where `<git-dir>` is
+the `repo=` value from step 1, and the findings in `findings.json` beside `run.json`. The
+`session/` directory next to it holds the copies the review session was handed, and nothing
+after the review reads them.
 
 ## 5. Print what they found
 

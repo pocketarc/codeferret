@@ -202,6 +202,8 @@ the orchestrator's last turn alone, and undercounted one full run sixtyfold.
 | `run.sh` | One review, start to finish. Both front doors call this. |
 | `build-prompts.sh` | Assembles the run's plugin and the orchestrator prompt. |
 | `../scripts/render-prompt.ts` | Fills a prompt template's placeholders, and fails on one nothing filled. |
+| `../scripts/validate-repo.ts` | The command around every check this repository runs on itself: argv, the run, the exit code. |
+| `../scripts/checks/` | One module per check, named for the key it is listed under. `index.ts` is the registry and the one place the suite is visible; `support.ts` holds the `Failures` protocol and the parsers. |
 | `local-preflight.sh` | Works out from the checkout what the workflow event would otherwise supply. |
 | `local-run.sh`, `local-print.sh`, `local-post.sh` | What `/codeferret:review` runs, so a session pastes no paths and relays no refs. |
 | `defaults/` | The `lenses` and `exclude-paths` defaults as plain lists, for a session that cannot read a YAML default. Generated from action.yml. |
@@ -225,9 +227,11 @@ the orchestrator's last turn alone, and undercounted one full run sixtyfold.
 | `markdown.ts` | Where a fenced block starts and stops, and what a model's prose may open in a posted review. `markdown.test.ts` beside it. |
 | `reviewed-commit.ts` | Prints the commit the lenses read, for whoever is about to post against it. |
 | `diff-args.ts` | Reads back what the lenses were told to diff, so nothing builds a second range or pathspec. |
-| `artifact-path.ts` | What `artifact-path` names: the path the upload step is given, and whether the findings go up with it. `artifact-path.test.ts` beside it. |
+| `artifact-path.ts` | What `artifact-path` names: the paths the upload step is given, and whether the findings go up with them. `artifact-path.test.ts` beside it. |
 | `github.ts` | How these scripts talk to GitHub: the token handshake, the headers, the shape of a failure. |
 | `json.ts` | The narrowings every script here takes on a value it did not produce. |
+| `lines.ts` | A newline-separated input as trimmed lines, which its readers each used to work out for themselves. |
+| `select-lenses.ts` | The lenses a run dispatches, after the exclusions. `select-lenses.test.ts` beside it. |
 | `test-fixtures.ts` | The one finding the suites build their cases out of, typed and untyped. |
 | `lib.sh` | What a shell script must work out or refuse before passing a value on: the guards, the `gh` handshake, the pull request and the base ref. |
 
@@ -307,15 +311,21 @@ Without that test, a maintainer who comments "LGTM, merging" settles every findi
 pull request. What is left is that a maintainer settling one finding in a file settles every
 finding this run made in that file, which is the direction to be wrong in.
 
-Neither file is taken as the orchestrator left it. `run.sh` replaces `existing.json` with
-the empty form once the session has exited, and the post and print paths fetch it again;
-`previous.json` is copied aside before the session and put back after, along with `diff-args`,
-`lens-list.txt` and `lenses.txt`. The orchestrator holds every one of those paths in its
-prompt and has `Bash` under `bypassPermissions`, so the first copies could have been written
-by the session they are evidence about. The second fetch also picks up whatever was said
-during the twenty minutes the review took; a restored copy that differs from what went in is
-reported on stderr, because nothing else in a run would show a lens rewriting the diff the
-others read.
+Neither file is taken as the orchestrator left it. The orchestrator has `Bash` under
+`bypassPermissions`, so a file it was handed could have been written by the session it is
+evidence about.
+
+A run keeps two directories for that reason. `session/` holds the files the session opens
+while it runs (`diff-args`, `diff.sh`, `existing.json` and `previous.json`), and every path in
+a prompt is one of those. `build/` holds the run's own record, which no prompt names and which
+everything downstream reads. Each file under `session/` is a copy, so a session that rewrote
+one rewrote what it reads itself and nothing else, and `run.sh` copies nothing back. It does
+compare them and report a difference on stderr, because nothing else in a run would show a
+lens rewriting the diff the others read.
+
+`existing.json` gets more than that: `run.sh` replaces the build directory's copy with the
+empty form once the session has exited, and the post and print paths fetch it again. That
+fetch also picks up whatever was said during the twenty minutes the review took.
 
 It matches against two files. `build/previous.json` holds what the last run reported, and
 that is where a repeat is caught. `build/existing.json` holds the discussion on the pull
@@ -609,7 +619,7 @@ So every `bun` a review starts takes `--config=/dev/null` as well. That replaces
 lookup wherever the process happens to be standing, and `/dev/null` is the one path on a
 runner whose contents nothing short of root can change. Every invocation takes it: `run.sh`,
 `build-prompts.sh`, action.yml, the `local-*` scripts and `scripts/vendor-lens.sh`.
-`checkBunConfig` reads `review/*.sh`, `scripts/*.sh` and `action.yml` for one that does not.
+`checks/bun-config.ts` reads `review/*.sh`, `scripts/*.sh` and `action.yml` for one that does not.
 Naming a narrower scope here would leave a reader believing a `scripts/*.sh` invocation goes
 unchecked.
 
@@ -675,6 +685,12 @@ and `run.sh` reads the file and deletes it before it starts anything. `token_fil
 `gh` credential and drops the variable before it `exec`s. Over the fixed shape the same
 measurement came back empty: no ancestor's environment held the token, and no file under
 `RUNNER_TEMP` did either.
+
+The second half of that measurement is a claim about every path out of `run.sh`, so every
+guard on what the caller asked for sits below the block that reads and deletes the file. Two
+of them did not, and each left the plaintext credential in the run directory with nothing
+running that would have cleared it: under `/codeferret:review` that is a developer's own `gh`
+token, staged by a script that then `exec`s, so no trap of its own survives.
 
 `run.sh` used to refetch `existing.json` after the session as well, and the post and print
 paths do that now. Both `bun` and the scripts under `$GITHUB_ACTION_PATH` are files

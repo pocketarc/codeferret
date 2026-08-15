@@ -17,6 +17,7 @@
  */
 
 import { join } from "node:path";
+import { lines } from "../review/lines.ts";
 import { writeOrCheck } from "./generated.ts";
 
 process.chdir(join(import.meta.dir, ".."));
@@ -44,10 +45,7 @@ const wanted = new Map<string, string>();
 let problems = 0;
 
 for (const [input, path] of FILES) {
-    const entries = String(action.inputs?.[input]?.default ?? "")
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean);
+    const entries = lines(action.inputs?.[input]?.default);
 
     if (entries.length === 0) {
         console.error(`FAIL action.yml: input '${input}' has no default to write to ${path}`);

@@ -16,7 +16,8 @@ import { filesRaisedBefore } from "./previous.ts";
 export interface Finding {
     found_by?: string[];
     file: string;
-    line: number;
+    /** Optional because `finding-rules.ts` tolerates its absence. `lineOf` is the one reader. */
+    line?: number;
     end_line?: number;
     /**
      * One of `SEVERITY_ORDER`, but typed as a string because check-findings.ts keeps a
@@ -24,7 +25,8 @@ export interface Finding {
      * an unrecognised label is decided on.
      */
     severity: string;
-    category: string;
+    /** Optional for the reason `line` is. `severity` above is widened instead of made optional. */
+    category?: string;
     title: string;
     body: string;
     in_diff?: boolean;
@@ -67,6 +69,21 @@ export const LISTED: ReadonlySet<string> = new Set(LISTED_SEVERITIES);
 export function severityRank(s: string): number {
     const i = SEVERITY_ORDER.findIndex((known) => known === s);
     return i === -1 ? SEVERITY_ORDER.length : i;
+}
+
+/**
+ * A finding's line, where it has one a reader can be sent to.
+ *
+ * `POLICY` in finding-rules.ts tolerates a missing `line` and a `line` of `0`, so every
+ * reader has to decide what to do without one, and each of them used to carry a guard
+ * written from memory: two tested `Number.isInteger` alone and the third also tested the
+ * value. Answered once here, and `undefined` rather than a sentinel, so a caller that forgets
+ * it fails to compile rather than printing a `path:0` nobody can follow.
+ */
+export function lineOf(f: Finding): number | undefined {
+    const line = f.line;
+
+    return typeof line === "number" && Number.isInteger(line) && line >= 1 ? line : undefined;
 }
 
 /**

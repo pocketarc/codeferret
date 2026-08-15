@@ -34,10 +34,18 @@ jobs:
               uses: ./
               with:
                   claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-                  # This repository is public, so everything named in the input's
-                  # description is published for 14 days to anyone who asks. "Accepted risks"
-                  # in CLAUDE.md has why this repository keeps the wide path anyway.
-                  artifact-path: '.'
+                  # This repository is public, so whatever is named here is downloadable by
+                  # anyone for 14 days, and an artifact's contents are not secret-masked the
+                  # way a step log is. What is named here is what a maintainer reads when a
+                  # review goes wrong: what it found, what the session said while finding it,
+                  # and which lenses were dispatched.
+                  #
+                  # It was `.`, which is the whole build directory: `existing.json` and
+                  # `previous.json` with it, and both carry other people's comment text.
+                  artifact-path: |
+                      findings.json
+                      run.json
+                      lens-list.txt
                   # The two lenses below are run by hand against the working tree before a
                   # push instead, because what they report is a function of how much prose the
                   # last commit wrote: on the run that followed 42 of their findings being

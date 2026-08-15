@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { asExisting, survey } from "./existing.ts";
-import { isListed, partition, vetSuppression } from "./findings.ts";
+import { isListed, lineOf, partition, vetSuppression } from "./findings.ts";
 import type { Finding } from "./findings.ts";
 import { finding } from "./test-fixtures.ts";
 
@@ -27,6 +27,22 @@ describe("partition", () => {
         expect(fresh.map((f) => f.title)).toEqual(["crit", "low"]);
         expect(suppressed.map((f) => f.title)).toEqual(["seen"]);
         expect(declined.map((f) => f.title)).toEqual(["no"]);
+    });
+});
+
+describe("lineOf", () => {
+    test("gives back a line a reader can be sent to", () => {
+        expect(lineOf(finding({ line: 12 }))).toBe(12);
+    });
+
+    // `POLICY` in finding-rules.ts tolerates each of these and keeps the finding, so every
+    // reader has to answer without one, and a reader following `path:0` from a terminal
+    // arrives nowhere.
+    test("gives back nothing for a line no reader could be sent to", () => {
+        expect(lineOf(finding({ line: undefined }))).toBeUndefined();
+        expect(lineOf(finding({ line: 0 }))).toBeUndefined();
+        expect(lineOf(finding({ line: -3 }))).toBeUndefined();
+        expect(lineOf(finding({ line: 1.5 }))).toBeUndefined();
     });
 });
 

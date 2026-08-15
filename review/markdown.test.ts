@@ -216,6 +216,17 @@ describe("escapeBlocks", () => {
     test("leaves an image inside a code span alone, which renders as code", () => {
         expect(escapeBlocks(["write `![alt](url)` for an image"])).toEqual(["write `![alt](url)` for an image"]);
     });
+
+    test("escapes a table's delimiter row, in each of the spellings that make a table", () => {
+        expect(escapeBlocks(["File | Line", "--- | ---"])).toEqual(["File | Line", "\\--- | ---"]);
+        expect(escapeBlocks(["| File | Line |", "|---|---|"])).toEqual(["| File | Line |", "\\|---|---|"]);
+        expect(escapeBlocks(["| Note |", "| :---: |"])).toEqual(["| Note |", "\\| :---: |"]);
+    });
+
+    test("leaves a line that merely holds a pipe alone", () => {
+        expect(escapeBlocks(["run `a | b` to see it"])).toEqual(["run `a | b` to see it"]);
+        expect(escapeBlocks(["File | Line"])).toEqual(["File | Line"]);
+    });
 });
 
 describe("clamp", () => {

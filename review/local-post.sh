@@ -91,7 +91,7 @@ fi
 # Read back here rather than in the run that produced the findings: run.sh leaves the file
 # empty on purpose, and lib.sh has why. A failure leaves the empty file, which reopens every
 # suppression, so the review repeats itself rather than going quiet.
-printf '%s' "$GITHUB_TOKEN" | fetch_existing "$PLUGIN" "$BUILD" "$PR"
+printf '%s' "$GITHUB_TOKEN" | fetch_existing "$PLUGIN" "$BUILD" "$PR" "$(own_login)"
 
 cd "$BUILD"
 

@@ -1,6 +1,21 @@
 # shellcheck shell=bash
 # What more than one of this repository's shell scripts needs. Sourced, never run.
 
+# ---- Reading a newline-separated input -----------------------------------------------
+
+# A newline-separated value on stdin, as one trimmed name per line with the blanks dropped.
+#
+# One reader for the shell, because the run is wrong when two of them disagree.
+# build-prompts.sh reads its lens list through this and select-lenses.ts subtracts from the
+# same list, so a name trimmed on one side and not the other is an exclusion reported as
+# matching nothing while the lens runs. `lines` in review/lines.ts is the same three steps for
+# the TypeScript side, and the copies this replaced had already drifted: one trimmed
+# `[:blank:]` and the other `[:space:]`, which is the difference between keeping a carriage
+# return and dropping it.
+trim_lines() {
+    sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | grep -v '^$' || true
+}
+
 # ---- GitHub Actions step outputs ----------------------------------------------------
 
 # One GitHub Actions step output, for action.yml's `run:` steps.
@@ -80,21 +95,53 @@ fetch_existing() {
         echo "could not read all of this pull request's comments. Whatever went unread counts as new." >&2
 }
 
+# What the last run raised, out of its `codeferret-run` artifact. The token comes in on stdin.
+#
+# Beside `fetch_existing` with one caller, because the two share the pieces that are easy to
+# leave out and impossible to see missing: a token on stdin, and `GITHUB_TOKEN` emptied across
+# the boundary. This call had the pipe and not the blanking, and under `command-prefix` that
+# means the artifact is read under the container's own `GITHUB_TOKEN`, which shows up only as
+# findings repeated or suppressed.
+#
+# Reading it needs `actions: read`. The shipped workflow grants it and a consumer can decline
+# it, so an empty answer is allowed: fetch-previous.ts reports its own failures, and the
+# caller's `||` is for a failure before it can.
+#
+# Usage: fetch_previous <root> <build-dir> <pr>, token on stdin.
+fetch_previous() {
+    local root=$1 build=$2 pr=$3
+
+    ${PREFIX:-} env \
+        "GITHUB_TOKEN=" \
+        "GITHUB_REPOSITORY=${GITHUB_REPOSITORY:-}" \
+        "GITHUB_RUN_ID=${GITHUB_RUN_ID:-}" \
+        bun --config=/dev/null "$root/review/fetch-previous.ts" \
+        "$pr" "$build/previous.json" ||
+        echo "could not read the previous run's findings. Every finding will count as new." >&2
+}
+
 # ---- Where a run keeps its files ----------------------------------------------------
 
-# The run directory and the build directory inside it, as RUN_DIR and BUILD_DIR.
+# Where a run keeps its files, as RUN_DIR, BUILD_DIR and SESSION_DIR.
 #
 # `build/` is the one name every part of a run has to agree on. Rename it here and leave it
 # spelled out by hand somewhere else, and a review runs, costs the money, and posts against a
 # diff nothing read. The pathspec was built twice once and drifted, which is why
 # review/diff-args.ts exists; this is the same fact one level up.
 #
+# `session/` holds the copies the review session is handed, and it exists so that the two jobs
+# the build directory used to do have a directory each. Everything a run decides afterwards
+# reads `build/`, no prompt names it, and nothing is copied back: what the session was given
+# is a copy, and a copy it rewrote costs it nothing but its own reading. `artifact-path`
+# resolves against `build/`, so the session's directory is in no artifact either.
+#
 # The root is the caller's: `runner_run_dir` on a runner, `session_run_dir` on somebody's
 # own machine.
 run_dirs() {
     RUN_DIR="$1"
     BUILD_DIR="$1/build"
-    export RUN_DIR BUILD_DIR
+    SESSION_DIR="$1/session"
+    export RUN_DIR BUILD_DIR SESSION_DIR
 }
 
 # Where the action puts a run. Under RUNNER_TEMP, which the runner clears between jobs, and
@@ -124,19 +171,34 @@ token_file() {
 # Put a token where run.sh will look for it, given the run directory. The value comes in on
 # stdin, the way `fetch_existing` takes one.
 #
-# The `rm -f` and the `umask 077` are security properties rather than tidiness, and both
-# callers had them written out by hand. Two copies that agree today are one edit away from
-# two that do not, and neither a token written world-readable nor one written into a file
-# another account left in place is a failure anything here would report.
+# The mode and the refusal are security properties rather than tidiness, and both callers had
+# them written out by hand. Two copies that agree today are one edit away from two that do
+# not, and neither a token written world-readable nor one written into a file another account
+# left in place is a failure anything here would report.
+#
+# `rm -f` and then `>` is not an exclusive create. A symlink planted at the path in between
+# is followed by the redirect, the token lands on whatever the link points at under whatever
+# mode that file already has, and `umask` governs only a file the shell creates, which that
+# one is not. `noclobber` makes the open itself O_EXCL: measured, a link left there is refused
+# with "cannot overwrite existing file" and its target is untouched. The `rm -f` stays for the
+# ordinary second run.
+#
+# `mkdir` moved inside the umask because it was creating the parent at the ambient umask,
+# 0755 on a runner, which is what a local account needs to plant that link in the first
+# place.
 #
 # Usage: stage_token <run-dir>, token on stdin.
 stage_token() {
     local file
     file=$(token_file "$1")
 
-    mkdir -p "$(dirname "$file")"
-    rm -f "$file"
-    (umask 077 && cat >"$file")
+    (
+        umask 077
+        mkdir -p "$(dirname "$file")"
+        rm -f "$file"
+        set -o noclobber
+        cat >"$file"
+    )
 }
 
 # ---- What a run's findings have to clear before anything reads them ------------------
@@ -212,6 +274,18 @@ gh_credentials() {
     GITHUB_TOKEN=$(gh auth token 2>/dev/null || true)
     GITHUB_REPOSITORY=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)
     export GITHUB_TOKEN GITHUB_REPOSITORY
+}
+
+# The account a local run posts under, which is what marks a thread `mine`. Empty where gh
+# cannot answer, and `fetch-existing.ts` then falls back to `github-actions`.
+#
+# Every local path that reads the pull request goes through this. The run before the session
+# derived it and the two refetches afterwards passed nothing, so the same threads came back
+# marked against a different login from the one the orchestrator judged them under. Nothing
+# reads `mine` locally today, because both scripts set `RESOLVE_THREADS=0`; a divergence that
+# costs nothing until it does is one nobody finds on the day it starts costing something.
+own_login() {
+    gh api user --jq .login 2>/dev/null || true
 }
 
 # The open pull request this branch has, as PR, PR_BASE and PR_HEAD. Each is empty where
@@ -332,15 +406,17 @@ plain_name() {
 # what unlock posting. A newline is legal in a directory name on every platform this runs
 # on.
 #
-# An alternation of quoted patterns rather than one bracket expression: semgrep's bash
-# grammar cannot read a bracket expression in a case pattern and gives up on the whole
-# construct, while still reporting the file as scanned.
+# The barred set is one string so that a reader can check it against the paragraphs above. It
+# was ten alternated patterns while semgrep was in the toolchain: semgrep's bash grammar gave
+# up on a bracket expression in a `case` pattern and reported the file as scanned anyway.
+# `e40aa7d` took semgrep out. The two forms were compared over the ten characters, the
+# newline, and twenty-odd legal paths before this one replaced the other, and they agreed on
+# every row.
 plain_path() {
-    local newline='
-'
+    local barred=$'\'";$`\\&|<>\n'
 
     case $1 in
-    "" | *"'"* | *'"'* | *';'* | *'$'* | *'`'* | *"\\"* | *'&'* | *'|'* | *'<'* | *'>'* | *"$newline"*) return 1 ;;
+    "" | *["$barred"]*) return 1 ;;
     *) return 0 ;;
     esac
 }

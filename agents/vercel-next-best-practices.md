@@ -63,9 +63,14 @@ Next.js, not for its workflow. Every finding you make comes from source.
   that writes into the checkout. Every lens in this review is reading that same tree at
   once, and a build writes into `.next/`, which the diff's pathspec excludes, so the writes
   would be invisible rather than absent.
+- Do not start a server, and do not `curl` a port, whether or not you started what is
+  listening on it. The bullet above is not enough on its own:
+  `node .next/standalone/server.js` names no `next` command and runs no build.
+  `self-hosting.md` is in scope for what it holds about `next.config`, so you will meet that
+  command there: in a "Testing Cache Handler" section that opens with **Critical**, and in
+  its Pre-Deployment Checklist.
 - Skip the whole of `debug-tricks.md`. Its first half posts JSON-RPC to a dev server's
-  `/_next/mcp`, and its second half runs `next build --debug-build-paths`. Do not go looking
-  for a port with `curl`, and do not use one you find.
+  `/_next/mcp`, and its second half runs `next build --debug-build-paths`.
 - Skip the Bundle Analysis section of `bundling.md` and the Debugging step of
   `hydration-error.md`. Both need a rendered page or an interactive analyser.
 

@@ -8,7 +8,7 @@
  * `markdown.ts`.
  */
 
-import { brokenLenses, isListed, lensLabel, LISTED, silentLenses } from "./findings.ts";
+import { brokenLenses, isListed, lensLabel, lineOf, LISTED, silentLenses } from "./findings.ts";
 import { STANDING_DETAIL } from "./standing-detail.ts";
 import type { Finding, LensHealth, Merged, Partitioned, Vetted } from "./findings.ts";
 import {
@@ -232,11 +232,13 @@ function title(f: Finding): string {
  * finding either way, and a reader following `path:0` from a terminal arrives nowhere.
  */
 export function where(f: Finding): string {
-    if (!Number.isInteger(f.line) || f.line < 1) return f.file;
-    if (Number.isInteger(f.end_line) && f.end_line && f.end_line > f.line) {
-        return `${f.file}:${f.line}-${f.end_line}`;
+    const line = lineOf(f);
+
+    if (line === undefined) return f.file;
+    if (Number.isInteger(f.end_line) && f.end_line && f.end_line > line) {
+        return `${f.file}:${line}-${f.end_line}`;
     }
-    return `${f.file}:${f.line}`;
+    return `${f.file}:${line}`;
 }
 
 /**
@@ -670,6 +672,12 @@ const MAX_MENTIONS = 40;
  * dozen lenses answering in full is a head section larger than most whole reviews. `assemble`
  * charges the head against `MAX_BODY` before it measures a single finding, so what a lens
  * said about itself would push out the findings a reader came for.
+ *
+ * A lens too long for what is left costs only its own line, which is `assemble`'s rule for
+ * findings and holds harder here. This block is the review's only per-lens channel: it
+ * carries the `needs attention` flag for a lens that broke and the standing sentence for one
+ * shipping without the capability its skill describes. Stopping at the first verbose lens
+ * would drop every lens after it while the alerts above went on counting the whole list.
  */
 const MAX_LENS_BLOCK = 12_000;
 
@@ -678,7 +686,7 @@ function boundedBlock(items: string[], noun: string): string {
     let used = 0;
 
     for (const item of items) {
-        if (used + item.length + 1 > MAX_LENS_BLOCK) break;
+        if (used + item.length + 1 > MAX_LENS_BLOCK) continue;
 
         kept.push(item);
         used += item.length + 1;

@@ -170,3 +170,41 @@ export function ownThreads(existing: Surveyed): Set<string> {
 
     return mine;
 }
+
+/** One thread the orchestrator judged finished, as `merged.resolve` carries it. */
+export interface Asked {
+    thread_id: string;
+    reason: string;
+}
+
+/** Which of the threads the orchestrator named this run may close, and which it may not. */
+export interface Plan {
+    close: Asked[];
+    /** Named but not this run's to close, which is a line on stderr rather than a mutation. */
+    foreign: Asked[];
+}
+
+/**
+ * The threads to close, out of the ones the orchestrator asked for.
+ *
+ * `mine` is the non-model signal beside the orchestrator's judgement: fetch-existing.ts
+ * computes it, and has what a thread must carry to be marked. Closing somebody else's thread
+ * takes their words off the page, and the next run reads a closed thread back as a declined
+ * finding, so one wrong call suppresses a finding for good.
+ *
+ * `mayResolve` empties both lists rather than only the first. build-prompts.sh renders a
+ * different orchestrator prompt when `resolve-threads` is off, and a model can be talked out
+ * of a prompt, so a run with it off reports nothing about whose threads they were either.
+ *
+ * Here rather than in post-review.ts, for the reason finding-rules.ts gives for the split it
+ * describes: a rule in a script body is a rule whose test has to spawn a process and read its
+ * log.
+ */
+export function planResolution(asked: Asked[], mine: ReadonlySet<string>, mayResolve: boolean): Plan {
+    if (!mayResolve) return { close: [], foreign: [] };
+
+    return {
+        close: asked.filter((entry) => mine.has(entry.thread_id)),
+        foreign: asked.filter((entry) => !mine.has(entry.thread_id)),
+    };
+}

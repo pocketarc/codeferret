@@ -1,7 +1,10 @@
 ---
 standing-detail: >-
   No page was rendered, so contrast, focus order, target size, reflow, text spacing, timing
-  limits and what an assistive technology announces were not evaluated.
+  limits, flashing and what an assistive technology announces were not evaluated. Also not
+  evaluated: whether a focus indicator is visible enough, whether anything that moves is
+  distracting, and whether content revealed on hover is dismissible, hoverable and
+  persistent.
 ---
 
 There is no rendered page in this session, and no browser, screen reader or contrast tool

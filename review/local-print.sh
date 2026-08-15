@@ -30,7 +30,7 @@ open_pr
 gh_credentials
 
 if [ -n "$PR" ] && [ -n "$GITHUB_TOKEN" ] && [ -n "$GITHUB_REPOSITORY" ]; then
-    printf '%s' "$GITHUB_TOKEN" | fetch_existing "$PLUGIN" "$BUILD" "$PR"
+    printf '%s' "$GITHUB_TOKEN" | fetch_existing "$PLUGIN" "$BUILD" "$PR" "$(own_login)"
 fi
 
 cd "$BUILD"

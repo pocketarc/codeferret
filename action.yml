@@ -76,13 +76,18 @@ inputs:
             repository that routes on `/dist` or `/vendor` loses that route from every lens.
 
             `node_modules` is matched at any depth with nothing given up. pnpm and npm
-            workspaces put one in every package, and it is no more a name anybody routes on
-            than `.next` is.
+            workspaces put one in every package, and no application routes on a directory a
+            package manager writes.
 
-            `.next` and `.vercel` are matched at any depth with nothing given up. The App
-            Router's scan skips a dot-prefixed entry, so neither is a name anybody routes
-            on. In a monorepo `vercel build` writes to `apps/<app>/.vercel/output/` beside
-            that app's `.next/`.
+            `.next` and `.vercel` are matched at any depth with nothing given up. Both are
+            tool-written output, gitignored by `create-next-app` and by `vercel`
+            respectively, and nobody edits either by hand, so neither holds a file a lens
+            should read. Not because the segment begins with a dot: the App Router's one
+            documented convention for taking a directory out of routing is the underscore
+            prefix, and whether a dot-prefixed folder becomes a route is contested in practice
+            (`app/.well-known/`). Anything added here on the strength of the dot would hide a
+            live route from every lens. In a monorepo `vercel build` writes to
+            `apps/<app>/.vercel/output/` beside that app's `.next/`.
 
             `next-env.d.ts` is deliberately not excluded, though it is generated. Next.js
             rewrites it on every build and it opens with a line saying not to edit it, so the
@@ -231,24 +236,27 @@ inputs:
     artifact-path:
         description: |
             What to keep as the `codeferret-run` artifact, relative to the run's build
-            directory. The next run reads the findings file back out of it to know what
-            this one already said. On the default a finding is raised once across a branch's
-            pushes, and that read needs `actions: read`.
+            directory. One path per line. To keep several files, put each on its own line.
+            The next run reads the findings file back out of it to know what this one
+            already said. On the default a finding is raised once across a branch's pushes,
+            and that read needs `actions: read`.
 
             The name is not configurable. A later run looks for `codeferret-run` and
             nothing else.
 
-            Set it to '.' to keep the whole build directory while debugging a run, then
-            put it back. Beside the findings sits run.json, the orchestrator's final
-            result object, which is not secret-masked and whose prose quotes the diff.
-            Anyone can download an artifact from a public repository.
+            Weigh what each file holds before you add it. On a public repository anyone can
+            download an artifact for 14 days, and its contents are not secret-masked the way
+            a step log is. `run.json` is the orchestrator's final result object, and its
+            prose quotes the diff. `existing.json` and `previous.json` carry the pull
+            request's comments, which are other people's words. `.` keeps the whole
+            directory, which is all of them.
 
             Set it to an empty string to upload nothing. Every finding is then raised
             again on every push.
 
-            Anything but the default or `.` keeps no findings file, and then the review
-            body prints every finding itself rather than the critical and high ones with
-            a link to the rest. That is a longer comment, and it is the only copy.
+            Without `findings.json` in the list, the review body prints every finding
+            itself rather than the critical and high ones with a link to the rest. That is a
+            longer comment, and it is the only copy.
         required: false
         default: findings.json
 
@@ -261,6 +269,11 @@ outputs:
             Number of merged findings, or `none reported` when the run produced no
             structured output at all. That is a different thing from a review that found
             nothing, which is why this output is not always a number.
+
+            Unset where the run failed before it could count anything: a lens with no
+            `SKILL.md`, a base ref that does not resolve, a run directory the delete guard
+            refused. `none reported` is a session that ran and said nothing, so a consumer
+            branching on it needs the empty case too.
         value: ${{ steps.review.outputs.findings-count }}
     cost-usd:
         description: |
@@ -274,6 +287,49 @@ outputs:
 runs:
     using: composite
     steps:
+        # This step runs first, before anything has read the tree. This action's trust
+        # boundary is the caller's `if:`, which nothing here can see. What it can check is
+        # the ways that gate stops holding by accident, and none of them is a configuration
+        # anybody means.
+        #
+        # Under `pull_request_target` the event's head sha is the fork's commit and the
+        # secrets are available, which is how this class of action is usually compromised.
+        # The shipped template's gate happens to survive the trigger change, but only by
+        # accident of what it tests.
+        #
+        # A caller who keeps `pull_request` and drops the head-repo test gets the same thing,
+        # and that is a plausible edit: "why won't it review external pull requests?". With
+        # `checkout: auto` the next steps check out that commit and start an agent with
+        # `Bash` under `bypassPermissions` over it, in a job holding the OAuth token and
+        # `pull-requests: write`.
+        #
+        # The action refuses rather than warns, and refuses here rather than after a review
+        # that took twenty minutes.
+        - name: Refuse to review a fork's code
+          shell: bash
+          env:
+              EVENT: ${{ github.event_name }}
+              HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+              THIS_REPO: ${{ github.repository }}
+          run: |
+              if [ "$EVENT" = "pull_request_target" ]; then
+                  echo "CodeFerret will not run under pull_request_target." >&2
+                  echo "Under that trigger the secrets reach a job that checks out a fork's commit." >&2
+                  echo "Use pull_request, and keep the head-repo test in the job's if:." >&2
+                  exit 1
+              fi
+
+              # Empty outside a pull request event, which is every other way this action is
+              # started: workflow_dispatch with pr-number, a merge queue, a push.
+              if [ -n "$HEAD_REPO" ] && [ "$HEAD_REPO" != "$THIS_REPO" ]; then
+                  echo "This pull request's branch is on $HEAD_REPO, not on $THIS_REPO." >&2
+                  echo "CodeFerret runs an agent with Bash over the branch it reviews, in the" >&2
+                  echo "job holding your tokens, so it reviews only a branch from this repository." >&2
+                  echo "Add the head-repo test to the job's if: to skip such a pull request" >&2
+                  echo "rather than fail on it." >&2
+                  exit 1
+              fi
+
         # actions/checkout cleans by default, deleting whatever an earlier step in the
         # caller's job wrote.
         - name: Check for an existing checkout
@@ -355,14 +411,15 @@ runs:
               resolved=$($PREFIX bun --config=/dev/null \
                   "$GITHUB_ACTION_PATH/review/artifact-path.ts" "$ARTIFACT_PATH" "$BUILD_DIR")
 
-              # Two lines, in the order the module prints them. Neither can carry a newline:
-              # one is refused there and the other is a literal.
+              # `keeps_findings` first and the paths after it, in the order the module prints
+              # them. `upload-artifact` reads `path` as a newline-separated list, so the paths
+              # are the part that can run to several lines and have to come last.
               {
-                  IFS= read -r path
                   IFS= read -r keeps_findings
+                  paths=$(cat)
               } <<<"$resolved"
 
-              emit_output path "$path"
+              emit_output path "$paths"
               emit_output keeps-findings "$keeps_findings"
 
         - name: Resolve the review target
@@ -614,5 +671,8 @@ runs:
           uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
           with:
               name: codeferret-run
+              # One absolute path per line, which is how `upload-artifact` reads this input.
+              # `artifact-path.ts` resolves the list and the step above writes it through the
+              # heredoc form of `emit_output`, so the newlines survive being a step output.
               path: ${{ steps.artifact.outputs.path }}
               retention-days: 14

@@ -23,11 +23,9 @@
 set -euo pipefail
 
 PLUGIN=${1:?usage: local-run.sh PLUGIN_ROOT BASE_REF [LENS...]}
-# No parentheses and no semicolon in the message: semgrep's bash parser gives up on either
-# inside a parameter expansion, produces no results for the whole file, and still reports
-# the file as scanned. The script that drives a review then goes unscanned with nothing
-# saying so.
-BASE=${2?missing base ref -- pass an empty string to work it out here}
+# `?` and not `:?`: an empty string is a base ref the caller wants worked out here, and only
+# an unset second argument means the caller forgot one.
+BASE=${2?missing base ref (pass an empty string to work it out here)}
 shift 2
 
 TOPLEVEL=$(git rev-parse --show-toplevel)
@@ -70,7 +68,7 @@ export RESOLVE_THREADS=0
 # Without a pull request there is nothing to read earlier comments from, so every finding
 # counts as new. That is a noisier review rather than a failed one, and run.sh warns.
 if [ -n "$PR" ]; then
-    OWN_LOGIN=$(gh api user --jq .login 2>/dev/null || true)
+    OWN_LOGIN=$(own_login)
     export OWN_LOGIN
     gh_credentials
 

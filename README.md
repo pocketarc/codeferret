@@ -65,6 +65,12 @@ The rest of that file is:
   those three roles can spend the budget.
 - A 60-minute timeout.
 
+The trigger is `pull_request`, and the action refuses to start under `pull_request_target`.
+That trigger runs with the secrets available against the fork's commit, which is how an
+action holding a token comes to run somebody else's code. Dropping the head-branch test from
+the `if:` reaches the same place, so the action refuses that too rather than reviewing a
+branch it does not own.
+
 The action's own artifact is kept for 14 days, and whoever can read the repository's
 artifacts can read every finding in `findings.json`, the suppressed ones included.
 

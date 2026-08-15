@@ -16,7 +16,7 @@
  */
 
 import { dirname } from "node:path";
-import { brokenLenses, lensLabel, partition, readMerged, silentLenses, vetAgainstExisting } from "./findings.ts";
+import { brokenLenses, lensLabel, lineOf, partition, readMerged, silentLenses, vetAgainstExisting } from "./findings.ts";
 import type { Finding } from "./findings.ts";
 import { caveatOf, plural, reopenedReasons, where } from "./review-body.ts";
 import { readDispatched } from "./run-files.ts";
@@ -43,9 +43,11 @@ for (const said of reopenedReasons(vetted)) console.error(said);
 
 /** By file, then by line within it, which is the order a reader opens them in. */
 function byPosition(a: Finding, b: Finding): number {
-    const lineOf = (f: Finding): number => (Number.isInteger(f.line) ? f.line : 0);
+    // A finding with no usable line sorts to the top of its file, which is where a reader
+    // looking for the whole-file complaints expects it.
+    const at = (f: Finding): number => lineOf(f) ?? 0;
 
-    return a.file === b.file ? lineOf(a) - lineOf(b) : a.file.localeCompare(b.file);
+    return a.file === b.file ? at(a) - at(b) : a.file.localeCompare(b.file);
 }
 
 const out: string[] = [];

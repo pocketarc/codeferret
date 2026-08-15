@@ -12,8 +12,9 @@
  * printing, the write-back and the exit code.
  *
  * Whether those rules still name fields merged-schema.json has is a question about this
- * repository rather than about a review, so `checkFindingRules` in scripts/validate-repo.ts
- * asks it by calling `selfCheck` directly. This command reads findings and nothing else.
+ * repository rather than about a review, so `checkFindingRules` in
+ * scripts/checks/finding-rules.ts asks it by calling `selfCheck` directly. This command reads
+ * findings and nothing else.
  *
  * Usage: bun check-findings.ts <findings.json>
  *

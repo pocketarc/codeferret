@@ -17,10 +17,11 @@ import { integer, reason, record } from "./json.ts";
  * Taken from `Finding` rather than restated, because previous.json is matched against this
  * run's findings on `file` plus `title`, and `existing_comment_url` is copied from one into
  * the other. Renaming a field on either side would otherwise stop the match with nothing
- * saying so. `line` is optional here: a finding whose line is not an integer still matches.
+ * saying so. `line` is optional here because it is optional in `Finding`, where
+ * finding-rules.ts tolerates a finding that arrives without one, so a finding whose line is
+ * not an integer still matches.
  */
-export type Previous = Pick<Finding, "file" | "title" | "status" | "existing_comment_url"> &
-    Partial<Pick<Finding, "line">>;
+export type Previous = Pick<Finding, "file" | "line" | "title" | "status" | "existing_comment_url">;
 
 /**
  * The files the previous review raised something in.

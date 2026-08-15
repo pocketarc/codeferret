@@ -21,7 +21,7 @@
  */
 
 import { dirname, join } from "node:path";
-import { ownThreads, unreadOf } from "./existing.ts";
+import { ownThreads, planResolution, unreadOf } from "./existing.ts";
 import { partition, readMerged, vetAgainstExisting } from "./findings.ts";
 import { graphql, graphqlFailure, requirePullNumber, requireRepository, rest, tokenFromStdinOrEnv } from "./github.ts";
 import { reason } from "./json.ts";
@@ -102,13 +102,16 @@ async function markPosted(url: string | null): Promise<void> {
     }
 }
 
-const mine = ownThreads(existing);
 const asked = merged.resolve ?? [];
 
-// build-prompts.sh renders a different orchestrator prompt when `resolve-threads` is off,
-// and a model can be talked out of a prompt. Unset means off, so a caller who forgets to
-// pass it closes no thread rather than closing one nobody sanctioned.
+// Unset means off, so a caller who forgets to pass it closes no thread rather than closing
+// one nobody sanctioned.
 const mayResolve = process.env.RESOLVE_THREADS === "1";
+
+// Read once. `destinationOf` carries the same rule for the variables it reads, and for the
+// same reason: a second reading is a second chance for the body and the log beside it to
+// describe different reviews.
+const dryRun = Boolean(process.env.DRY_RUN);
 
 if (!mayResolve && asked.length > 0) {
     console.error(
@@ -116,12 +119,7 @@ if (!mayResolve && asked.length > 0) {
     );
 }
 
-// `mine` is the non-model signal beside the orchestrator's judgement. fetch-existing.ts
-// computes it, and has what a thread must carry to be marked. Resolving somebody else's
-// thread takes their words off the page, and the next run reads a resolved thread back as
-// a declined finding, so one wrong call suppresses a finding for good.
-const foreign = mayResolve ? asked.filter((entry) => !mine.has(entry.thread_id)) : [];
-const toResolve = mayResolve ? asked.filter((entry) => mine.has(entry.thread_id)) : [];
+const { close: toResolve, foreign } = planResolution(asked, ownThreads(existing), mayResolve);
 
 if (foreign.length > 0) {
     console.error(
@@ -134,10 +132,8 @@ const resolved: Array<{ reason: string }> = [];
 let resolveDenied = false;
 
 // Resolving is a write, so a dry run reports the decision without making it.
-if (toResolve.length > 0 && !process.env.DRY_RUN) {
+if (toResolve.length > 0 && !dryRun) {
     for (const { thread_id, reason: why } of toResolve) {
-        if (resolveDenied) break;
-
         const result = await graphql(
             token,
             `mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { thread { isResolved } } }`,
@@ -148,13 +144,10 @@ if (toResolve.length > 0 && !process.env.DRY_RUN) {
 
         if (failure?.includes("not accessible by integration")) {
             // resolveReviewThread requires repository write, which pull-requests: write
-            // does not grant.
+            // does not grant. The rest would fail the same way, so the loop stops here and
+            // `leftOpen` below counts the threads it never reached.
             resolveDenied = true;
-            console.error(
-                `cannot resolve threads: the token lacks contents: write.` +
-                    ` ${plural(toResolve.length - resolved.length, "thread")} judged finished could not be resolved.`,
-            );
-            continue;
+            break;
         }
 
         if (failure) {
@@ -167,6 +160,14 @@ if (toResolve.length > 0 && !process.env.DRY_RUN) {
 }
 
 const leftOpen = toResolve.length - resolved.length;
+
+if (resolveDenied) {
+    console.error(
+        `cannot resolve threads: the token lacks contents: write.` +
+            ` ${plural(leftOpen, "thread")} judged finished could not be resolved.`,
+    );
+}
+
 const to = destinationOf(process.env);
 
 const {
@@ -196,7 +197,7 @@ console.log(
 // request looking reviewed and clean. So a body carrying a warning about its own coverage is
 // enough on its own to post, whatever it found: the review is the only place those warnings
 // are read. The job log carries them too, and the person the caveats are for never opens it.
-if (findings.length === 0 && !warned && !process.env.DRY_RUN) {
+if (findings.length === 0 && !warned && !dryRun) {
     const accounted = suppressed.length + declined.length;
     console.log(
         accounted > 0
@@ -212,7 +213,7 @@ if (findings.length === 0 && !warned && !process.env.DRY_RUN) {
     process.exit(0);
 }
 
-if (process.env.DRY_RUN) {
+if (dryRun) {
     console.log("\n===== REVIEW BODY =====\n");
     console.log(reviewBody);
     console.log("\n(dry run: nothing posted, 0 inline comments)");

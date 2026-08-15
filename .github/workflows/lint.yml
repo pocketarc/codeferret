@@ -10,17 +10,24 @@ permissions:
 jobs:
     # This job runs a fork's pull request code: `bun test` executes the test files as that
     # pull request has them. So it holds no secrets and no write permissions.
-    manifests:
+    #
+    # Named for what it runs rather than for one of its steps. It was `manifests`, after a
+    # `validate-manifests.ts` this branch deleted, so a reader who saw it go red opened
+    # action.yml when the failure was a test.
+    checks:
         runs-on: ubuntu-latest
         steps:
             - name: Checkout
               uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-            # Pinned for the reason review/versions.sh gives: this job runs a fork's code,
-            # and an unpinned global install runs whatever `latest` points at that morning,
-            # before anything else here. A stale pin fails loudly; a compromised release does
-            # not. The version comes out of the same file the action reads, so bumping it is
-            # one edit.
+            # Pinned for the reason review/versions.sh gives, and the version comes out of
+            # the same file the action reads, so bumping it is one edit. A stale pin fails
+            # loudly; a compromised release does not.
+            #
+            # What the pin covers is this repository's own commits. On a fork's pull request
+            # the file it sources is the fork's, so `$BUN_VERSION` is a value whoever opened
+            # that pull request chose, and sourcing it is already arbitrary shell. What bounds
+            # that path is the absence of secrets and write permissions above, not this line.
             - name: Install Bun
               run: |
                   # shellcheck source=review/versions.sh

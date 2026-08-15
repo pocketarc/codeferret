@@ -173,9 +173,13 @@ is in `review/README.md`.
   `run.sh`: the token would have to come back into the script that started the agent to be
   used there, and by then `bun` and the action's own scripts are files that session has had a
   whole review to replace. The refetch costs one extra pair of API calls and picks up
-  whatever was said during the run. `previous.json`, `diff-args`, `lens-list.txt` and
-  `lenses.txt` cannot be had again that cheaply, so they are copied aside before the session
-  and put back after it, and a copy that comes back changed is reported.
+  whatever was said during the run. The rest is settled by the run having two directories
+  rather than one: `run_dirs` makes `session/` for the session, which every prompt path is
+  under, and keeps `build/` for the run's own record, which no prompt names and everything
+  downstream reads. So a session that rewrote `diff-args` or `previous.json` rewrote a copy.
+  `run.sh` compares what it handed over and reports a difference, because nothing else in a
+  run would show a lens rewriting the diff the others read. Before that split the two jobs
+  shared one directory, and every file had to be copied aside, compared and put back.
 - An input that names what a review may do has to reach the code that does it.
   `resolve-threads` reached the orchestrator's prompt and nothing else until
   `post-review.ts` was given `RESOLVE_THREADS`, and the upload step read `artifact-path`
@@ -305,35 +309,53 @@ thing, change what reads it, and say so. This section goes when the first consum
 
 ## Accepted risks
 
-Each of these was weighed and stands. Read this section before acting on a finding that
-raises one.
+A register of what was weighed, when it was weighed, and what would end it. Each entry is a
+decision that still stands; the date is when it was taken, and the last line is the condition
+that stops it standing. An acceptance with no end is one nobody is scheduled to weigh again,
+and every entry here was once written that way.
 
-- Mutable version references, `@v1` above all. The template and the README point
-  consumers at `pocketarc/codeferret@v1`, which this repository moves on every release. A
-  tag anyone can repoint is a supply-chain risk, and a review raises it every run,
+- Mutable version references, `@v1` above all. **Weighed 2026-08-01.** The template and the
+  README point consumers at `pocketarc/codeferret@v1`, which this repository moves on every
+  release. A tag anyone can repoint is a supply-chain risk, and a review raises it every run,
   correctly. It is also the whole distribution mechanism: pinning by SHA would mean every
   consumer editing a workflow to get a fix. Anyone who wants the guarantee can pin
-  `@v1.1.0`.
-- A lens can read `CLAUDE_CODE_OAUTH_TOKEN`. It runs with `Bash` and the token is in the
-  environment it inherits. The artifact is not a bound on that, under any `artifact-path`:
-  `findings.json` is the session's own prose, every title, body, summary and detail of it,
-  and it is published for 14 days to anyone who asks on a public repository. What bounds it
-  is the condition on the shipped workflow: it runs no review for a fork or for anyone
-  outside the repository. A lens holding `Bash` holds `curl` too, which is a shorter route
-  anyway than writing a token into a finding and waiting for a download. This repository's
-  own workflow keeps the wide artifact path on top of that, because the fixture runs are what
-  a maintainer reads when a review goes wrong.
+  `@v1.1.0`. **Lapses** at the first release that is not a drop-in replacement for the one
+  before it: an input removed, or an input whose meaning changed. That is the release `@v1`
+  must stop moving onto. It also lapses if more than one account can push a tag here, because
+  the trade assumes the hand that repoints the tag is the hand that wrote the code.
+- A lens can read `CLAUDE_CODE_OAUTH_TOKEN`. **Weighed 2026-08-01, narrowed 2026-08-15.** It
+  runs with `Bash` and the token is in the environment it inherits. A lens holding `Bash`
+  holds `curl` too, which is a shorter route than writing a token into a finding and waiting
+  for a download. What bounds it is the condition on the shipped workflow, which runs no
+  review for a fork or for anyone outside the repository, and `action.yml`'s first step, which
+  now refuses both cases itself rather than trusting a gate it cannot see. The artifact is no
+  bound on it under any `artifact-path`: `findings.json` is the session's own prose, every
+  title, body, summary and detail of it, published for 14 days to anyone who asks on a public
+  repository. What the narrowing changed is what else goes up beside it. This repository's own
+  workflow named `.`, which is the whole build directory, `existing.json` and `previous.json`
+  with it, and those two are other people's comment text rather than this session's prose. It
+  now names `findings.json`, `run.json` and `lens-list.txt`, which is what a maintainer reads
+  when a review goes wrong. **Lapses** when a lens runs without `Bash`, which is the day the
+  shorter route closes and the artifact becomes the widest channel left. It has to be weighed
+  again before anything outside those files goes back into `artifact-path` here.
 - The orchestrator runs under `bypassPermissions` with `Bash`, holding comments written by
-  anyone who can comment. `--disallowed-tools` takes `Edit`, `Write`, `NotebookEdit`,
-  `WebFetch` and `WebSearch`; `Bash` and `Agent` stay, because the run needs git and the
-  dispatch. `orchestrator.md` frames that text as input rather than instruction, and a
-  model can be talked out of that framing. It stands because a runner is disposable and a
-  classifier that refused the orchestrator halfway would lose a review that cost $36.
+  anyone who can comment. **Weighed 2026-08-01.** `--disallowed-tools` takes `Edit`, `Write`,
+  `NotebookEdit`, `WebFetch` and `WebSearch`; `Bash` and `Agent` stay, because the run needs
+  git and the dispatch. `orchestrator.md` frames that text as input rather than instruction,
+  and a model can be talked out of that framing. It stands because a runner is disposable and
+  a classifier that refused the orchestrator halfway would lose a review that cost $36.
   `/codeferret:review` runs under `auto` instead, on a machine that is not disposable.
-- Some lenses ship without the capability their skills describe.
+  **Lapses** on a measurement anybody can take: run a full fixture review with
+  `PERMISSION_MODE=auto` and read `build/permission-denials`. A run that finishes with none is
+  a run `auto` would have cost nothing, and CI moves to it.
+- Some lenses ship without the capability their skills describe. **Weighed 2026-08-01.**
   `copilot-web-design-reviewer` has no browser and `anthropic-accessibility-review` cannot
   render a page; measured over two runs the pair produced five unique findings, including the
   one that caught every finding body being rendered as a code block.
   `vercel-next-best-practices` has no application running. They all stay in the default set,
   each with a file under `review/lens-extras/` saying what it cannot do, and an entry in
-  `STANDING_DETAIL` so a reader is told even when the lens forgets.
+  `STANDING_DETAIL` so a reader is told even when the lens forgets. **Lapses** per lens, on
+  the same kind of measurement that put it here: a lens that returns no unique finding across
+  two consecutive fixture runs costs money for nothing, and comes out of the default. It
+  lapses the other way too, for a lens whose capability the session gains, and then the extras
+  file and the `STANDING_DETAIL` entry go rather than the lens.
