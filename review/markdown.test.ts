@@ -296,3 +296,32 @@ describe("prose", () => {
         );
     });
 });
+
+describe("escapeBlocks: an indented run with no content", () => {
+    // Each of these hung for ever before `fenceIndented` guarded against an empty trim: the
+    // forward scan took the line, the trailing-blank trim gave it straight back, and the
+    // index never moved. A review that had already been paid for never posted.
+    for (const [name, lines] of [
+        ["four spaces on their own line", ["a", "", "    ", "b"]],
+        ["a tab on its own line", ["a", "", "\t", "b"]],
+        ["several of them running together", ["a", "", "    ", "\t", "    ", "b"]],
+        ["one at the very start", ["    ", "a"]],
+    ] as Array<[string, string[]]>) {
+        test(`terminates on ${name}`, () => {
+            expect(escapeBlocks(lines)).toEqual(lines);
+        });
+    }
+
+    test("still fences a real indented block, and keeps a blank line inside one", () => {
+        expect(escapeBlocks(["a", "", "    code()", "    ", "    more()", "b"])).toEqual([
+            "a",
+            "",
+            "```",
+            "code()",
+            "",
+            "more()",
+            "```",
+            "b",
+        ]);
+    });
+});

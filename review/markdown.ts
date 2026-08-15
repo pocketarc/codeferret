@@ -386,6 +386,17 @@ function fenceIndented(lines: string[]): string[] {
         // would put a blank line inside the fence and take the paragraph break out.
         while (end > i && blank(lines[end - 1] ?? "")) end -= 1;
 
+        // An indented run that is nothing but whitespace trims back to where it started, and
+        // `i = end` below then makes no progress: four spaces on their own line after a blank
+        // one hung every path that renders a review body, for ever, after a review had been
+        // paid for. There is nothing to fence in a line with no content, so it goes out as
+        // itself and the scan moves on.
+        if (end === i) {
+            out.push(lines[i] ?? "");
+            i += 1;
+            continue;
+        }
+
         const body = lines.slice(i, end).map((line) => line.replace(/^(\t| {4})/, ""));
         const longest = Math.max(0, ...body.flatMap((line) => [...line.matchAll(/`+/g)].map((m) => m[0].length)));
         const fence = "`".repeat(Math.max(3, longest + 1));
