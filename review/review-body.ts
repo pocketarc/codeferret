@@ -415,7 +415,16 @@ export function composeReview(merged: Merged, posting: Posting, parts: Partition
         notice === null ? tail : [notice, ...tail],
     );
 
-    return { body, listed: printed, warned: raised.length > 0 || aboutPosting.length > 0 };
+    // A `note` does not force a post on its own. `limited` is one, and on the shipped lens
+    // set it is permanent: three lenses have no browser today and every run says so, whatever
+    // the diff. Counting it here made `warned` true on every run, which made the "nothing new,
+    // post nothing" branch in post-review.ts unreachable — a quiet pull request got a fresh
+    // "0 new findings" comment on every push, which is the exact noise that branch exists to
+    // stop. A `warning` is news about this run and still forces a post; a standing `note` does
+    // not, though it still renders whenever the body posts for some other reason.
+    const warnings = raised.filter((name) => COVERAGE_NOTICES[name].level === "warning");
+
+    return { body, listed: printed, warned: warnings.length > 0 || aboutPosting.length > 0 };
 }
 
 /**

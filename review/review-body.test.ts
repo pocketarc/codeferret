@@ -624,7 +624,12 @@ describe("composeReview", () => {
             ).toBe(true);
         });
 
-        test("a lens that named something it could not check", () => {
+        // `limited` is a `note`, not a `warning`, and on the shipped lens set it is
+        // permanent: the three capability-less lenses name what they could not check on
+        // every run, whatever the diff. Counting it here made `warned` true always, so a
+        // quiet pull request with nothing new never reached post-review.ts's "post
+        // nothing" branch and got a fresh "0 new findings" comment on every push instead.
+        test("a lens that named something it could not check does not, on its own", () => {
             const limited = { lens: "codeferret:anthropic-accessibility-review", findings_returned: 0, ok: true };
 
             expect(
@@ -632,7 +637,29 @@ describe("composeReview", () => {
                     { lens_health: [limited] },
                     { dispatched: ["codeferret:anthropic-accessibility-review"] },
                 ),
-            ).toBe(true);
+            ).toBe(false);
+        });
+
+        test("the shipped lens set with nothing new and nothing broken stays quiet", () => {
+            const lenses = [
+                "caveman-review",
+                "anthropic-code-review",
+                "wshobson-code-review-excellence",
+                "cursor-thermo-nuclear-review",
+                "sentry-security-review",
+                "copilot-security-review",
+                "vercel-next-best-practices",
+                "copilot-web-design-reviewer",
+                "copilot-sql-code-review",
+                "anthropic-accessibility-review",
+            ].map((name) => `codeferret:${name}`);
+
+            expect(
+                warnedBy(
+                    { lens_health: lenses.map((lens) => ({ lens, findings_returned: 0, ok: true })) },
+                    { dispatched: lenses },
+                ),
+            ).toBe(false);
         });
 
         test("an input the session changed under the run", () => {
