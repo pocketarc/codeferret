@@ -83,10 +83,7 @@ if [ -n "$PR" ]; then
     GITHUB_TOKEN_FILE=$(token_file "$RUN_DIR")
     export GITHUB_TOKEN_FILE
 
-    mkdir -p "$(dirname "$GITHUB_TOKEN_FILE")"
-    rm -f "$GITHUB_TOKEN_FILE"
-    (umask 077 && printf '%s' "$GITHUB_TOKEN" >"$GITHUB_TOKEN_FILE")
-
+    printf '%s' "$GITHUB_TOKEN" | stage_token "$RUN_DIR"
 fi
 
 # Outside the branch above, because the reason holds whether or not this run staged a

@@ -19,7 +19,7 @@
  */
 
 import { dirname, join } from "node:path";
-import { record } from "./json.ts";
+import { number, record, string } from "./json.ts";
 import { RUN_FILES } from "./run-files.ts";
 
 interface LensHealth {
@@ -34,14 +34,6 @@ const [runPath, outPath] = process.argv.slice(2);
 if (!runPath || !outPath) {
     console.error("usage: bun extract-findings.ts <run.json> <findings.json>");
     process.exit(2);
-}
-
-function number(value: unknown): number | null {
-    return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function string(value: unknown): string | null {
-    return typeof value === "string" ? value : null;
 }
 
 const text = await Bun.file(runPath).text();
@@ -105,11 +97,33 @@ if (!last) {
     process.exit(1);
 }
 
+/**
+ * Why a run ended, out of the fields a failed result carries.
+ *
+ * `subtype` is not one of them, and a reader takes it for a clean exit. A session the API cut
+ * off with a 429 reported `subtype: "success"`, so the first line a maintainer read after a
+ * $4 run died was `the run reported an error: success`. What happened was in
+ * `terminal_reason` and `api_error_status`, and the sentence to act on (`You've hit your
+ * session limit`) was in `result`, and nothing printed any of the three.
+ */
+function failureReason(result: Record<string, unknown>): string {
+    const status = number(result.api_error_status) ?? string(result.api_error_status);
+    const what = string(result.terminal_reason) ?? string(result.subtype) ?? "unknown";
+    const named = status === null ? what : `${what}, HTTP ${status}`;
+
+    // Bounded and folded onto one line. `result` carries whatever the API or the model wrote,
+    // and a session that ended on a wall of prose would push everything reported below it off
+    // the screen of whoever is reading the step log.
+    const said = (string(result.result) ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
+
+    return said === "" ? named : `${named}: ${said}`;
+}
+
 // Read through the narrowers below rather than through an interface asserted over the
 // message. The shape is upstream's, and a field it renamed would come back as a confident
 // zero or a TypeError halfway through the reporting loop.
 if (last.is_error === true) {
-    console.error(`the run reported an error: ${string(last.subtype) ?? "unknown"}`);
+    console.error(`the run reported an error: ${failureReason(last)}`);
 }
 
 // The result's `usage` counts the orchestrator's last turn and nothing else. Only
@@ -167,7 +181,11 @@ await writeRunFiles({
 
 if (!structured || findings === null) {
     console.error("the run produced no structured findings");
-    console.error(`result subtype: ${string(last.subtype) ?? "unknown"}`);
+
+    // Only where the error line above did not already print it. A run that ended clean and
+    // still returned nothing leaves the least behind, and is the case this line is for.
+    if (last.is_error !== true) console.error(`the run ended: ${failureReason(last)}`);
+
     console.error(`it cost ${money} and was refused ${denials.length} tool call(s)`);
     process.exit(1);
 }

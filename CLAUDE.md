@@ -120,9 +120,11 @@ is in `review/README.md`.
   the `comment-review` lens is told, in `review/lens-extras/comment-review.md`, to report the
   ones that get through. That lens is currently off in this repository's own workflow, along
   with `writing-review`: the `exclude-lenses` block in `.github/workflows/codeferret.yml`
-  names both and says why. While they are off, run them by hand over the working tree before
-  a push, or this rule has nothing behind it. The run that first had them off left a stale `tool-stub.ts` row
-  and three descriptions of a deleted stage in the tree, and a person found them.
+  names both, says why, and carries the date the exclusion expires;
+  `checkWorkflowLenses` fails once that date has passed. While they are off, run them by hand
+  over the working tree before a push, or this rule has nothing behind it. The run that first had
+  them off left a stale `tool-stub.ts` row and three descriptions of a deleted stage in the
+  tree, and a person found them.
 - A lens's `in_diff` field is unreliable, and nothing reads it. On every run that used
   inline comments, a lens reported an out-of-diff finding as in-diff. Nothing anchors to a
   line now, so there is nothing left to be wrong about. Whoever adds the first inline
@@ -159,8 +161,10 @@ is in `review/README.md`.
   line, and moving the working directory out of the checkout only moves the problem: the
   orchestrator has `Bash` under `bypassPermissions` and its prompt names `$BUILD`, so it can
   write that file into every directory a run has left to stand in. `validate-repo.ts` reads
-  `review/*.sh` and `action.yml` for a `bun` that names a script without the flag, including
-  the ones inside printed hints, and fails on one.
+  `review/*.sh`, `scripts/*.sh` and `action.yml` for a `bun` that names a script without the
+  flag, including the ones inside printed hints, and fails on one. Both script directories:
+  `scripts/vendor-lens.sh` runs bun too, and it sat outside the scanned set, which is how it
+  came to run without the flag.
 - No file the session could have written is evidence about the session. `run.sh` replaces
   the `existing.json` the orchestrator was given with the empty form, because the
   orchestrator holds that path in the same prompt as the rule `vetSuppression` applies, and
@@ -169,9 +173,9 @@ is in `review/README.md`.
   `run.sh`: the token would have to come back into the script that started the agent to be
   used there, and by then `bun` and the action's own scripts are files that session has had a
   whole review to replace. The refetch costs one extra pair of API calls and picks up
-  whatever was said during the run. `previous.json`, `diff-args` and `lens-list.txt` cannot
-  be had again that cheaply, so they are copied aside before the session and put back after
-  it, and a copy that comes back changed is reported.
+  whatever was said during the run. `previous.json`, `diff-args`, `lens-list.txt` and
+  `lenses.txt` cannot be had again that cheaply, so they are copied aside before the session
+  and put back after it, and a copy that comes back changed is reported.
 - An input that names what a review may do has to reach the code that does it.
   `resolve-threads` reached the orchestrator's prompt and nothing else until
   `post-review.ts` was given `RESOLVE_THREADS`, and the upload step read `artifact-path`
@@ -256,11 +260,16 @@ is in `review/README.md`.
   nothing about the finding's file, or the same maintainer's "LGTM" would settle every
   finding on the pull request. Every suppression is reopened when `existing.json` cannot be
   read: a repeated comment costs less than a finding nobody sees.
-- A closed thread stands for its own file and no other. Closing one takes repository write,
-  which is why a comment on it may decline at all. Replying to one takes no more than
+- A closed thread stands for its own file, no other, and not for a critical or a high.
+  Closing one takes repository write, or authorship of the pull request, which GitHub
+  documents and a round of review caught here: on a branch from an outside contributor the
+  only person who can close a thread is the one whose work is under review, so closure alone
+  is not evidence that anybody with standing settled anything. It still decides a finding
+  printed as one line, and `vetSuppression` holds the two severities that take a reader off
+  the page to an entitled commenter instead. Replying to a closed thread takes no more than
   commenting and does not reopen it, so a reply there is bound to the file the thread is
-  anchored to and its words settle nothing. Widen that and a stranger's "working as
-  intended, `src/auth.ts` is fine" on any resolved thread silences any file it names.
+  anchored to and its words settle nothing. Widen either half and a stranger's "working as intended,
+  `src/auth.ts` is fine" on any resolved thread silences any file it names.
 - `already-reported` is held to a lower bar than a decline, and to more than nothing.
   Anyone's comment settles it, because a defect somebody wrote down is a defect somebody
   wrote down, and the finding keeps its line in the review either way. What it still needs

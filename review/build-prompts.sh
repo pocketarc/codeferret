@@ -16,14 +16,13 @@
 # Set RESOLVE_THREADS=0 where the review posts under somebody's own account rather than
 # CodeFerret's, which is every run outside CI.
 #
-# Usage: build-prompts.sh <base-ref> <action-path> <plugin-out-dir> <workspace> [<lenses-file>]
+# Usage: build-prompts.sh <base-ref> <action-path> <plugin-out-dir> <workspace>
 set -euo pipefail
 
-BASE=${1:?usage: build-prompts.sh BASE_REF ACTION_PATH PLUGIN_OUT_DIR WORKSPACE [LENSES_FILE]}
+BASE=${1:?usage: build-prompts.sh BASE_REF ACTION_PATH PLUGIN_OUT_DIR WORKSPACE}
 ACTION=${2:?missing action path}
 PLUGIN=${3:?missing plugin output dir}
 WORKSPACE=${4:?missing workspace}
-LENSES_FILE=${5:-}
 
 RESOLVE_THREADS=${RESOLVE_THREADS:-1}
 
@@ -130,7 +129,7 @@ while IFS= read -r lens; do
     fi
 
     LENSES+=("$lens")
-done < <(if [ -n "$LENSES_FILE" ]; then cat "$LENSES_FILE"; else cat; fi)
+done
 
 if [ "${#LENSES[@]}" -eq 0 ]; then
     echo "no lenses given" >&2
@@ -138,6 +137,7 @@ if [ "${#LENSES[@]}" -eq 0 ]; then
 fi
 
 : >"$BUILD/lens-list.txt"
+: >"$BUILD/lenses.txt"
 
 # A positive pathspec comes first, because git treats a list of pure exclusions as
 # matching nothing. It is `:(top)` rather than `.` because git resolves a pathspec
@@ -215,7 +215,11 @@ for lens in "${LENSES[@]}"; do
         exit 1
     fi
 
+    # Twice, into two files. `lens-list.txt` is spliced into the orchestrator's prompt and its
+    # decoration is prose; `lenses.txt` is what run-files.ts reads back, and the comment on
+    # `DISPATCHED_FILE` says why one file could not be both.
     printf -- '- `%s:%s`\n' "$NAMESPACE" "$lens" >>"$BUILD/lens-list.txt"
+    printf '%s:%s\n' "$NAMESPACE" "$lens" >>"$BUILD/lenses.txt"
 done
 
 # A review runs for twenty minutes and whoever started it is often still committing, so the

@@ -121,6 +121,58 @@ token_file() {
     printf '%s.token' "$1"
 }
 
+# Put a token where run.sh will look for it, given the run directory. The value comes in on
+# stdin, the way `fetch_existing` takes one.
+#
+# The `rm -f` and the `umask 077` are security properties rather than tidiness, and both
+# callers had them written out by hand. Two copies that agree today are one edit away from
+# two that do not, and neither a token written world-readable nor one written into a file
+# another account left in place is a failure anything here would report.
+#
+# Usage: stage_token <run-dir>, token on stdin.
+stage_token() {
+    local file
+    file=$(token_file "$1")
+
+    mkdir -p "$(dirname "$file")"
+    rm -f "$file"
+    (umask 077 && cat >"$file")
+}
+
+# ---- What a run's findings have to clear before anything reads them ------------------
+
+# The two guards in front of a run's findings: the file is there, and check-findings.ts has
+# passed it.
+#
+# One home because the pair is one fact, and both local scripts asked it in the same words
+# down to the hint line. run.sh writes `findings-checked` only where the check passed, and the
+# action posts on nothing else. Printing is held to the same bar as posting because it reaches
+# the same fields: `readMerged` checks that `findings` is an array and nothing more, and
+# print-findings.ts then calls `.localeCompare` on a finding's file and `.replace` on a lens
+# name, which nothing else narrows, so a `lens_health` entry naming its lens as a number ends
+# a run that cost real money in a TypeError. That gate used to be a step of
+# commands/review.md, and prose is not a boundary.
+#
+# Usage: require_checked_findings <build-dir> <plugin-root> <verb>
+require_checked_findings() {
+    local build=$1 plugin=$2 verb=$3
+    local findings="$build/findings.json"
+
+    if [ ! -f "$findings" ]; then
+        echo "no findings at $findings. Run the review first." >&2
+        return 1
+    fi
+
+    if [ ! -f "$build/findings-checked" ]; then
+        echo "$findings did not pass check-findings.ts, so it is not safe to $verb." >&2
+        # With the flag, like every other bun a run starts. Whoever reads this line is
+        # standing in the checkout under review, which is the directory bun takes a
+        # `bunfig.toml` from.
+        echo "run: bun --config=/dev/null '$plugin/review/check-findings.ts' '$findings'" >&2
+        return 1
+    fi
+}
+
 # ---- Reaching a containerised toolchain ---------------------------------------------
 
 # Whether `command-prefix` can see a path at the same place the runner has it.

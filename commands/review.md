@@ -168,6 +168,11 @@ review names is a line of the commit the lenses read, so a review of work GitHub
 seen sends its reader to code that is not there. `dirty=0` still applies when the review
 covered committed work only, because the lenses read files as they find them.
 
+These conditions decide what to offer, not what is allowed. `local-post.sh` decides each of
+them again for itself, against the commit the lenses read rather than against a preflight
+taken before them, and refuses rather than asking. So relay what it prints instead of
+working around it.
+
 Say what a review posted from here does not leave behind. The action reads what the last
 review raised out of that run's `codeferret-run` artifact, and a session's findings file
 never becomes one, so the next action run on this pull request has nothing to match against

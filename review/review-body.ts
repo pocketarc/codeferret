@@ -25,7 +25,12 @@ import {
     prose,
 } from "./markdown.ts";
 
-/** GitHub's limit on a review body is 65536 characters. The difference is headroom. */
+/**
+ * GitHub's limit on a review body is 65536 characters. The difference is headroom.
+ *
+ * Exported for review-body.test.ts, which builds a body against the limit rather than
+ * against a number typed out beside it. Nothing else outside this module reads it.
+ */
 export const MAX_BODY = 60000;
 
 /**
@@ -60,18 +65,21 @@ export function lenses(n: number): string {
 type Reopening = Exclude<keyof Vetted, "findings">;
 
 /**
- * Keyed by the counter rather than listed beside it. A `Record` over the counter names makes
- * a fifth reason a compile error here, where an array of pairs took the fifth counter, said
- * nothing about it, and left a reader looking at a reopened finding with no line explaining
- * why it came back.
+ * Keyed by the counter rather than listed beside it. A `Record` over the counter names turns
+ * a counter added to `Vetted` into a compile error here, where an array of pairs took the new
+ * one, said nothing about it, and left a reader looking at a reopened finding with no line
+ * explaining why it came back.
  */
 const REOPENING: Record<Reopening, (n: number) => string> = {
     untraceable: (n) =>
         `${plural(n, "decline")} cited no comment from an owner, member or collaborator,` +
-        " and no resolved thread. Reporting them as new.",
+        " and no resolved thread that a finding of that severity may rest on. Reporting them as new.",
     unrelated: (n) =>
         `${plural(n, "decline")} cited a comment that says nothing about the file the` +
         " finding is in. Reporting them as new.",
+    unvouched: (n) =>
+        `${plural(n, "finding")} came back as already raised at critical or high, with no` +
+        " owner, member or collaborator having said so. Reporting them as new.",
     unreported: (n) =>
         `${plural(n, "finding")} came back as already raised, citing a comment that is not` +
         " on this pull request or says nothing about the file. Reporting them as new.",
@@ -88,7 +96,7 @@ export function reopenedReasons(vetted: Vetted): string[] {
 
 // The orchestrator writes both the summary and the notes, and nothing bounds what a model
 // produces. Left unbounded, a runaway summary eats the length the findings need.
-export const MAX_PROSE = 4000;
+const MAX_PROSE = 4000;
 
 /**
  * One lens's account of what it could not check. Every lens is asked for one.
@@ -101,7 +109,7 @@ export const MAX_PROSE = 4000;
 export const MAX_LENS_DETAIL = 2000;
 
 /** One finding's body. check-findings.ts asks only that it be a non-empty string. */
-export const MAX_FINDING_BODY = 4000;
+const MAX_FINDING_BODY = 4000;
 
 /**
  * One finding's title, which is asked for as one line and checked only for being a string.
@@ -155,11 +163,8 @@ export function destinationOf(env: Record<string, string | undefined>): Destinat
  * the pull request. With nothing behind it (a session, whose findings file is a path under
  * `.git/` on one person's machine, or a run that kept no artifact) every finding goes in the
  * body instead, since there is nowhere else to read it.
- *
- * Exported because post-review.ts logs this count beside the ones `partition` gives it,
- * and a log line that contradicts the body it describes is worse than no log line.
  */
-export function listedIn(fresh: Finding[], to: Destination): Finding[] {
+function listedIn(fresh: Finding[], to: Destination): Finding[] {
     return to.kind === "artifact" ? fresh.filter(isListed) : fresh;
 }
 
@@ -317,7 +322,7 @@ export function caveatOf(h: LensHealth): string | undefined {
 }
 
 /** The joined body, and which findings actually reached it. */
-export interface Assembled {
+interface Assembled {
     body: string;
     /**
      * The findings whose bullets went in.
@@ -331,7 +336,7 @@ export interface Assembled {
 }
 
 /** A heading, a reason, and findings listed under it. The one section that can run long. */
-export interface Listing {
+interface Listing {
     heading: string;
     /** Why these findings and not others. Empty when the section holds all of them. */
     lead: string;
@@ -352,6 +357,9 @@ export interface Listing {
  * A finding too long for what is left costs only itself. `partition` orders by severity, so
  * stopping at the first one that does not fit would let a verbose critical finding at the
  * top empty the whole section.
+ *
+ * Exported for review-body.test.ts. `composeReview` is what a run calls, and the cutting is
+ * the part with cases worth writing down one by one.
  */
 export function assemble(head: string[], listing: Listing | null, tail: string[]): Assembled {
     let budget = MAX_BODY - [...head, ...tail].reduce((total, s) => total + s.length + 2, 0);

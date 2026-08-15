@@ -262,38 +262,42 @@ function schemaPaths(node: JsonSchema, path: string, out: Set<string>): void {
 }
 
 /**
+ * What one walk collects and reads, threaded as one value.
+ *
+ * `walk` and `repairField` recurse through every node of the schema, and the accumulators and
+ * the enum table were positional parameters written out by hand at every recursive call. One
+ * bag names each of them at the call site instead, and adding to what a walk carries is a
+ * field here rather than another argument threaded through all of those calls.
+ */
+interface Walk {
+    /** Everything that does not match the schema, which decides what is dropped. */
+    problems: Problem[];
+    /** One line per repair made on the way through, which the caller prints. */
+    notes: string[];
+    /** The enums read out of the schema, for the repairs that normalise against them. */
+    enums: Enums;
+}
+
+/**
  * Apply the repair `POLICY` names for one field of one object, and say what it did.
  *
  * Run from inside the walk, before anything reads the value, so what the walk goes on to
  * report is what will be written back.
  */
-function repairField(
-    host: Record<string, unknown>,
-    key: string,
-    path: string,
-    notes: string[],
-    enums: Enums,
-): void {
-    const done = POLICY[shape(path)]?.repair?.(host[key], enums);
+function repairField(host: Record<string, unknown>, key: string, path: string, ctx: Walk): void {
+    const done = POLICY[shape(path)]?.repair?.(host[key], ctx.enums);
 
     if (!done) return;
 
     if ("set" in done) host[key] = done.set;
     else delete host[key];
 
-    notes.push(`${path}: ${done.note}`);
+    ctx.notes.push(`${path}: ${done.note}`);
 }
 
-function walk(
-    value: unknown,
-    node: JsonSchema,
-    path: string,
-    out: Problem[],
-    notes: string[],
-    enums: Enums,
-): void {
+function walk(value: unknown, node: JsonSchema, path: string, ctx: Walk): void {
     const problem = (message: string): void => {
-        out.push({ path, message });
+        ctx.problems.push({ path, message });
     };
 
     // First, because the three branches below each return, and a rule on an object or an
@@ -316,14 +320,14 @@ function walk(
 
         // Every property, present or not, for the reason `Policy.repair` gives.
         for (const key of Object.keys(node.properties ?? {})) {
-            repairField(object, key, path ? `${path}.${key}` : key, notes, enums);
+            repairField(object, key, path ? `${path}.${key}` : key, ctx);
         }
 
         // Reported against the missing field's own path, so that `POLICY` can name it the
         // way it names a field that is present and wrong.
         for (const key of node.required ?? []) {
             if (object[key] === undefined) {
-                out.push({ path: path ? `${path}.${key}` : key, message: "is missing" });
+                ctx.problems.push({ path: path ? `${path}.${key}` : key, message: "is missing" });
             }
         }
 
@@ -334,7 +338,7 @@ function walk(
         }
 
         for (const [key, child] of Object.entries(node.properties ?? {})) {
-            if (object[key] !== undefined) walk(object[key], child, path ? `${path}.${key}` : key, out, notes, enums);
+            if (object[key] !== undefined) walk(object[key], child, path ? `${path}.${key}` : key, ctx);
         }
 
         return;
@@ -348,7 +352,7 @@ function walk(
 
         if (node.items) {
             const items = node.items;
-            value.forEach((item, i) => walk(item, items, `${path}[${i}]`, out, notes, enums));
+            value.forEach((item, i) => walk(item, items, `${path}[${i}]`, ctx));
         }
 
         return;
@@ -383,7 +387,7 @@ function enumsOf(schema: JsonSchema): Enums {
 }
 
 export interface SelfCheck {
-    /** How many rules `POLICY` holds, for the line a clean self-check prints. */
+    /** How many rules `POLICY` holds, for the line a clean check prints. */
     rules: number;
     /** Rule keys naming a field the schema has not got, which are rules that stopped running. */
     stray: string[];
@@ -399,7 +403,8 @@ export interface SelfCheck {
  * A key in `POLICY` the schema has no field for is a rule that stopped running, and a
  * findings file that rule would have caught is still reported `shape valid`. A rename in the
  * schema, or a typo in the table, is a problem with this repository and is answerable
- * without running a review, which is why `--self-check` is what fails on it.
+ * without running a review, which is why `checkFindingRules` in scripts/validate-repo.ts is
+ * what fails on it, rather than anything on the path a review takes.
  *
  * The walk runs both ways. A field of a finding with no entry either way is fatal by
  * default, because the walk reports it and nothing tolerates the report, and that is a
@@ -522,31 +527,48 @@ function findingIndex(problem: Problem): number | null {
 }
 
 /**
+ * A record only post-review.ts may write, taken off a file that has not been posted yet.
+ *
+ * `posted` is the only evidence fetch-previous.ts has that a run's findings were said out
+ * loud, and this runs before anything is posted, so whatever put one here invented it.
+ */
+function dropInvented(merged: Record<string, unknown>, repairs: string[]): void {
+    if (merged.posted === undefined) return;
+
+    delete merged.posted;
+    repairs.push("posted: removed. Only a review GitHub has accepted may record one");
+}
+
+/**
  * Every rule, applied to one parsed findings file.
  *
  * The value is repaired in place and handed back, because the caller writes it out again.
  * `dispatched` is the lens list the run wrote beside the findings, empty for a by-hand check
  * of an old file, and then only the whole-array case of `coverageOf` is answerable.
+ *
+ * The steps below run in an order two of them depend on, and each of the two says so where it
+ * stands: `coverageOf` counts what `keepEntries` left, and `label` reads a title out of
+ * `merged.findings` by index, so the findings that are going cannot be filtered out until
+ * every problem has been labelled. The filter is therefore the last thing that happens.
  */
 export function applyRules(schema: JsonSchema, merged: Record<string, unknown>, dispatched: string[]): Checked {
     const findings = Array.isArray(merged.findings) ? merged.findings : [];
     const found = findings.length;
     const repairs: string[] = [];
 
-    // `posted` belongs to post-review.ts, which writes it once GitHub has accepted the
-    // review. It is the only evidence fetch-previous.ts has that a run's findings were said
-    // out loud, and this runs before anything is posted, so whatever put one here invented it.
-    if (merged.posted !== undefined) {
-        delete merged.posted;
-        repairs.push("posted: removed. Only a review GitHub has accepted may record one");
-    }
+    dropInvented(merged, repairs);
 
     const droppedEntries = keepEntries(merged, "resolve", repairs) + keepEntries(merged, "lens_health", repairs);
 
+    // After `keepEntries` and not before it: this counts the entries that are staying, and
+    // run before it, it would count an entry already dropped as a lens accounting for itself.
     const coverage = coverageOf(Array.isArray(merged.lens_health) ? merged.lens_health : [], dispatched);
 
-    const problems: Problem[] = [];
-    walk(merged, schema, "", problems, repairs, enumsOf(schema));
+    const ctx: Walk = { problems: [], notes: repairs, enums: enumsOf(schema) };
+
+    walk(merged, schema, "", ctx);
+
+    const { problems } = ctx;
 
     // Read before anything is dropped, because the title comes out of the array by index.
     const label = (problem: Problem): string => {

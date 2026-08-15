@@ -43,6 +43,8 @@ describe("isListed", () => {
 });
 
 describe("vetSuppression: who may settle a finding", () => {
+    const replyUrl = "https://github.com/o/r/pull/1#discussion_r2";
+
     const declined = (url?: string): Finding => finding({ status: "declined", existing_comment_url: url });
 
     function existing(association: string, resolved = false) {
@@ -86,6 +88,30 @@ describe("vetSuppression: who may settle a finding", () => {
         expect(out.findings[0]?.status).toBe("declined");
     });
 
+    // GitHub resolves a conversation for whoever opened the pull request as well as for
+    // anyone with repository write, so a closed thread on an outside contributor's branch is
+    // the word of the person under review.
+    for (const severity of ["critical", "high"]) {
+        test(`a resolved thread cannot decline a ${severity} on its own`, () => {
+            const out = vet(
+                [finding({ file: "a.ts", severity, status: "declined", existing_comment_url: replyUrl })],
+                existing("NONE", true),
+            );
+
+            expect(out.untraceable).toBe(1);
+            expect(out.findings[0]?.status).toBe("new");
+        });
+
+        test(`an owner's reply on that thread still declines a ${severity}`, () => {
+            const out = vet(
+                [finding({ file: "a.ts", severity, status: "declined", existing_comment_url: replyUrl })],
+                existing("OWNER", true),
+            );
+
+            expect(out.findings[0]?.status).toBe("declined");
+        });
+    }
+
     test("that reply settles nothing in another file, whatever it names", () => {
         const anyone = existing("NONE", true);
         const comment = anyone.threads[0]?.comments[1];
@@ -120,7 +146,9 @@ describe("vetSuppression: who may settle a finding", () => {
     test("it leaves a new finding alone", () => {
         const out = vet([finding({ status: "new" })], {});
 
-        expect([out.untraceable, out.unrelated, out.unreported, out.unmatched]).toEqual([0, 0, 0, 0]);
+        expect([out.untraceable, out.unrelated, out.unvouched, out.unreported, out.unmatched]).toEqual([
+            0, 0, 0, 0, 0,
+        ]);
         expect(out.findings.map((f) => f.status)).toEqual(["new"]);
     });
 });
@@ -301,7 +329,7 @@ describe("vetSuppression holds a listed severity to the decline bar", () => {
             const out = vet([reported(severity)], commented("NONE"));
 
             expect(out.findings[0]?.status).toBe("new");
-            expect(out.unreported).toBe(1);
+            expect(out.unvouched).toBe(1);
         });
 
         test(`an owner's comment still settles a ${severity} finding`, () => {
@@ -324,7 +352,7 @@ describe("vetSuppression: a listed severity citing no comment at all", () => {
             const out = vet([finding({ severity, status: "already-reported" })], {}, raised);
 
             expect(out.findings[0]?.status).toBe("new");
-            expect(out.unreported).toBe(1);
+            expect(out.unvouched).toBe(1);
         });
     }
 

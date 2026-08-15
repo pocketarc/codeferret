@@ -30,11 +30,14 @@ skill itself uses to illustrate sensitive columns. Recommend a batched fetch on 
 table keyed by the parent ids already in hand, with the columns named: `SELECT o.user_id,
 o.id, o.total, o.order_date FROM orders o WHERE o.user_id = ANY($1)`.
 
-Its examples under "SECURE" and "GOOD" select `*` from `users`, which is the table the same
-skill uses to illustrate sensitive columns, and which appears as a defect in its own Data
-Protection list and in its checklist. The parameterisation those examples demonstrate is
-right and the projection beside it is not, so do not read a green tick there as permission:
-name the columns, and raise `SELECT *` in the diff on the skill's own rule.
+Its "SECURE" examples select `*` from `users`, which is the table the same skill uses to
+illustrate sensitive columns, and which appears as a defect in its own Data Protection list
+and in its checklist. The parameterisation those examples demonstrate is right and the
+projection beside it is not. The replacement under "Function Misuse in WHERE Clauses" keeps
+`SELECT *` on `orders` in the same way: the range condition it teaches is right and the
+projection carried over from the bad example is not. So do not read a green tick as
+permission for the projection it carries: name the columns, and raise `SELECT *` in the diff
+on the skill's own rule.
 
 Its N+1 example is the one most likely to reach an author, and its replacement is worse than
 the loop it replaces. The skill offers `SELECT u.*, o.* FROM users u LEFT JOIN orders o ON
@@ -46,10 +49,16 @@ for an N+1 is one query over the ids the caller already holds, projecting named 
 `SELECT o.user_id, o.id, o.total FROM orders o WHERE o.user_id = ANY($1)`, grouped in the
 application. Recommend that shape, and raise the skill's own example if it appears in a diff.
 
-Its Issue Template nests three-backtick blocks inside a three-backtick block, which leaves a
-fence open from there to the end of the file. Everything after it (the output format, the
-scores, the priority actions) is upstream's own reporting shape, and none of it applies:
-your output is the JSON schema in the brief above and nothing else.
+Its Issue Template, and the output format, scores and priority actions around it, are
+upstream's own reporting shape, and none of it applies: your output is the JSON schema in the
+brief above and nothing else.
+
+That template is the one problem here not answered in prose. It nested three-backtick blocks
+inside a three-backtick block, so the outer delimiter in the vendored file was raised to four
+backticks by hand, which is what `scripts/prepare-skill.ts` describes in its header and what
+`checkSkillFences` fails the repository over. A fence left open swallows the rest of the
+file, and no wording here could reach that far, so it could not be a correction of the kind
+above.
 
 Where you have nothing to report, say in `notes` which surfaces you ruled out and how:
 literal SQL in strings and fenced blocks, ORM and query-builder calls, migration and schema

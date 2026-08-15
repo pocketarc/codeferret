@@ -238,10 +238,11 @@ try {
 // put it there and have this run adopt the thread. Resolving is the one non-model control on
 // what gets taken off the page, so it is not opened to whoever can comment.
 //
-// A trailing `<sub>` category line used to count as a second shape here, for inline threads
-// left by a released version. Nothing has been released, every thread this run has ever seen
-// carries the marker, and ordinary markup proves nothing about who wrote a comment, in a
-// test whose whole job is to be narrow.
+// A trailing `<sub>` category line used to count as a second shape here, for the inline
+// threads `@v1.0.0` and earlier left. It was dropped on a measurement, not on a claim about
+// what has shipped: against a pull request carrying forty of this tool's own threads it
+// matched none of them, so it was buying nothing. Ordinary markup proves nothing about who
+// wrote a comment either, in a test whose whole job is to be narrow.
 const threads: Threaded[] = raw.map((t) => {
     const root = t.comments.nodes[0];
     const body = root?.body ?? "";

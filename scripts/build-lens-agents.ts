@@ -186,6 +186,11 @@ for (const entry of readdirSync("lenses/skills", { withFileTypes: true })) {
     );
 }
 
+// Counted before the generated module joins the map. Both go through `writeOrCheck`, and the
+// count taken after it printed one agent more than there are lenses, and said
+// `standing-detail.ts` was rendered from `lens-brief.md`, which it is not.
+const agents = wanted.size;
+
 // Generated beside the agents from the same read, so the sentence a lens is given and the
 // sentence a review prints for it come out of one file. Written even when empty, because a
 // stale map left on disk would keep printing a caveat for a lens that no longer claims one.
@@ -244,4 +249,5 @@ for (const entry of existsSync(EXTRAS_DIR) ? readdirSync(EXTRAS_DIR) : []) {
 
 if (problems > 0) process.exit(1);
 
-console.log(`OK ${AGENTS_DIR}: ${wanted.size} agent(s)${check ? " match review/lens-brief.md" : " written"}`);
+console.log(`OK ${AGENTS_DIR}: ${agents} agent(s)${check ? " match review/lens-brief.md" : " written"}`);
+console.log(`OK ${STANDING_FILE}: ${check ? "matches the extras files" : "written"}`);

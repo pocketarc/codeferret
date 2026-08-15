@@ -9,7 +9,7 @@
  */
 
 import type { Finding } from "./findings.ts";
-import { reason, record } from "./json.ts";
+import { integer, reason, record } from "./json.ts";
 
 /**
  * A previous finding, cut down to what this run matches against.
@@ -79,7 +79,7 @@ export function fromThisRepository(run: WorkflowRun | undefined): boolean {
 
     const { repository_id: base, head_repository_id: head } = run;
 
-    return Number.isInteger(base) && Number.isInteger(head) && base === head;
+    return integer(base) !== null && integer(head) !== null && base === head;
 }
 
 /**
@@ -107,7 +107,7 @@ export function sameWorkflow(own: number | null, producingRun: unknown): boolean
 
     const id = record(producingRun)?.workflow_id;
 
-    return Number.isInteger(id) && id === own;
+    return integer(id) === own;
 }
 
 /**
@@ -168,12 +168,12 @@ export function previousOf(parsed: unknown, pull: string, label: string): Previo
 
         if (!finding || typeof finding.file !== "string" || typeof finding.title !== "string") continue;
 
-        const line = finding.line;
+        const line = integer(finding.line);
         const url = finding.existing_comment_url;
 
         previous.push({
             file: finding.file,
-            ...(typeof line === "number" && Number.isInteger(line) ? { line } : {}),
+            ...(line === null ? {} : { line }),
             title: finding.title,
             status: statusOf(finding.status),
             ...(typeof url === "string" && url ? { existing_comment_url: url } : {}),

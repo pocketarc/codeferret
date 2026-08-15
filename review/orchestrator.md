@@ -81,7 +81,9 @@ For each merged finding, set `status`:
   act: "we don't want that", "working as intended", "not for this PR". A resolved thread
   settles findings in the file it is anchored to and needs no reading of the rest. It
   settles nothing in any other file, whatever a reply on it names: closing a thread takes
-  repository write, and replying to one takes no more than commenting.
+  repository write or authorship of the pull request, and replying to one takes no more
+  than commenting. For a `critical` or a `high`, a resolved thread is not enough on its
+  own. Mark those `declined` only on a reply from an `OWNER`, `MEMBER` or `COLLABORATOR`.
 
   Treat a reply as a decline only when its `association` is `OWNER`, `MEMBER` or
   `COLLABORATOR`. Anyone able to comment can write "working as intended" under a finding,

@@ -185,6 +185,18 @@ inputs:
             The value reaches both halves of a run. It picks the prompt the orchestrator
             reads, and it decides whether the code calls `resolveReviewThread` at all, so a
             run left off closes nothing whatever the orchestrator decides.
+
+            This mode has an end, and it is a condition to check rather than a date. Nothing
+            outside this repository reads the action, so every thread left to close is on a
+            pull request of this repository. Once no open pull request here carries a
+            CodeFerret review thread, there is no target left, and the whole path goes with
+            it: this input, the `RESOLVE_THREADS` it passes through run.sh and
+            build-prompts.sh, resolve-judge.md and resolve-none.md, `resolve` in
+            merged-schema.json and finding-rules.ts, `ownThreads` and the marker test in
+            fetch-existing.ts, `toResolve` and the mutation in post-review.ts, and the
+            resolved and denied lines in review-body.ts. Written down here because that
+            moment leaves no trace in the code, and until the path is deleted every change to
+            how a review is posted has to keep this mode working.
         required: false
         default: 'false'
     pr-number:
@@ -262,85 +274,6 @@ outputs:
 runs:
     using: composite
     steps:
-        # First, so an `artifact-path` that cannot be uploaded fails the job in the first
-        # ten seconds instead of after a review that took twenty minutes and cost real
-        # money. Resolved in this step, because upload-artifact does not accept a pattern
-        # with a `.` or `..` segment, and the natural way to ask for the whole directory
-        # is `.`.
-        - name: Resolve what to keep
-          id: artifact
-          if: inputs.artifact-path != ''
-          shell: bash
-          env:
-              ARTIFACT_PATH: ${{ inputs.artifact-path }}
-          run: |
-              # shellcheck source=review/lib.sh
-              . "$GITHUB_ACTION_PATH/review/lib.sh"
-
-              run_dirs "$(runner_run_dir)"
-              build="$BUILD_DIR"
-
-              newline='
-              '
-
-              # One `case`, because both answers are about the same input, and split across
-              # two they can disagree. `keeps_findings` says whether `findings.json` is in
-              # what gets uploaded: the review body prints only the critical and high
-              # findings when it is, so a path that keeps something else has to reach
-              # post-review.ts, or a consumer gets a review that leaves most of its findings
-              # out and links a file nobody kept.
-              case "$ARTIFACT_PATH" in
-                  # A `..` segment, not a `..` anywhere: `tool-semgrep..json` escapes nothing.
-                  .. | ../* | */../* | */..)
-                      echo "artifact-path must stay inside the build directory: $ARTIFACT_PATH" >&2
-                      exit 1
-                      ;;
-                  # A `.` segment past the front. `$build` is prepended below, so every
-                  # segment of what upload-artifact receives is past the front, and it
-                  # refuses the pattern. A leading one is stripped instead, just below.
-                  */./* | */.)
-                      echo "artifact-path must name no '.' directory: $ARTIFACT_PATH" >&2
-                      exit 1
-                      ;;
-                  *"$newline"*)
-                      # upload-artifact reads `path` as a newline-separated list, so a second
-                      # line is another path uploaded, and nothing in the run would say so.
-                      echo "artifact-path must be a single path" >&2
-                      exit 1
-                      ;;
-              esac
-
-              # `./x` and `x` name the same file, so this has to answer the same for both.
-              # Both branches below matched `./findings.json` before this: it was read as
-              # keeping the findings, and the path it built carried a `.` segment
-              # upload-artifact refuses, so the review linked an artifact nothing had
-              # uploaded and left every finding below high out of the body. Stripped here
-              # rather than listed again in each branch: listing it twice is how the two came
-              # to disagree.
-              #
-              # `?*` so a bare `./` is left to the branch that reads it as the whole directory.
-              case "$ARTIFACT_PATH" in
-                  ./?*) ARTIFACT_PATH=${ARTIFACT_PATH#./} ;;
-              esac
-
-              case "$ARTIFACT_PATH" in
-                  . | ./)
-                      path="$build"
-                      keeps_findings=true
-                      ;;
-                  findings.json)
-                      path="$build/$ARTIFACT_PATH"
-                      keeps_findings=true
-                      ;;
-                  *)
-                      path="$build/$ARTIFACT_PATH"
-                      keeps_findings=false
-                      ;;
-              esac
-
-              emit_output path "$path"
-              emit_output keeps-findings "$keeps_findings"
-
         # actions/checkout cleans by default, deleting whatever an earlier step in the
         # caller's job wrote.
         - name: Check for an existing checkout
@@ -393,6 +326,44 @@ runs:
 
               # shellcheck disable=SC2086 # $need is built above, one package name at a time
               npm install -g $need
+
+        # Early, so an `artifact-path` that cannot be uploaded fails the job in its first
+        # seconds instead of after a review that took twenty minutes and cost real money.
+        # After the toolchain rather than before it, because the resolving is
+        # review/artifact-path.ts: it was three `case` statements inside this file, where the
+        # only reader before a real run was shellcheck, and shellcheck reads syntax. The
+        # module's own docstring has the rest of the reasoning, and its cases are a table in
+        # `bun test`.
+        - name: Resolve what to keep
+          id: artifact
+          if: inputs.artifact-path != ''
+          shell: bash
+          env:
+              ARTIFACT_PATH: ${{ inputs.artifact-path }}
+              PREFIX: ${{ inputs.command-prefix }}
+          run: |
+              # shellcheck source=review/lib.sh
+              . "$GITHUB_ACTION_PATH/review/lib.sh"
+
+              run_dirs "$(runner_run_dir)"
+
+              # The first `$PREFIX bun` of the run, so this is where a prefix that cannot see
+              # the action path is worth naming. Without it the failure is bun's own module
+              # resolution error against a path the container has not got.
+              prefix_reaches "$GITHUB_ACTION_PATH"
+
+              resolved=$($PREFIX bun --config=/dev/null \
+                  "$GITHUB_ACTION_PATH/review/artifact-path.ts" "$ARTIFACT_PATH" "$BUILD_DIR")
+
+              # Two lines, in the order the module prints them. Neither can carry a newline:
+              # one is refused there and the other is a literal.
+              {
+                  IFS= read -r path
+                  IFS= read -r keeps_findings
+              } <<<"$resolved"
+
+              emit_output path "$path"
+              emit_output keeps-findings "$keeps_findings"
 
         - name: Resolve the review target
           id: target
@@ -468,12 +439,13 @@ runs:
               # shellcheck source=review/lib.sh
               . "$GITHUB_ACTION_PATH/review/lib.sh"
 
-              file=$(token_file "$(runner_run_dir)")
-
-              # 0600 keeps another account on the runner out. What keeps a lens out is the
-              # file being gone before the review session starts.
-              rm -f "$file"
-              (umask 077 && printf '%s' "$GITHUB_TOKEN" >"$file")
+              # 0600 keeps another account on the runner out, and `stage_token` in lib.sh
+              # owns that alongside the path, for the reason written beside it there. What
+              # keeps a lens out is the file being gone before the review session starts.
+              #
+              # Over stdin, so the token is not in the argument list of a process every
+              # other process on the runner can read.
+              printf '%s' "$GITHUB_TOKEN" | stage_token "$(runner_run_dir)"
 
         - name: Run the review
           id: review

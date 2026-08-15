@@ -263,7 +263,7 @@ status=0
 # orchestrator gives. Each decides something once the review has ended: `diff.sh` and
 # `diff-args` are between them the diff every lens read, and reviewed-commit.ts takes from
 # the second the commit local-post.sh refuses to post against; check-findings.ts reads
-# `lens-list.txt` for the one check that catches a lens that ran and reported nothing about
+# `lenses.txt` for the one check that catches a lens that ran and reported nothing about
 # itself; and `vetSuppression` reads `previous.json` for whether the last review raised
 # anything in the file of a finding this run says was raised before. None of them can move
 # out of the build directory (diff.sh reads its arguments from beside itself, and the prompts
@@ -273,7 +273,7 @@ status=0
 # One list, used twice. Copied without comparing, tampering with a file goes unreported;
 # compared without copying, `cmp` and then `cp` both fail against a file that is not there
 # and `set -e` kills the job after the review has been paid for.
-PINNED=(diff-args diff.sh lens-list.txt previous.json)
+PINNED=(diff-args diff.sh lens-list.txt lenses.txt previous.json)
 
 # Beside the build directory rather than under `mktemp -d`. `command-prefix` is asked to
 # mount `$RUN_DIR` and nothing else, so a path outside it is one the container cannot see:
@@ -323,9 +323,9 @@ done
 # write`. Deleting findings.json below covers the file the review is built from; this covers
 # the file that one is extracted from.
 #
-# `$PRISTINE` is a fresh mktemp directory named in no prompt. Like the copies taken into it
-# above, that raises the cost rather than closing the channel: a lens with Bash runs as this
-# user and can look.
+# `$PRISTINE` sits beside the build directory, for the reason given above, and is named in no
+# prompt. Like the copies taken into it, that raises the cost rather than closing the channel:
+# a lens with Bash runs as this user and can look.
 #
 # Not fatal. A session killed before it wrote a byte already reaches the `-f` test below, and
 # dying here instead would lose the cost and the refusals that run wrote.

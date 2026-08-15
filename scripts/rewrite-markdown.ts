@@ -24,11 +24,26 @@ const HEADING = /^(#{1,6})\s/;
 /**
  * A link out of the skill's own directory. Only that directory is vendored, so
  * `../../CONNECTORS.md` resolves to nothing once the skill is here.
- *
- * The leading `!` is part of the match so that an image goes whole, sigil and all, rather
- * than leaving one in front of the alt text.
  */
-const ABOVE_SKILL_LINK = /!?\[([^\]]*)\]\((?:\.\.\/)+[^)]*\)/g;
+const ABOVE_SKILL_LINK = /\[([^\]]*)\]\((?:\.\.\/)+[^)]*\)/g;
+
+/**
+ * The same, for a picture. Matched first and apart, sigil and all.
+ *
+ * A link's text is a phrase in the sentence, so keeping it leaves the sentence readable. Alt
+ * text describes a picture instead of standing in a sentence, so the same substitution turned
+ * `The layout is ![Diagram](../img/d.png) roughly.` into `The layout is Diagram roughly.`:
+ * a sentence asserting content that is not there, with nothing to mark the gap, read by a
+ * lens agent that has no way to know a picture was removed.
+ */
+const ABOVE_SKILL_IMAGE = /!\[([^\]]*)\]\((?:\.\.\/)+[^)]*\)/g;
+
+/** What is left where a picture was, marked as a gap rather than passed off as prose. */
+function absentImage(alt: string): string {
+    const named = alt.trim();
+
+    return named === "" ? "_(image not vendored)_" : `_(image not vendored: ${named})_`;
+}
 
 const LIST_ITEM = /^\s*(?:>\s*)?[-*+]\s/;
 
@@ -192,13 +207,22 @@ export function stripDeadLinks(label: string, lines: string[]): Pass {
     const stripped = lines.map((line, i) => {
         if (fenced[i]) return line;
 
+        // The marker goes into `texts` rather than the alt text, so that `isPointerOnly`
+        // still recognises a line that was nothing but the picture and drops it whole.
         const texts: string[] = [];
-        const out = line.replace(ABOVE_SKILL_LINK, (_, text: string) => {
-            texts.push(text);
-            return text;
-        });
 
-        if (texts.length === 0) return line;
+        const out = line
+            .replace(ABOVE_SKILL_IMAGE, (_, alt: string) => {
+                const marker = absentImage(alt);
+                texts.push(marker);
+                return marker;
+            })
+            .replace(ABOVE_SKILL_LINK, (_, text: string) => {
+                texts.push(text);
+                return text;
+            });
+
+        if (out === line) return line;
 
         if (out.trim() === "") {
             dropped.add(i);

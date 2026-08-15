@@ -43,8 +43,13 @@ jobs:
                   # last commit wrote: on the run that followed 42 of their findings being
                   # fixed, comment-review came back with 31 more. Nothing is wrong with either
                   # lens. This branch rewrites too much prose per round for a review to be the
-                  # place to catch it. Take this out once the branch has landed and the diffs
-                  # are small.
+                  # place to catch it.
+                  #
+                  # Expires 2026-09-14: once that date has passed, `checkWorkflowLenses`
+                  # fails this repository's own lint until somebody turns the two back on or
+                  # writes down a new reason with a new date. Without it, "take this out once
+                  # the diffs are small" is a judgement nobody is scheduled to make, and a
+                  # lens that is off is a lens nobody is measuring.
                   #
                   # Subtracted rather than restated. `lenses` replaces the default, so the
                   # list that used to sit here went stale the moment a lens was added to

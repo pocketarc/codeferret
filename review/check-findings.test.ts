@@ -66,7 +66,7 @@ describe("check-findings", () => {
     });
 
     test("names a dispatched lens that reported no health of its own", async () => {
-        await Bun.write(join(dir, "lens-list.txt"), "- `codeferret:a`\n- `codeferret:b`\n");
+        await Bun.write(join(dir, "lenses.txt"), "codeferret:a\ncodeferret:b\n");
 
         const { code, out } = await check({
             findings: [finding()],
@@ -78,7 +78,7 @@ describe("check-findings", () => {
     });
 
     test("takes a lens that dropped the namespace as the lens that ran under it", async () => {
-        await Bun.write(join(dir, "lens-list.txt"), "- `codeferret:a`\n- `codeferret:b`\n");
+        await Bun.write(join(dir, "lenses.txt"), "codeferret:a\ncodeferret:b\n");
 
         const { code, out } = await check({
             findings: [finding()],
@@ -264,9 +264,9 @@ describe("check-findings", () => {
         expect(findingsOf(written)[0]?.status).toBe("new");
     });
 
-    test("its own rules still name fields the schema has", async () => {
-        const run = Bun.spawnSync(["bun", SCRIPT, "--self-check"]);
+    test("refuses an invocation naming no file, rather than checking nothing quietly", () => {
+        const run = Bun.spawnSync(["bun", SCRIPT]);
 
-        expect(run.exitCode).toBe(0);
+        expect(run.exitCode).toBe(2);
     });
 });

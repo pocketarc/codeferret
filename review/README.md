@@ -206,6 +206,7 @@ the orchestrator's last turn alone, and undercounted one full run sixtyfold.
 | `local-run.sh`, `local-print.sh`, `local-post.sh` | What `/codeferret:review` runs, so a session pastes no paths and relays no refs. |
 | `defaults/` | The `lenses` and `exclude-paths` defaults as plain lists, for a session that cannot read a YAML default. Generated from action.yml. |
 | `artifact.ts` | The name and retention window the action's upload step declares, for the run that reads an artifact back. Generated from action.yml. |
+| `standing-detail.ts` | What a review says a lens could not reach, whatever that lens reported. Generated from the `standing-detail` frontmatter of `lens-extras/*.md`. |
 | `versions.sh` | The bun and Claude Code versions a review runs on, sourced by both the action and the lint workflow. |
 | `fetch-existing.ts` | Reads the discussion already on the pull request, for the orchestrator to match findings against. |
 | `fetch-previous.ts` | Reads the previous run's findings out of its artifact, which is the other half of that match. |
@@ -224,8 +225,9 @@ the orchestrator's last turn alone, and undercounted one full run sixtyfold.
 | `markdown.ts` | Where a fenced block starts and stops, and what a model's prose may open in a posted review. `markdown.test.ts` beside it. |
 | `reviewed-commit.ts` | Prints the commit the lenses read, for whoever is about to post against it. |
 | `diff-args.ts` | Reads back what the lenses were told to diff, so nothing builds a second range or pathspec. |
+| `artifact-path.ts` | What `artifact-path` names: the path the upload step is given, and whether the findings go up with it. `artifact-path.test.ts` beside it. |
 | `github.ts` | How these scripts talk to GitHub: the token handshake, the headers, the shape of a failure. |
-| `json.ts` | The two narrowings every script here takes on a value it did not produce. |
+| `json.ts` | The narrowings every script here takes on a value it did not produce. |
 | `test-fixtures.ts` | The one finding the suites build their cases out of, typed and untyped. |
 | `lib.sh` | What a shell script must work out or refuse before passing a value on: the guards, the `gh` handshake, the pull request and the base ref. |
 
@@ -274,11 +276,14 @@ A suppression does not rest on the orchestrator's word alone. `vetSuppression` r
 each one cites back out of `existing.json` or `previous.json`, and reopens whatever those
 files do not bear out.
 
-A decline needs an owner, a member or a collaborator, or a thread somebody closed. Closing
-one takes repository write: without it, `resolveReviewThread` fails. So a closed thread is
-evidence that somebody with write access settled it. Replying to one takes no more than
-commenting and does not reopen it, so a reply there settles the file its thread is anchored
-to and no other.
+A decline needs an owner, a member or a collaborator, or (below critical and high) a thread
+somebody closed. GitHub resolves a conversation for anyone with repository write, and for
+whoever opened the pull request, so closure is not on its own the word of somebody with
+standing: on a branch from an outside contributor, the only person who can close a thread is
+the person under review. It still settles a finding the body prints as one line, and the two
+severities that take a reader off the page are held to the author association instead.
+Replying to a closed thread takes no more than commenting and does not reopen it, so a reply
+there settles the file its thread is anchored to and no other.
 
 An `already-reported` finding is held to less, because it stays a finding in the file and
 loses only its paragraph. Anyone's comment settles it. What it still needs is that the
@@ -304,12 +309,13 @@ finding this run made in that file, which is the direction to be wrong in.
 
 Neither file is taken as the orchestrator left it. `run.sh` replaces `existing.json` with
 the empty form once the session has exited, and the post and print paths fetch it again;
-`previous.json` is copied aside before the session and put back after, along with `diff-args`
-and `lens-list.txt`. The orchestrator holds every one of those paths in its prompt and has
-`Bash` under `bypassPermissions`, so the first copies could have been written by the session
-they are evidence about. The second fetch also picks up whatever was said during the twenty
-minutes the review took; a restored copy that differs from what went in is reported on
-stderr, because nothing else in a run would show a lens rewriting the diff the others read.
+`previous.json` is copied aside before the session and put back after, along with `diff-args`,
+`lens-list.txt` and `lenses.txt`. The orchestrator holds every one of those paths in its
+prompt and has `Bash` under `bypassPermissions`, so the first copies could have been written
+by the session they are evidence about. The second fetch also picks up whatever was said
+during the twenty minutes the review took; a restored copy that differs from what went in is
+reported on stderr, because nothing else in a run would show a lens rewriting the diff the
+others read.
 
 It matches against two files. `build/previous.json` holds what the last run reported, and
 that is where a repeat is caught. `build/existing.json` holds the discussion on the pull
@@ -602,7 +608,10 @@ repository root, so there it closed nothing at all.
 So every `bun` a review starts takes `--config=/dev/null` as well. That replaces the
 lookup wherever the process happens to be standing, and `/dev/null` is the one path on a
 runner whose contents nothing short of root can change. Every invocation takes it: `run.sh`,
-`build-prompts.sh`, action.yml and the `local-*` scripts.
+`build-prompts.sh`, action.yml, the `local-*` scripts and `scripts/vendor-lens.sh`.
+`checkBunConfig` reads `review/*.sh`, `scripts/*.sh` and `action.yml` for one that does not.
+Naming a narrower scope here would leave a reader believing a `scripts/*.sh` invocation goes
+unchecked.
 
 The working directory still moves, because a relative path in a report or an argument
 resolves against it. Only the orchestrator starts in the workspace, in a subshell of its

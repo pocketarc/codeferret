@@ -11,12 +11,11 @@
  * The rules themselves are in `finding-rules.ts`. What is here is the command: argv, the
  * printing, the write-back and the exit code.
  *
- * Usage: bun check-findings.ts <findings.json>
- *        bun check-findings.ts --self-check
+ * Whether those rules still name fields merged-schema.json has is a question about this
+ * repository rather than about a review, so `checkFindingRules` in scripts/validate-repo.ts
+ * asks it by calling `selfCheck` directly. This command reads findings and nothing else.
  *
- * `--self-check` reads no findings. It answers whether the rules still name fields
- * merged-schema.json has, which is a question about this repository rather than about a
- * review, so it runs from scripts/validate-repo.ts, which lefthook and lint.yml both run.
+ * Usage: bun check-findings.ts <findings.json>
  *
  * Exit: 0 nothing wrong, 3 something was dropped and the rest is worth posting,
  *       1 nothing usable is left, 2 nothing was given to check.
@@ -27,58 +26,22 @@ import { applyRules, readSchema, selfCheck } from "./finding-rules.ts";
 import { reason, record } from "./json.ts";
 import { readDispatched, RUN_FILES } from "./run-files.ts";
 
-const args = process.argv.slice(2);
-const wantsSelfCheck = args.includes("--self-check");
-const [path] = args.filter((arg) => arg !== "--self-check");
-
-if (!path && !wantsSelfCheck) {
-    console.error("usage: bun check-findings.ts <findings.json>");
-    console.error("       bun check-findings.ts --self-check");
-    process.exit(2);
-}
-
-const schema = await readSchema();
-const rules = selfCheck(schema);
-
-if (wantsSelfCheck) {
-    if (rules.stray.length > 0) {
-        console.error(
-            `FAIL check-findings.ts keys ${rules.stray.join(", ")}, which merged-schema.json has no field for.`,
-        );
-        process.exit(1);
-    }
-
-    if (rules.unruled.length > 0) {
-        console.error(
-            `FAIL check-findings.ts names no rule for ${rules.unruled.join(", ")}, so a fault there` +
-                " drops the whole finding. Add a POLICY entry, or list it in FATAL_FIELDS.",
-        );
-        process.exit(1);
-    }
-
-    if (rules.enumsLost.length > 0) {
-        console.error(
-            `FAIL merged-schema.json carries no ${rules.enumsLost.join(" or ")} enum,` +
-                " so the repair that normalises it is not running.",
-        );
-        process.exit(1);
-    }
-
-    console.log(`OK check-findings.ts: ${rules.rules} rule(s) name a field merged-schema.json has`);
-    process.exit(0);
-}
+const [path] = process.argv.slice(2);
 
 if (!path) {
     console.error("usage: bun check-findings.ts <findings.json>");
     process.exit(2);
 }
 
+const schema = await readSchema();
+const rules = selfCheck(schema);
+
 // Loud, and then on with the review: a rule that stopped running is not evidence against
 // the findings in front of it, and failing here would leave the drift for the next run
 // anyway.
 if (rules.stray.length > 0) {
     console.warn(`WARN check-findings.ts keys ${rules.stray.join(", ")}, which merged-schema.json has no field for.`);
-    console.warn("Run `bun review/check-findings.ts --self-check` and fix the table.");
+    console.warn("Run `bun scripts/validate-repo.ts finding-rules` and fix the table.");
 }
 
 let parsed: unknown;

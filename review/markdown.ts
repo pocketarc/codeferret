@@ -199,22 +199,18 @@ function segments(text: string): Segment[] {
 }
 
 /**
- * Escape a set of characters wherever they fall outside a code span.
+ * Apply an escaping policy wherever the text falls outside a code span.
  *
  * Text inside a code span is left alone, because the orchestrator writes code spans
  * deliberately and a backslash inside one lands on the page.
  *
- * The backslash is in every caller's set, because one already in the text cancels the escape
- * put after it: `a\*b` would become `a\\*b`, a literal backslash followed by a live asterisk.
- * Text ending in one is worse, since `bullet` wraps a title in `**`, and the trailing
- * backslash then escapes the first closing asterisk and the emphasis runs on into the body.
- * Windows paths, regexes and LaTeX fragments all reach a title.
- *
- * `also` is a second pass over the same prose runs, for a rule a set of characters cannot
- * state. It runs in the same walk, so it cannot disagree with the escaping about which
- * stretch of text is a code span.
+ * One transform, not a character set plus an optional second pass. Those were two ways of
+ * saying the same thing, and only one caller passed the second, so a reader saw one escaping
+ * policy with an exception bolted on rather than the two policies there are. What either
+ * caller needs from this function is the walk: whatever a policy does, it runs over the same
+ * segmentation, so nothing can disagree about which stretch of text is a code span.
  */
-function escapeOutsideCode(text: string, set: string, also?: (prose: string) => string): string {
+function escapeOutsideCode(text: string, transform: (prose: string) => string): string {
     return segments(text)
         .map((segment) => {
             if (segment.kind === "span") return segment.text;
@@ -224,11 +220,22 @@ function escapeOutsideCode(text: string, set: string, also?: (prose: string) => 
             // renders everything between the two as code.
             if (segment.kind === "unclosed") return "\\`".repeat(segment.text.length);
 
-            const escaped = [...segment.text].map((char) => (set.includes(char) ? `\\${char}` : char)).join("");
-
-            return also ? also(escaped) : escaped;
+            return transform(segment.text);
         })
         .join("");
+}
+
+/**
+ * Backslash every character in `set`.
+ *
+ * The backslash is in every caller's set, because one already in the text cancels the escape
+ * put after it: `a\*b` would become `a\\*b`, a literal backslash followed by a live asterisk.
+ * Text ending in one is worse, since `bullet` wraps a title in `**`, and the trailing
+ * backslash then escapes the first closing asterisk and the emphasis runs on into the body.
+ * Windows paths, regexes and LaTeX fragments all reach a title.
+ */
+function escapeChars(set: string): (prose: string) => string {
+    return (prose) => [...prose].map((char) => (set.includes(char) ? `\\${char}` : char)).join("");
 }
 
 /** The text with every code span taken out, which is what `escapeOutsideCode` leaves alone. */
@@ -254,7 +261,7 @@ function outsideCode(text: string): string {
  * as the text it is.
  */
 export function escapeInline(text: string): string {
-    return escapeOutsideCode(text, "\\*_[]<~@");
+    return escapeOutsideCode(text, escapeChars("\\*_[]<~@"));
 }
 
 /**
@@ -284,7 +291,9 @@ export function escapeInline(text: string): string {
  * a sentence keeps its exclamation marks.
  */
 function escapeTags(text: string): string {
-    return escapeOutsideCode(text, "\\<@", (prose) => prose.replace(/!(?=\[)/g, "\\!"));
+    const escape = escapeChars("\\<@");
+
+    return escapeOutsideCode(text, (prose) => escape(prose).replace(/!(?=\[)/g, "\\!"));
 }
 
 /**

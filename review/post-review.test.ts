@@ -58,7 +58,7 @@ async function post(
 
     await Bun.write(findingsPath, `${JSON.stringify({ summary: "a run", findings, ...over }, null, 2)}\n`);
     await Bun.write(join(dir, "existing.json"), `${JSON.stringify(existing, null, 2)}\n`);
-    await Bun.write(join(dir, "lens-list.txt"), dispatched.map((lens) => `- \`${lens}\`\n`).join(""));
+    await Bun.write(join(dir, "lenses.txt"), dispatched.map((lens) => `${lens}\n`).join(""));
     await Bun.write(preloadPath, PRELOAD);
 
     const run = Bun.spawnSync(["bun", "--preload", preloadPath, SCRIPT, findingsPath, "deadbeef", "1"], {

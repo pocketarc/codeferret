@@ -15,16 +15,22 @@ afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
 });
 
-async function costOf(result: Record<string, unknown>): Promise<string> {
+async function run(result: Record<string, unknown>): Promise<{ stderr: string }> {
     const runPath = join(dir, "run.json");
     await Bun.write(runPath, JSON.stringify([{ type: "result", ...result }]));
 
-    Bun.spawnSync(["bun", SCRIPT, runPath, join(dir, "findings.json")]);
+    const spawned = Bun.spawnSync(["bun", SCRIPT, runPath, join(dir, "findings.json")]);
+
+    return { stderr: new TextDecoder().decode(spawned.stderr) };
+}
+
+async function costOf(result: Record<string, unknown>): Promise<string> {
+    await run(result);
 
     return Bun.file(join(dir, "cost-usd")).text();
 }
 
-describe("extract-findings: what a run cost, over the four shapes of run log seen so far", () => {
+describe("extract-findings: what a run cost, and what it says when one dies", () => {
     test("takes the reported total when the log carries one", async () => {
         expect(await costOf({ total_cost_usd: 12.5 })).toBe("12.50");
     });
@@ -48,6 +54,29 @@ describe("extract-findings: what a run cost, over the four shapes of run log see
 
     test("is zero when the log says zero and names no models at all", async () => {
         expect(await costOf({ total_cost_usd: 0 })).toBe("0.00");
+    });
+
+    test("says why a run ended, from the fields a killed session carries", async () => {
+        // The shape a real run left behind when the API cut it off: `subtype` says the
+        // session succeeded, and every field that says otherwise is somewhere else.
+        const { stderr } = await run({
+            is_error: true,
+            subtype: "success",
+            terminal_reason: "api_error",
+            api_error_status: 429,
+            result: "You've hit your session limit · resets 4am (UTC)",
+            total_cost_usd: 3.93,
+        });
+
+        expect(stderr).toContain("api_error");
+        expect(stderr).toContain("HTTP 429");
+        expect(stderr).toContain("You've hit your session limit");
+    });
+
+    test("falls back to the subtype where nothing else names a reason", async () => {
+        const { stderr } = await run({ is_error: true, subtype: "error_max_turns" });
+
+        expect(stderr).toContain("the run reported an error: error_max_turns");
     });
 
     test("survives a log cut off mid-line, which is the run whose cost matters most", async () => {

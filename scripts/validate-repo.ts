@@ -22,10 +22,11 @@
 import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { readSchema, selfCheck } from "../review/finding-rules.ts";
 import { reason, record } from "../review/json.ts";
 import { closeOpenFence } from "../review/markdown.ts";
 import { STANDING_DETAIL } from "../review/standing-detail.ts";
-import { dispatchedFrom, LENS_LIST_FILE, RUN_FILE_NAMES, RUN_FILES } from "../review/run-files.ts";
+import { DISPATCHED_FILE, RUN_FILE_NAMES, RUN_FILES } from "../review/run-files.ts";
 
 process.chdir(join(import.meta.dir, ".."));
 
@@ -444,6 +445,9 @@ async function checkDefaults(): Promise<Failures> {
     return list;
 }
 
+/** The line that gives an end date to a lens this repository has switched off. */
+const EXCLUSION_EXPIRES = /^\s*#\s*Expires (\d{4}-\d{2}-\d{2})\b/m;
+
 /**
  * What this repository's own workflow says about the lenses it runs.
  *
@@ -457,6 +461,12 @@ async function checkDefaults(): Promise<Failures> {
  * default grows. What is left to check is that the workflow has not gone back to a copy, and
  * that each name it subtracts is one action.yml still ships: a stale exclusion runs a lens
  * this repository decided not to run, and `run.sh` only says so on the job's stderr.
+ *
+ * And that the exclusion has an end. A lens switched off with a reason attached is one a
+ * later reader leaves alone, because the reason is still true on its face and nothing is
+ * scheduled to ask again. The date the workflow carries is what asks: it fails this check
+ * once that date has gone by, which is the only mechanism here that can make somebody weigh
+ * the exclusion a second time.
  */
 async function checkWorkflowLenses(): Promise<Failures> {
     const list: Failures = [];
@@ -485,6 +495,27 @@ async function checkWorkflowLenses(): Promise<Failures> {
 
     const dropped = steps.flatMap((step) => lines(record(record(step)?.with)?.["exclude-lenses"]));
 
+    if (dropped.length > 0) {
+        const on = (await Bun.file(path).text()).match(EXCLUSION_EXPIRES)?.[1];
+        const today = new Date().toISOString().slice(0, 10);
+
+        if (!on) {
+            fail(
+                list,
+                path,
+                "switches a lens off with no `# Expires YYYY-MM-DD:` line above it," +
+                    " so nothing ever asks whether it should come back on",
+            );
+        } else if (on < today) {
+            fail(
+                list,
+                path,
+                `switched ${dropped.join(" and ")} off until ${on}, which has passed.` +
+                    " Turn them back on, or set a new date and say what changed.",
+            );
+        }
+    }
+
     if (list.length === 0) console.log(`OK ${path}: the shipped default minus ${dropped.length}`);
 
     return list;
@@ -508,20 +539,50 @@ async function checkGenerated(): Promise<Failures> {
 }
 
 /**
- * Whether check-findings.ts still names fields merged-schema.json has.
+ * Whether the repair rules still name fields merged-schema.json has.
  *
  * A rule naming a field the schema no longer has stops running, and check-findings.ts then
  * reports `shape valid` for a file that rule would have caught. The question is answerable
  * without a review, and asking it at the end of one would throw a review away to report a
  * typo here.
+ *
+ * Imported rather than spawned. `selfCheck` returns each kind of drift in an array of its
+ * own, and a subprocess flattened all of it into a decoded stderr blob, so no failure here
+ * could name the file it was about. Spawning also kept a `--self-check` mode on
+ * check-findings.ts, which gave that command two jobs and left it juggling argv with an
+ * `if (!path)` guard written twice. `checkGenerated` beside this one is a different case and
+ * stays a spawn: those generators are scripts with top-level side effects rather than
+ * exported functions.
  */
 async function checkFindingRules(): Promise<Failures> {
     const list: Failures = [];
-    const run = Bun.spawnSync(["bun", "review/check-findings.ts", "--self-check"]);
-    const decode = new TextDecoder();
+    const rules = selfCheck(await readSchema());
+    const home = "review/finding-rules.ts";
 
-    if (run.exitCode !== 0) list.push(decode.decode(run.stderr).trim());
-    else process.stdout.write(decode.decode(run.stdout));
+    if (rules.stray.length > 0) {
+        fail(list, home, `POLICY keys ${rules.stray.join(", ")}, which merged-schema.json has no field for`);
+    }
+
+    if (rules.unruled.length > 0) {
+        fail(
+            list,
+            home,
+            `names no rule for ${rules.unruled.join(", ")}, so a fault there drops the whole finding.` +
+                " Add a POLICY entry, or list it in FATAL_FIELDS",
+        );
+    }
+
+    if (rules.enumsLost.length > 0) {
+        fail(
+            list,
+            "review/merged-schema.json",
+            `carries no ${rules.enumsLost.join(" or ")} enum, so the repair that normalises it is not running`,
+        );
+    }
+
+    if (list.length === 0) {
+        console.log(`OK check-findings.ts: ${rules.rules} rule(s) name a field merged-schema.json has`);
+    }
 
     return list;
 }
@@ -597,13 +658,26 @@ async function checkRunFiles(): Promise<Failures> {
     }
 
     // `findings-checked` is the one run file no TypeScript writes, so the shell is its only
-    // other home. Drift here is the quietest failure the action has: the marker goes down
-    // under a name the posting step's condition does not test, so a review is produced, paid
-    // for, and never posted, with nothing red anywhere.
-    for (const script of ["review/run.sh", "review/local-post.sh"]) {
+    // other home: run.sh puts the marker down, and every local path reads it back through
+    // `require_checked_findings` in lib.sh. Drift here is the quietest failure the action
+    // has: the marker goes down under a name the posting step's condition does not test, so a
+    // review is produced, paid for, and never posted, with nothing red anywhere.
+    for (const script of ["review/run.sh", "review/lib.sh"]) {
         if (!(await Bun.file(script).text()).includes(RUN_FILES.findingsChecked)) {
             fail(list, script, `never names '${RUN_FILES.findingsChecked}', which is what the action posts on`);
         }
+    }
+
+    // The same fact for the file a run's dispatched lenses are read back from. No TypeScript
+    // writes it either, and `readDispatched` answers a missing one with an empty list, which
+    // is indistinguishable from a run in which every lens reported: rename it on one side and
+    // `coverageOf` silently stops reporting a lens that ran and said nothing about itself.
+    // Naming the file is the whole of what the two sides have to agree on now that the format
+    // is one bare name per line.
+    const prompts = "review/build-prompts.sh";
+
+    if (!(await Bun.file(prompts).text()).includes(`$BUILD/${DISPATCHED_FILE}`)) {
+        fail(list, prompts, `never writes '${DISPATCHED_FILE}', which is where a run's dispatched lenses are read from`);
     }
 
     if (list.length === 0) console.log(`OK run-files: ${named.length} step output(s) name a file the run writes`);
@@ -665,79 +739,6 @@ async function checkBunConfig(): Promise<Failures> {
     }
 
     if (list.length === 0) console.log(`OK bun-config: ${invocations} bun invocation(s) name a config`);
-
-    return list;
-}
-
-/**
- * The lens list build-prompts.sh writes, against the pattern that reads it back.
- *
- * Two languages, one line format, and drift is silent in the direction that matters: a
- * changed line leaves `dispatchedFrom` returning nothing, `coverageOf` stops reporting a
- * lens that ran and said nothing about itself, and check-findings.ts goes on printing
- * `shape valid`.
- *
- * The shell's own line is run rather than matched, because a format matched by a second
- * pattern is a third spelling to keep in step.
- */
-async function checkLensList(): Promise<Failures> {
-    const list: Failures = [];
-    const script = "review/build-prompts.sh";
-    const shell = await Bun.file(script).text();
-
-    // The format is read out and rendered here rather than run. An earlier version of this
-    // check pulled the line out with a loose pattern and handed it to `bash -c`, so a branch
-    // whose build-prompts.sh read `printf x; curl … | sh >>"$BUILD/lens-list.txt"` had that
-    // line executed on the machine of whoever checked the branch out, by a lefthook hook, on
-    // commit. Nothing about a validator needs to run the shell it is validating: what the two
-    // sides have to agree on is the format string, and the format string can be read.
-    const named = LENS_LIST_FILE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const writes = new RegExp(
-        String.raw`^\s*printf (?:-- )?'([^']*)' "\$NAMESPACE" "\$lens" >>"\$BUILD/${named}"$`,
-        "m",
-    );
-    const format = shell.match(writes)?.[1];
-
-    if (format === undefined) {
-        fail(
-            list,
-            script,
-            `has no line appending to ${LENS_LIST_FILE} in the shape this check reads:` +
-                ` one printf with a quoted format, "$NAMESPACE" and "$lens"`,
-        );
-        return list;
-    }
-
-    // printf, for the two conversions this format is allowed to use. A format reaching for
-    // anything else is refused rather than guessed at, because a check that renders a
-    // format differently from the shell proves nothing about the shell.
-    const directives = format.match(/%./g) ?? [];
-
-    if (directives.length !== 2 || directives.some((d) => d !== "%s")) {
-        fail(list, script, `its ${LENS_LIST_FILE} format uses ${directives.join(" ")}, and this check renders %s only`);
-        return list;
-    }
-
-    const rendered = format
-        .replace(/%s/, "codeferret")
-        .replace(/%s/, "example-lens")
-        .replace(/\\n/g, "\n")
-        .replace(/\\t/g, "\t")
-        .replace(/\\\\/g, "\\");
-
-    const read = dispatchedFrom(rendered);
-
-    if (read.length !== 1 || read[0] !== "codeferret:example-lens") {
-        fail(
-            list,
-            "review/run-files.ts",
-            `LENS_LIST_LINE reads ${JSON.stringify(read)} out of ${JSON.stringify(rendered)},` +
-                ` which is what ${script} writes`,
-        );
-        return list;
-    }
-
-    console.log(`OK lens-list: ${script} and review/run-files.ts agree on the line format`);
 
     return list;
 }
@@ -915,7 +916,6 @@ const CHECKS: Array<[string, () => Promise<Failures>]> = [
     ["generated", checkGenerated],
     ["finding-rules", checkFindingRules],
     ["run-files", checkRunFiles],
-    ["lens-list", checkLensList],
     ["bun-config", checkBunConfig],
     ["toolchain", checkToolchainPin],
     ["standing-detail", checkStandingDetail],

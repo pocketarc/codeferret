@@ -28,25 +28,27 @@ export const RUN_FILES = {
 /** Every name above, for a caller that has to see the set rather than one member. */
 export const RUN_FILE_NAMES: readonly string[] = Object.values(RUN_FILES);
 
-/** Where build-prompts.sh writes the lenses it dispatched, for the orchestrator's prompt. */
-export const LENS_LIST_FILE = "lens-list.txt";
-
 /**
- * One line of that file: a markdown bullet holding `<namespace>:<lens>`.
+ * Where build-prompts.sh writes the lenses it dispatched, one `<namespace>:<lens>` per line.
  *
- * The file is a fragment of a prompt, so the decoration is not ours to drop. What is ours is
- * that build-prompts.sh writes this line with `printf` and `dispatchedFrom` reads it back
- * with this pattern, in two languages. It is named here, and validate-repo.ts runs the
- * shell's own line and checks that this pattern recovers what it wrote. Left in two homes
- * with nothing checking the pair, a changed format returns no lenses at all: `coverageOf` no
- * longer reports a lens that ran and said nothing about itself, and check-findings.ts still
- * prints `shape valid`.
+ * A second file beside `lens-list.txt`, which holds the same names as markdown bullets for
+ * the orchestrator's prompt. One file serving both meant a prompt fragment's decoration was
+ * also a wire format two languages had to agree on, and drift was silent in the direction
+ * that matters: a changed bullet leaves `dispatchedFrom` returning nothing, `coverageOf`
+ * stops reporting a lens that ran and said nothing about itself, and check-findings.ts goes
+ * on printing `shape valid`. Holding the two together took a check in validate-repo.ts that
+ * read the `printf` format out of the shell and re-implemented printf to render it. Splitting
+ * them costs one more `printf`, removes all of that, and leaves the prompt's wording free to
+ * change again.
  */
-export const LENS_LIST_LINE = /^- `([^`]+)`$/;
+export const DISPATCHED_FILE = "lenses.txt";
 
 /** The lenses a run dispatched, out of that file's text. */
 export function dispatchedFrom(text: string): string[] {
-    return text.split("\n").flatMap((line) => line.match(LENS_LIST_LINE)?.[1] ?? []);
+    return text
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line !== "");
 }
 
 /**
@@ -58,7 +60,7 @@ export function dispatchedFrom(text: string): string[] {
  * to compare against either way.
  */
 export async function readDispatched(dir: string): Promise<string[]> {
-    const file = Bun.file(join(dir, LENS_LIST_FILE));
+    const file = Bun.file(join(dir, DISPATCHED_FILE));
 
     return (await file.exists()) ? dispatchedFrom(await file.text()) : [];
 }

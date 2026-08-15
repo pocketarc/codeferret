@@ -59,10 +59,18 @@ describe("stripDeadLinks", () => {
         expect(text(stripDeadLinks("s", source))).toBe(source.join("\n"));
     });
 
-    test("takes an image whole, leaving its alt text and no stray sigil", () => {
+    test("marks an inline image as gone rather than reading its alt text as prose", () => {
         const source = lines("The layout is ![Diagram](../img/d.png) roughly.");
 
-        expect(text(stripDeadLinks("s", source))).toBe("The layout is Diagram roughly.");
+        expect(text(stripDeadLinks("s", source))).toBe(
+            "The layout is _(image not vendored: Diagram)_ roughly.",
+        );
+    });
+
+    test("marks an image with no alt text too, since the sentence still lost something", () => {
+        const source = lines("Compare ![](../img/d.png) with the table.");
+
+        expect(text(stripDeadLinks("s", source))).toBe("Compare _(image not vendored)_ with the table.");
     });
 
     test("drops an image that was the whole line, since the picture is not here", () => {

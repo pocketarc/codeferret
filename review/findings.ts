@@ -192,6 +192,15 @@ export interface Vetted {
     untraceable: number;
     /** Declines citing an entitled comment that says nothing about the finding's file. */
     unrelated: number;
+    /**
+     * Critical and high `already-reported` findings with nobody entitled having said so.
+     *
+     * Counted apart from `unreported` because it is the one reopening that happens with no
+     * comment cited at all, and that is the ordinary shape of it. While the two shared a
+     * counter, a maintainer watching a critical come back on every push was told the finding
+     * had cited a comment, which sent them looking for one that was never there.
+     */
+    unvouched: number;
     /** `already-reported` findings citing a comment that is absent or about another file. */
     unreported: number;
     /** `already-reported` findings citing no comment, in a file the last review raised nothing in. */
@@ -225,14 +234,15 @@ function raisedBefore(raisedFiles: ReadonlySet<string>, file: string): boolean {
  * them for the rule would silence a finding for as long as the pull request lives. So the
  * decision is taken again here, against what GitHub reported.
  *
- * The two statuses are held to different bars. A decline needs an author with standing, or
- * a thread somebody closed: closing one takes repository write, which `resolveReviewThread`
- * does not grant. Replying to a closed thread takes no more than commenting and does
- * not reopen it, so a reply there settles the file its thread is anchored to and nothing
- * else. An `already-reported` finding is a defect somebody has written down, whoever they
- * are, and it stays a finding in the file either way, so all it needs is that what it rests
- * on is there and is about the same file: a comment where it cites one, and otherwise the
- * previous review, which is where the orchestrator is told to take the status from.
+ * The two statuses are held to different bars. A decline needs an author with standing, or,
+ * below critical and high, a thread somebody closed: closing one takes repository write or
+ * authorship of the pull request, and `resolveReviewThread` grants neither. Replying to a
+ * closed thread takes no more than commenting and does not reopen it, so a reply there
+ * settles the file its thread is anchored to and nothing else. An `already-reported` finding
+ * is a defect somebody has written down, whoever they are, and it stays a finding in the file
+ * either way, so all it needs is that what it rests on is there and is about the same file: a
+ * comment where it cites one, and otherwise the previous review, which is where the
+ * orchestrator is told to take the status from.
  *
  * When existing.json or previous.json cannot be read, nothing can be traced and every
  * suppression resting on it is reopened. That costs a comment somebody has already answered,
@@ -248,6 +258,7 @@ export function vetSuppression(findings: Finding[], discussion: Survey, previous
     const raisedFiles = filesRaisedBefore(previous);
     let untraceable = 0;
     let unrelated = 0;
+    let unvouched = 0;
     let unreported = 0;
     let unmatched = 0;
 
@@ -258,7 +269,21 @@ export function vetSuppression(findings: Finding[], discussion: Survey, previous
         const cited = url ? comments.get(url) : undefined;
 
         if (f.status === "declined") {
-            if (!cited || !(entitled(cited) || cited.onClosedThread)) {
+            // A closed thread stands for everything but a critical and a high. GitHub
+            // resolves a conversation for anyone with repository write, or for whoever opened
+            // the pull request, so on a branch from an outside contributor the only person
+            // who can close a thread is the one whose work is under review: open a thread on
+            // a line, have any account reply "intentional", close it, and every finding in
+            // that file is declined for as long as the pull request lives.
+            //
+            // The severities that carry the review are held to the association instead,
+            // matching the `already-reported` branch below. `orchestrator.md` carves out a
+            // security defect from any reply, and that carve-out is prompt text sitting in
+            // the same context as the comments it judges, so this branch is where refusing
+            // costs an attacker anything.
+            const closed = cited?.onClosedThread === true && !LISTED.has(f.severity);
+
+            if (!cited || !(entitled(cited) || closed)) {
                 untraceable += 1;
                 return reopen(f);
             }
@@ -279,12 +304,12 @@ export function vetSuppression(findings: Finding[], discussion: Survey, previous
             // one line in a collapsed block, so demoting one is the difference between a
             // reader seeing the defect and seeing its title.
             //
-            // Higher than the decline branch above, which also takes a comment on a thread
-            // somebody closed. Closing one takes repository write, which is what makes it
-            // evidence at all, but the person who replied under it needed no more than the
-            // ability to comment. That is enough to settle a finding printed as one line, and
-            // it is not enough to take a critical off the page, so `cited.onClosedThread` is
-            // deliberately absent here. Adding it to make the two branches read alike is the
+            // The decline branch above takes a comment on a thread somebody closed, and the
+            // two branches agree about a critical: closure is standing enough for a finding
+            // printed as one line, and not for one taking a reader off the page.
+            // Whoever replied under the thread needed no more than the ability to comment,
+            // and whoever closed it needed repository write or authorship of the pull
+            // request. Widening either branch to take a closed thread at any severity is the
             // edit to refuse.
             //
             // Citing nothing is not the weaker case, it is the emptier one. Gated on a url
@@ -297,7 +322,7 @@ export function vetSuppression(findings: Finding[], discussion: Survey, previous
             // on, printed in full again on every push. Criticals are rare and that is the
             // direction to be wrong in.
             if (LISTED.has(f.severity) && !(cited && entitled(cited))) {
-                unreported += 1;
+                unvouched += 1;
                 return reopen(f);
             }
 
@@ -322,7 +347,7 @@ export function vetSuppression(findings: Finding[], discussion: Survey, previous
         return f;
     });
 
-    return { findings: vetted, untraceable, unrelated, unreported, unmatched };
+    return { findings: vetted, untraceable, unrelated, unvouched, unreported, unmatched };
 }
 
 /** Whether a parsed file is something this module can read as a run's output. */

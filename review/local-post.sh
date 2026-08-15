@@ -28,21 +28,10 @@ run_dirs "$(session_run_dir)"
 BUILD=$BUILD_DIR
 FINDINGS="$BUILD/findings.json"
 
-if [ ! -f "$FINDINGS" ]; then
-    echo "no findings at $FINDINGS. Run the review first." >&2
-    exit 1
-fi
-
-# run.sh writes this marker only when check-findings.ts passed, and the action posts
-# nothing without it. A findings file that failed the check outright holds nothing worth
-# posting, and one that passed has had whatever post-review.ts cannot render taken out.
-if [ ! -f "$BUILD/findings-checked" ]; then
-    echo "$FINDINGS did not pass check-findings.ts, so it is not safe to post." >&2
-    # With the flag, like every other bun a run starts. Whoever reads this line is standing
-    # in the checkout under review, which is the directory bun takes a `bunfig.toml` from.
-    echo "run: bun --config=/dev/null '$PLUGIN/review/check-findings.ts' '$FINDINGS'" >&2
-    exit 1
-fi
+# run.sh writes the marker only when check-findings.ts passed, and the action posts nothing
+# without it. A findings file that failed the check outright holds nothing worth posting, and
+# one that passed has had whatever post-review.ts cannot render taken out.
+require_checked_findings "$BUILD" "$PLUGIN" post || exit 1
 
 # The commit the lenses actually read, taken from the arguments they were given rather
 # than resolved again here. Every line the review names is a line of that commit, so a
@@ -58,6 +47,21 @@ LOCAL_HEAD=$(git rev-parse HEAD)
 if [ "$REVIEWED_HEAD" != "$LOCAL_HEAD" ]; then
     echo "the review was taken at $REVIEWED_HEAD and HEAD is now $LOCAL_HEAD." >&2
     echo "every finding's line is the reviewed commit's. Run the review again." >&2
+    exit 1
+fi
+
+# The one condition in commands/review.md's posting gate that nothing but prose enforced.
+# The two comparisons around it settle which commit the review names; neither covers the files
+# the lenses read, and they read the working tree as they find it. So a review taken over a
+# dirty tree quotes lines that are in no commit, and sends a reader of the pull request to
+# code GitHub does not hold. Untracked files are not counted, for the reason
+# local-preflight.sh gives where it reports the same number: nothing untracked reaches a diff,
+# so a scratch file would otherwise block posting.
+DIRTY=$(git status --porcelain --untracked-files=no | wc -l | tr -d '[:space:]')
+
+if [ "$DIRTY" != "0" ]; then
+    echo "$DIRTY tracked file(s) are uncommitted, and the lenses read files as they find them." >&2
+    echo "commit or stash them and run the review again." >&2
     exit 1
 fi
 
