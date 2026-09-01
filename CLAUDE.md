@@ -215,6 +215,19 @@ is in `review/DECISIONS.md`.
   deletes it before the session starts. Never put it in the `env:` of the step that execs the
   agent. "The GitHub token never enters the step that runs the agent" in review/DECISIONS.md has
   the measurement and what is left over.
+- Keeping the token out of the environment kept it in the checkout. `actions/checkout`
+  defaults `persist-credentials` to true, so it leaves the token it cloned with in the
+  workspace's own git config as an `http.<server>.extraheader`; `run.sh` then starts the
+  session inside that workspace, and every lens has `Bash`, so a lens running
+  `git config --get-regexp extraheader` read out the same token the staging step above
+  exists to hide. Five lenses found it. "Take the token back out of the checkout" unsets
+  those keys and reads them back to check. It unsets rather than setting
+  `persist-credentials: false`, because a caller who checks out for themselves makes the
+  probe step skip this action's own checkout, and a flag there would then cover neither
+  their config nor this one. So the two fetches in "Resolve the review target" are the last
+  thing in the run that can reach GitHub over git, and they sit before the unset for that
+  reason. A `git fetch` added after it fails on a private repository and passes on a public
+  one, and nothing here tests for that difference.
 - A tool an agent asks for is not necessarily a tool it gets, and nothing says so.
   `Grep`, `Glob`, and `TodoWrite` were all in the lens tool list and none reached a
   dispatched lens. Reading the list will not tell you, so check it against a real dispatch

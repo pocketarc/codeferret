@@ -490,6 +490,55 @@ runs:
               emit_output pr "${PR_NUMBER:-$DEFAULT_PR}"
               emit_output head "${HEAD_SHA:-$DEFAULT_HEAD}"
 
+        # After the last fetch above, and before anything starts an agent.
+        #
+        # `actions/checkout` defaults `persist-credentials` to true, so the token it cloned
+        # with stays in the workspace's own git config as an `http.<server>.extraheader`
+        # holding `x-access-token:<token>` in base64. `run.sh` starts the orchestrator
+        # inside that workspace and every lens has Bash, so a lens can run
+        # `git config --get-regexp extraheader` and read out the same token the step below
+        # stages in a file to keep out of an environment block. Five lenses found it.
+        #
+        # Unset here rather than `persist-credentials: false` on the checkout, for two
+        # reasons. The fetches above need the credential on a private repository, and
+        # handing it to them explicitly would put it in argv, where the same lens reads it
+        # out of /proc. And when a caller checks out for themselves, the probe step skips
+        # this action's own checkout, so a flag there covers only one of the two
+        # installation shapes; this covers whatever is in the workspace, whoever cloned it.
+        - name: Take the token back out of the checkout
+          shell: bash
+          run: |
+              cd "$GITHUB_WORKSPACE" || exit 1
+
+              # The one case that may exit 0: `checkout: 'skip'` with nothing cloned yet.
+              # No repository means no config, so nothing is holding a credential.
+              if ! git rev-parse --git-dir >/dev/null 2>&1; then
+                  echo "no checkout in $GITHUB_WORKSPACE, so nothing holds a credential yet" >&2
+                  exit 0
+              fi
+
+              found=0
+
+              # The pattern matches every server rather than github.com, because the key
+              # carries the server URL and that is the Enterprise host on an Enterprise
+              # runner.
+              while IFS= read -r key; do
+                  found=1
+                  git config --local --unset-all "$key" || true
+              done < <(git config --local --name-only --get-regexp '^http\..*\.extraheader$' || true)
+
+              # The unsets above are `|| true`, so this read-back is the only thing left
+              # that can fail. A key still set leaves the credential in the tree a lens
+              # reads.
+              if git config --local --name-only --get-regexp '^http\..*\.extraheader$' >/dev/null 2>&1; then
+                  echo "the checkout's credential is still in .git/config, and a lens reads that tree" >&2
+                  exit 1
+              fi
+
+              if [ "$found" = 1 ]; then
+                  echo "took the checkout's credential out of .git/config"
+              fi
+
         # A step of its own, and it must stay one. A value in a step's `env:` is in the
         # environment every process that step starts was execve'd with, and
         # /proc/<pid>/environ holds that block for the life of the process, whatever the

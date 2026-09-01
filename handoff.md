@@ -18,7 +18,7 @@ Adds the plugin side. Before this branch, CodeFerret only ran as the GitHub acti
 
 ## Where things stand
 
-HEAD is `6ad952f`. 411 tests, all four gates green:
+At the head of `feat/claude-code-plugin`, 414 tests and all four gates green:
 
 ```sh
 bun install                          # once; wires up lefthook
@@ -34,11 +34,15 @@ what's accepted as a known risk and why. `review/README.md` has how a run works.
 
 ## What's left
 
-- `persist-credentials: false` on the `actions/checkout` steps in `action.yml` and
-  `.github/workflows/codeferret.yml`. CI review keeps raising this. It's owned by a separate
-  branch, `fix/do-not-persist-credentials` (exists on `origin`, not merged): don't fix it
-  here, let that branch land it. Whoever merges second should check the other branch didn't
-  need adjusting.
+- Close [#2](https://github.com/pocketarc/codeferret/pull/2),
+  `fix/do-not-persist-credentials`. Close rather than rebase: nothing in it is worth
+  carrying over. Its `action.yml` half put `persist-credentials: false` on this action's
+  own checkout, and a flag applies only to the checkout it sits on, so it missed a caller
+  who checks out for themselves. This branch covers both shapes with a "Take the token back
+  out of the checkout" step, which unsets whatever is in the workspace config after the last
+  fetch, whoever cloned it. Its README half is a rewrite from before several of the things
+  it documents changed: `mattpocock-code-review` in the lens table, inline comments, the
+  old reading of `contents: write`, and `@v1.0.0`.
 - The `PERMISSION_MODE=auto` measurement. `CLAUDE.md`'s accepted-risk entry for the
   orchestrator running under `bypassPermissions` has a lapse condition: run a full review under
   `PERMISSION_MODE=auto` and read `build/permission-denials`. Zero denials means CI can move to
