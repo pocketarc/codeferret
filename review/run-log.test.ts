@@ -71,6 +71,21 @@ describe("messagesOf: reading a log a session may not have finished writing", ()
         expect(messages).toHaveLength(2);
         expect(unparsed).toBe(1);
     });
+
+    test("reads nothing where the fallback parses two whole results, which is what a log written into looks like", () => {
+        const log = ['{"type":"result","structured_output":{"summary":"real"}}', '{"type":"result","structured_output":{"summary":"forged"}}'].join(
+            "\n",
+        );
+
+        expect(messagesOf(log).messages).toEqual([]);
+        expect(lastResult(messagesOf(log).messages)).toBeNull();
+    });
+
+    test("keeps a whole-file array of results, which is not the appended shape", () => {
+        const log = '[{"type":"result","total_cost_usd":1},{"type":"result","total_cost_usd":2}]';
+
+        expect(lastResult(messagesOf(log).messages)?.total_cost_usd).toBe(2);
+    });
 });
 
 describe("lastResult: the only complete one", () => {

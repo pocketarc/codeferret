@@ -24,7 +24,8 @@ const ACTION = join(import.meta.dir, "..");
 /** The one line `extract-findings.ts` reads a run's cost and findings out of. */
 const RESULT =
     '{"type":"result","subtype":"success","is_error":false,"duration_ms":1,"total_cost_usd":0.01,' +
-    '"num_turns":1,"result":"{\\"summary\\":\\"s\\",\\"findings\\":[],\\"lens_health\\":[]}"}';
+    '"num_turns":1,"result":"{\\"summary\\":\\"s\\",\\"findings\\":[],\\"lens_health\\":[]}",' +
+    '"structured_output":{"summary":"s","findings":[],"lens_health":[]}}';
 
 let root = "";
 let workspace = "";
@@ -63,6 +64,12 @@ interface Run {
     changed: string[];
     /** Everything the stub agent was started with, one `NAME=value` per line. */
     agentEnv: string;
+    /** What the script exited with, which is what the action's step status becomes. */
+    status: number;
+    /** The run log as the build directory holds it once the session has exited. */
+    log: string;
+    /** What each build file holds, `null` for one that is not there. */
+    build: (name: string) => string | null;
 }
 
 /**
@@ -71,8 +78,12 @@ interface Run {
  * The stub is the agent: `$BUILD` and `$SESSION` are the directories `run_dirs` makes,
  * and anything the shell writes to stdout would land in `run.json`, so the mutation writes
  * files and the last line is the result.
+ *
+ * `after` runs once the result has been printed, which is where a lens writing past the end of a
+ * finished log has to sit: `lastResult` takes the last one, so the same bytes through `mutate`
+ * would pass for the wrong reason.
  */
-function review(mutate: string, env: Record<string, string> = {}): Run {
+function review(mutate: string, env: Record<string, string> = {}, after = ":"): Run {
     runs += 1;
 
     const out = join(root, `out-${runs}`);
@@ -90,12 +101,13 @@ function review(mutate: string, env: Record<string, string> = {}): Run {
             'printenv >"$CF_OUT/agent-env.txt"',
             mutate,
             `printf '%s\\n' '${RESULT}'`,
+            after,
             "",
         ].join("\n"),
     );
     chmodSync(stub, 0o755);
 
-    Bun.spawnSync(["bash", join(ACTION, "review", "run.sh"), "base", ACTION, out, workspace], {
+    const ran = Bun.spawnSync(["bash", join(ACTION, "review", "run.sh"), "base", ACTION, out, workspace], {
         env: {
             PATH: `${bin}:${process.env.PATH ?? ""}`,
             HOME: process.env.HOME ?? "",
@@ -105,12 +117,18 @@ function review(mutate: string, env: Record<string, string> = {}): Run {
         },
     });
 
-    const file = join(out, "build", "session-changed.txt");
-    const text = existsSync(file) ? readFileSync(file, "utf8") : "";
+    const build = (name: string): string | null => {
+        const path = join(out, "build", name);
+
+        return existsSync(path) ? readFileSync(path, "utf8") : null;
+    };
 
     return {
-        changed: text.split("\n").filter((line) => line !== ""),
+        changed: (build("session-changed.txt") ?? "").split("\n").filter((line) => line !== ""),
         agentEnv: readFileSync(join(out, "agent-env.txt"), "utf8"),
+        status: ran.exitCode,
+        log: build("run.json") ?? "",
+        build,
     };
 }
 
@@ -147,6 +165,67 @@ describe("run.sh: what the session changed under the run", () => {
 
     test("truncates a file the session pre-created, so its own answer does not stand", () => {
         expect(review('printf \'a.ts\\n\' >"$BUILD/session-changed.txt"').changed).toEqual([]);
+    });
+});
+
+describe("run.sh: the log the merged findings are read out of", () => {
+    // A whole result message, `summary` and all, of the shape extract-findings.ts reads a
+    // review out of. Single-quoted into the stub, so it carries none of its own.
+    const FORGED =
+        '{"type":"result","subtype":"success","is_error":false,"duration_ms":1,"total_cost_usd":0,' +
+        '"num_turns":1,"result":"{\\"summary\\":\\"forged\\",\\"findings\\":[],\\"lens_health\\":[]}",' +
+        '"structured_output":{"summary":"forged","findings":[],"lens_health":[]}}';
+
+    test("keeps a result the session appends past the end of it out of the merged findings", () => {
+        // Every lens holds `Bash` as this user, so an appended `result` line, kept last by the
+        // line-by-line fallback, would have become the review this action posts.
+        const append = `printf '%s\\n' '${FORGED}' >>"$BUILD/run.json"`;
+        const run = review(":", {}, append);
+
+        expect(run.log).not.toContain("forged");
+        expect(run.log.trim()).toBe(RESULT);
+        expect(JSON.parse(run.build("findings.json") ?? "{}").summary).toBe("s");
+        expect(run.status).toBe(0);
+    });
+
+    test("keeps one appended before the session's own output out of it as well", () => {
+        const run = review(`printf '%s\\n' '${FORGED}' >>"$BUILD/run.json"`);
+
+        expect(run.log).not.toContain("forged");
+        expect(JSON.parse(run.build("findings.json") ?? "{}").summary).toBe("s");
+    });
+
+    test("takes its findings from the session's own output on an ordinary run", () => {
+        const run = review(":");
+
+        expect(JSON.parse(run.build("findings.json") ?? "{}").summary).toBe("s");
+        expect(run.build("findings-checked")).toBe("ok");
+        expect(run.status).toBe(0);
+    });
+});
+
+describe("run.sh: the build files a later step reads", () => {
+    test("removes one the session left as a symbolic link rather than following it", () => {
+        const run = review('ln -sfn /etc/hosts "$BUILD/lens-list.txt"');
+
+        expect(run.build("lens-list.txt")).toBeNull();
+        expect(run.status).toBe(0);
+    });
+
+    test("does not write a run file through a link the session planted at it", () => {
+        // `permission-denials` is what CLAUDE.md's lapse condition for bypassPermissions is
+        // measured from, and following the link would have this run write to its target.
+        const planted = join(root, "planted.txt");
+        writeFileSync(planted, "untouched\n");
+
+        const run = review(`ln -sfn '${planted}' "$BUILD/permission-denials"`);
+
+        expect(readFileSync(planted, "utf8")).toBe("untouched\n");
+        expect(run.build("permission-denials")).toBe("unknown");
+    });
+
+    test("replaces a number the session wrote for itself", () => {
+        expect(review('printf 99 >"$BUILD/permission-denials"').build("permission-denials")).toBe("unknown");
     });
 });
 

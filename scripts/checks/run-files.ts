@@ -33,11 +33,13 @@ export async function checkRunFiles(): Promise<Failures> {
         }
     }
 
-    // `findings-checked` is the one run file no TypeScript writes, so the shell is its only
-    // other home: run.sh puts the marker down, and every local path reads it back through
-    // `require_checked_findings` in lib.sh. Drift here is the quietest failure the action
-    // has: the marker goes down under a name the posting step's condition does not test, so a
-    // review is produced, paid for, and never posted, with nothing red anywhere.
+    // `finalise.ts` writes the marker and `require_checked_findings` in lib.sh reads it back,
+    // and those two agree by importing the name from review/run-files.ts, which is a stronger
+    // binding than a text search. What the search still covers is the shell either side of
+    // them: `run.sh` clears the marker before the session and lib.sh gates the local paths on
+    // it, and neither can import. Drift there is the quietest failure the action has — the
+    // marker goes down under a name the posting step's condition does not test, so a review is
+    // produced, paid for, and never posted, with nothing red anywhere.
     for (const script of ["review/run.sh", "review/lib.sh"]) {
         if (!(await Bun.file(script).text()).includes(RUN_FILES.findingsChecked)) {
             fail(list, script, `never names '${RUN_FILES.findingsChecked}', which is what the action posts on`);

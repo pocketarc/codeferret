@@ -23,12 +23,26 @@ export interface RunLog {
     unparsed: number;
 }
 
+function isResult(message: unknown): boolean {
+    return record(message)?.type === "result";
+}
+
 /**
  * Every message in a run log, read whole-file first and line by line where that fails.
  *
  * A killed or out-of-memory session leaves the last line half written, which fails the
  * whole-file parse, so each line gets a `try` of its own rather than the run losing its
  * numbers to one exception.
+ *
+ * Where the fallback parses more than one `result`, none of them is used and every other message
+ * goes with them, so `lastResult` answers null and the run ends with nothing extracted. That
+ * rests on run.sh writing the log through `--output-format json`, which is one object: a complete
+ * log parses in one piece, so the fallback only ever sees a file that was cut off, and a cut-off
+ * file cannot hold two complete results. Under a streaming format the fallback would be the
+ * ordinary path and this check would have to go with it. More than one result is bytes appended
+ * past the end of a finished log, and the last of them is what `lastResult` would otherwise take
+ * for the posted review. run.sh keeps that log on an unlinked descriptor for the length of the
+ * session, so this backs that up rather than standing on its own.
  */
 export function messagesOf(text: string): RunLog {
     try {
@@ -47,6 +61,18 @@ export function messagesOf(text: string): RunLog {
             } catch {
                 unparsed += 1;
             }
+        }
+
+        if (messages.filter(isResult).length > 1) {
+            // Printed here rather than returned as a value. The one caller prints an unreadable
+            // log as a session that produced no terminal output, and a maintainer reading that
+            // about a log somebody wrote into could not tell the two apart.
+            console.error(
+                "the run log did not parse in one piece and holds more than one result line, which is what a log" +
+                    " written into after the session looks like. None of them is being read.",
+            );
+
+            return { messages: [], unparsed };
         }
 
         return { messages, unparsed };

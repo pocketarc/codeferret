@@ -22,7 +22,7 @@ export const RUN_FILES = {
     outputTokens: "output-tokens",
     durationMs: "duration-ms",
     permissionDenials: "permission-denials",
-    /** Written by run.sh rather than by a script here, and the condition the action posts on. */
+    /** The condition the action posts on. Written by finalise.ts, and only where the check passed. */
     findingsChecked: "findings-checked",
 } as const;
 

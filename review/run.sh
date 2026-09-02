@@ -89,28 +89,9 @@ run_dirs "$OUT"
 BUILD=$BUILD_DIR
 SESSION=$SESSION_DIR
 
-# The two GitHub fetches below need a token that can read the pull request. The
-# orchestrator must not have it: every lens it dispatches carries Bash, and
-# `printenv GITHUB_TOKEN` is the whole attack.
-#
-# So the value never enters this script's environment, because `unset` cannot take a value
-# out of one. A process's environment block is written at execve, and /proc/<pid>/environ
-# holds that block for as long as the process lives, whatever the shell unsets afterwards.
-# A lens runs as the same user, so `tr '\0' '\n' </proc/$PPID/environ` reads back what the
-# shell above it was started with, and the same read against each ancestor's pid reaches the
-# rest. Measured in a Linux container: after `unset -v GITHUB_TOKEN` the shell's own
-# /proc/self/environ still carried the value, and a grandchild whose own environment was
-# clean read it out of the parent's.
-#
-# The caller leaves the token in a file instead and names it here. Its mode keeps other
-# users out; what keeps a lens out is that the file is deleted now, long before anything
-# starts an agent. The value then lives in this shell's memory until both fetches below are
-# done, which a descendant cannot read without ptrace on an ancestor, and it is dropped
-# before the session rather than kept for the rest of the run.
-#
-# The unset comes first because assigning to a name the caller exported leaves it exported,
-# which would put the token straight into the orchestrator's environment under the holding
-# name.
+# The token arrives in a file, not this script's environment: `unset` cannot take a value
+# back out of a process that was started with it. "The GitHub token never enters the step
+# that runs the agent" in review/DECISIONS.md has the measurement.
 unset -v token
 token=""
 
@@ -198,9 +179,8 @@ printf '%s\n' "$kept" |
 # names" in review/DECISIONS.md has why the working directory alone does not settle it.
 #
 # The working directory still moves, because a relative path in a report or an argument
-# resolves against it. Only the orchestrator starts in the workspace, and it does so in a
-# subshell below, because its lenses read whatever tree their session started in. The tools
-# take the workspace as an argument.
+# resolves against it. Only the orchestrator starts in the workspace, below, because its
+# lenses read whatever tree their session started in.
 ACTION=$(cd "$ACTION" && pwd)
 cd "$BUILD"
 
@@ -255,10 +235,10 @@ cp "$BUILD/existing.json" "$BUILD/previous.json" "$SESSION/"
 # not make the runner safe to hand one to twice.
 token=""
 
-# The exit code is kept and returned at the end rather than stopping the script here,
+# The session's exit code is kept and weighed at the end rather than stopping the script here,
 # because extract-findings.ts writes what the run cost and what it was refused before it
 # looks for findings, and a run that failed is the one those numbers matter most for.
-status=0
+SESSION_STATUS=0
 
 # The files the session was handed, which are the whole of what it could have rewritten of
 # what anything else once read. `diff.sh` and `diff-args` are between them the diff every lens
@@ -304,6 +284,29 @@ else
     echo "no shasum on PATH, so what this run reads after the session goes unchecked." >&2
 fi
 
+# Where the run log goes while the session is running, which is nowhere the session can name.
+#
+# It was `$BUILD/run.json` for the length of the review. The shell holding the write descriptor
+# stopped a lens corrupting the bytes claude wrote, but not a lens opening the same path with
+# `O_APPEND` and leaving a background loop appending until the process exited. Trailing bytes
+# fail the whole-file parse in `messagesOf`, the line-by-line fallback runs, and the last line
+# whose `type` is `result` becomes the merged findings the review is built from, posted under the
+# account that holds `pull-requests: write`. Every lens runs with `Bash` as this user, and
+# `--plugin-dir` is handed the directory the build one sits under, so every lens could reach it.
+#
+# So the log is opened twice over, a reader and a writer, and then unlinked before the session
+# starts. What is left is those descriptors, held by this shell, and no path at all: nothing to
+# open with `O_APPEND`, and nothing for a lens that goes looking under `--plugin-dir` to find.
+# What that does not close is /proc/<pid>/fd on Linux, which the token block above is written
+# against as well: a lens is a descendant of the process whose stdout this is, so it can reach
+# the descriptor through /proc and open it afresh. `messagesOf` refusing a log that holds two
+# results is the half of this that does not rest on the path being gone.
+LOG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/codeferret-log.XXXXXX")
+exec 9>"$LOG_DIR/run.json"
+exec 8<"$LOG_DIR/run.json"
+rm -f "$LOG_DIR/run.json"
+rmdir "$LOG_DIR"
+
 # WebFetch and WebSearch are denied for the reason scripts/build-lens-agents.ts gives for
 # leaving them off every lens. Agent has to stay: STEP 1 of the orchestrator prompt
 # dispatches every lens with it, and denying it leaves the run with nothing to merge.
@@ -326,36 +329,17 @@ fi
             --no-session-persistence \
             --disallowed-tools Edit Write NotebookEdit WebFetch WebSearch \
             --plugin-dir "$OUT"
-) >"$BUILD/run.json" || status=$?
+) >&9 || SESSION_STATUS=$?
 
-# Into the build directory, which no prompt names. The shell holds the redirect, so a lens
-# cannot corrupt the bytes claude is writing, but anything appended past the end survives and
-# extract-findings.ts reads exactly that. Trailing bytes fail the whole-file parse, the
-# line-by-line fallback runs, and the last line whose `type` is `result` becomes the merged
-# findings the review is built from, posted under the account that holds `pull-requests:
-# write`. That is what the session directory is for: every path the session was given is under
-# it, and this file is not one of them.
-#
-# `--plugin-dir` is handed `$OUT`, which both directories sit under, so a lens that goes
-# looking finds this too. Like everything else here, the split raises the cost rather than
-# closing the channel.
-
-# `run.json` above and `lens-list.txt` from build-prompts.sh are each written once, before or
-# during the session, and nothing reads either back to notice a change: `run.json` is not in
-# `RECORDED` below, because reading it again would mean opening the path this shell already
-# holds a descriptor to, and `lens-list.txt` is prose for a maintainer that no script parses.
-# Both are named in `artifact-path`, and `upload-artifact` follows a symbolic link to whatever
-# it points at, so a session that replaced either with one would have this run publish an
-# arbitrary runner file under CodeFerret's own name. Removed rather than trusted: a missing
-# `run.json` is already the shape a killed session leaves, which the check below treats as
-# nothing to extract, and a missing `lens-list.txt` costs a maintainer one file of a review
-# that still posts.
-for guarded in "$BUILD/run.json" "$BUILD/lens-list.txt"; do
-    if [ -L "$guarded" ] || { [ -e "$guarded" ] && [ ! -f "$guarded" ]; }; then
-        echo "$guarded was not a plain file after the session, so it was removed rather than trusted." >&2
-        rm -f "$guarded"
-    fi
-done
+# The session is gone, so the log becomes a file again: a plain one, in the build directory,
+# written by this shell out of a descriptor nothing else ever held. `rm -f` first, because a
+# session that pre-created the path as a symbolic link would otherwise have this write through
+# it. `run.json` is not in `RECORDED` because there is nothing to compare it against: this run
+# wrote every byte of it after the session had exited.
+exec 9>&-
+rm -f "$BUILD/run.json"
+cat <&8 >"$BUILD/run.json"
+exec 8<&-
 
 # What the build directory holds, against what the session was given. Nothing is copied back,
 # because nothing downstream reads a session copy: this is the report, and it is worth having
@@ -401,24 +385,6 @@ for at in "${!RECORDED[@]}"; do
     fi
 done
 
-# Written down rather than only said, and the review still goes out. `readSessionChanged` in
-# run-files.ts carries this into the posted body as a coverage warning, beside the one for a
-# lens that reported nothing about itself, because a detection whose only output is stderr has
-# no consumer: the reader those caveats are for never opens a job log.
-#
-# Not by clearing `findings-checked`, which is the other way to act on this and the wrong one.
-# It would leave the run posting nothing at all, which is the failure the whole `warned` path
-# exists to prevent, and it would hand a session that wanted its findings buried a one-line way
-# to do it: rewrite an input this compares, and the review it was paid for is never posted.
-#
-# Truncated first and appended to after, so a file the session pre-created is gone whatever the
-# checks above found.
-: >"$BUILD/session-changed.txt"
-
-for changed in "${CHANGED[@]+"${CHANGED[@]}"}"; do
-    printf '%s\n' "$changed" >>"$BUILD/session-changed.txt"
-done
-
 # The orchestrator ran with Bash under bypassPermissions, so a directory no prompt names is
 # still a directory it can list. Every file below decides something after the session has
 # ended, and none of them is evidence unless the step that earns it wrote it during this run.
@@ -441,36 +407,55 @@ rm -f "$BUILD/findings.json" "$BUILD/findings-checked" "$BUILD/existing.json" "$
 empty_existing "$BUILD/existing.json"
 empty_previous "$BUILD/previous.json"
 
+# What the build directory has to be before anything reads it again: nothing but plain files,
+# and every number a run that reported none still writes down. `guardBuildDir` in
+# review/finalise.ts does the sweep and `UNREPORTED` beside it holds the numbers.
+$PREFIX bun --config=/dev/null "$ACTION/review/finalise.ts" prepare "$BUILD"
+
+# Written down rather than only said, and the review still goes out. `readSessionChanged` in
+# run-files.ts carries this into the posted body as a coverage warning, beside the one for a
+# lens that reported nothing about itself, because a detection whose only output is stderr has
+# no consumer: the reader those caveats are for never opens a job log.
+#
+# Not by clearing `findings-checked`, which is the other way to act on this and the wrong one.
+# It would leave the run posting nothing at all, which is the failure the whole `warned` path
+# exists to prevent, and it would hand a session that wanted its findings buried a one-line way
+# to do it: rewrite an input this compares, and the review it was paid for is never posted.
+#
+# After the sweep above, so a file the session pre-created as a symbolic link is gone rather
+# than written through, and truncated first, so nothing the session left in it stands either way.
+: >"$BUILD/session-changed.txt"
+
+for changed in "${CHANGED[@]+"${CHANGED[@]}"}"; do
+    printf '%s\n' "$changed" >>"$BUILD/session-changed.txt"
+done
+
 # `-f` and not `-s`: a session killed before it wrote a byte leaves this file empty, and that
-# is the run extract-findings.ts writes `none reported` and `unknown` for. Skip it and the run
-# files are never written at all, and the action's `findings-count` output comes back as an
-# empty string, which action.yml documents as `none reported`.
+# is the run extract-findings.ts writes `none reported` and `unknown` for. Missing is a different
+# case, since this shell writes the file itself out of a descriptor it held throughout, and
+# `settle` ends the run red on it.
+extracted=-
+
 if [ -f "$BUILD/run.json" ]; then
     extracted=0
 
     $PREFIX bun --config=/dev/null "$ACTION/review/extract-findings.ts" \
         "$BUILD/run.json" "$BUILD/findings.json" || extracted=$?
-
-    if [ "$status" -eq 0 ]; then
-        status=$extracted
-    fi
 fi
 
 # The shape check runs whatever went wrong above, because the marker it writes is what the
-# action posts on. Exit 3 means it dropped what it could not use and left a file worth
-# posting, so the marker goes down and the run still ends red.
+# action posts on.
+checked=-
+
 if [ -f "$BUILD/findings.json" ]; then
     checked=0
     $PREFIX bun --config=/dev/null "$ACTION/review/check-findings.ts" "$BUILD/findings.json" || checked=$?
-
-    if [ "$checked" -eq 0 ] || [ "$checked" -eq 3 ]; then
-        printf 'ok' >"$BUILD/findings-checked"
-        echo "findings: $BUILD/findings.json"
-    fi
-
-    if [ "$checked" -ne 0 ] && [ "$status" -eq 0 ]; then
-        status=1
-    fi
 fi
+
+# The session's exit, the extraction's, the shape check's and the marker, settled in one place.
+status=0
+
+$PREFIX bun --config=/dev/null "$ACTION/review/finalise.ts" settle \
+    "$BUILD" "$SESSION_STATUS" "$extracted" "$checked" || status=$?
 
 exit "$status"
