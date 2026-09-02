@@ -334,6 +334,22 @@ is in `review/DECISIONS.md`.
   block, the coverage notices and every standing caveat are still in the file, and a red job
   beside a pull request reading as clean is the pair `warned` exists to prevent. Exit 1 is for
   a file nothing can read as a run's output, which really does hold nothing worth posting.
+- Read a run's findings back through `gh api`, not through `gh run download`, and never
+  through a `curl` carrying the token. `gh run download` fails here with a TLS handshake
+  timeout, reliably enough that it is worth not reaching for. The obvious way round it puts
+  `$(gh auth token)` in `curl`'s argv, where `/proc/<pid>/cmdline` hands it to every other
+  process on the machine for the life of the request, and that is the practice `stage_token`
+  and `run_tool` in `lib.sh` exist to avoid. `gh api` holds the credential itself, follows
+  the redirect to the signed url, and writes the same zip:
+
+  ```sh
+  ID=$(gh api "repos/pocketarc/codeferret/actions/runs/$RUN/artifacts" \
+    --jq '[.artifacts[] | select(.name=="codeferret-run")] | sort_by(.created_at) | last | .id')
+  gh api "repos/pocketarc/codeferret/actions/artifacts/$ID/zip" >run.zip
+  ```
+
+  `sort_by(.created_at) | last` because re-running a failed job leaves two artifacts under
+  one run id, and the older one holds the findings of the run that failed.
 
 ## Nothing has shipped
 
@@ -394,7 +410,12 @@ and every entry here was once written that way.
   `/codeferret:review` runs under `auto` instead, on a machine that is not disposable.
   **Lapses** on a measurement anybody can take: run a full fixture review with
   `PERMISSION_MODE=auto` and read `build/permission-denials`. A run that finishes with none is
-  a run `auto` would have cost nothing, and CI moves to it.
+  a run `auto` would have cost nothing, and CI moves to it. Nobody is scheduled to take it,
+  and that is a decision rather than an oversight: it costs a full review, it cannot share the
+  Claude account with a CI run, and two attempts on 2026-09-01 were both cut off by the
+  session limit. The condition stays written down because the acceptance is worth nothing
+  without it — a number from a run under `bypassPermissions` says nothing here, since nothing
+  can be denied under it.
 - Some lenses ship without the capability their skills describe. **Weighed 2026-08-01.**
   `copilot-web-design-reviewer` has no browser and `anthropic-accessibility-review` cannot
   render a page; measured over two runs the pair produced five unique findings, including the

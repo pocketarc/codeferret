@@ -201,6 +201,7 @@ the orchestrator's last turn alone, and undercounted one full run sixtyfold.
 | `resolve-judge.md`, `resolve-none.md` | The two thread-resolution policies. One fills `__RESOLVE__`. |
 | `merged-schema.json` | The shape the orchestrator returns. Enforced, because a script parses it. |
 | `run.sh` | One review, start to finish. Both front doors call this. `run.test.ts` beside it runs it with a stub agent. |
+| `finalise.ts` | What `run.sh` settles once the session has exited: the sweep over the build directory, the numbers a run that reported none still writes down, and the status the run ends on. `finalise.test.ts` beside it. |
 | `build-prompts.sh` | Assembles the run's plugin and the orchestrator prompt. |
 | `../scripts/render-prompt.ts` | Fills a prompt template's placeholders, and fails on one nothing filled. |
 | `../scripts/validate-repo.ts` | The command around every check this repository runs on itself: argv, the run, the exit code. |

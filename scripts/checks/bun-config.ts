@@ -1,12 +1,11 @@
 /**
- * Every `bun` a review starts, against the flag that keeps the reviewed tree out of it.
+ * Checks every `bun` a review starts for the flag that stops bun reading a config out of the
+ * reviewed tree.
  *
- * Bun runs the `preload` script named by the `bunfig.toml` in its working directory, before
- * the script on the command line. A review stands in the checkout it is reviewing, and the
- * orchestrator has `Bash` under `bypassPermissions` and knows every other directory a run
- * uses, so moving out of the tree only moves the problem. `--config=/dev/null` is the whole
- * control, and it is one flag to forget in a job holding `CLAUDE_CODE_OAUTH_TOKEN` and a
- * token that can write to pull requests.
+ * `--config=/dev/null` is the whole of what stops bun running a `preload` script named by the
+ * reviewed branch, and it is easy to leave off in a job holding both tokens. "Bun runs
+ * whatever a `bunfig.toml` in the reviewed tree names" in review/DECISIONS.md has why nothing
+ * else closes that route.
  *
  * A printed hint counts. Whoever pastes one is standing where the run left them.
  *
@@ -48,13 +47,6 @@
  * What that leaves out is every `Usage: bun <script>.ts <arg>` synopsis these files open with,
  * and leaving them out is the point. A synopsis has placeholders and no directory, so it is
  * not a line anybody pastes.
- *
- * A helper in lib.sh that always emits the flag does not replace any of it, which is why
- * `run_tool` exists and this check still runs: nothing stops the next script writing `bun`
- * itself. Nor is there a way to make the flag unnecessary. Measured on bun 1.3.5,
- * `BUN_CONFIG_FILE=/dev/null bun main.ts` ran the `preload` the working directory's
- * `bunfig.toml` named; `bun --config=/dev/null main.ts` did not. A check inside the script
- * would be later still, because the preload runs first.
  */
 
 import { readdirSync } from "node:fs";

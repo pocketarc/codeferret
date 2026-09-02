@@ -94,6 +94,31 @@ The split is not a boundary. `--plugin-dir` is handed the directory both of thes
 and a lens with `Bash` runs as this user, so `build/` is one path segment from a path the
 prompt names. Everything below is what stands in place of a boundary there.
 
+The broadest of them is a sweep. Once the session has exited, `guardBuildDir` in
+`finalise.ts` removes everything directly under `build/` that is not a plain file, and
+`finalise.ts` then fills every file a run's numbers live in with the values `UNREPORTED`
+beside it holds, which are the ones `extract-findings.ts` writes for a session that reported
+none. The sweep covers the directory rather than a list of names, because the list it
+replaced named `run.json` and `lens-list.txt` and left `cost-usd`, `output-tokens`,
+`duration-ms`, `findings-count` and `permission-denials` unguarded. A symbolic link at any
+of those is followed by whatever reads it next: `emit_output_file` cats it into
+`$GITHUB_OUTPUT`, and `upload-artifact` publishes its target for as long as the artifact is
+kept. Writing the values unconditionally closes the same gap from the other side,
+because a run whose log the sweep removed used to leave whatever was already under those
+names, and the job summary, the action's outputs and the artifact then carried numbers with
+nothing behind them. The directory is flat by construction, so whoever writes the first
+subdirectory into it has to decide there what happens to it.
+
+Removing the log is the same move against the other end of the run, and `settle` in
+`finalise.ts` is what it costs. Where there is no `run.json` after the session, `run.sh` runs
+no extraction, the shape check has no findings file to read, and `settle` writes no
+`findings-checked`, so nothing is posted. Such a run used to end on whatever the session
+exited with, which after a clean exit is 0, so a maintainer read a green job beside a pull
+request nobody had reviewed. It ends red now, with the reason on stderr.
+
+All of this was shell inside `run.sh`, and `bun test` covers no shell, so no branch of it was
+ever exercised. `finalise.test.ts` is what it moved for.
+
 `existing.json` and `previous.json` get more than a comparison: `run.sh` replaces the build
 directory's copies with their empty forms once the session has exited, and a step that holds a
 credential of its own fetches them again. The action's posting step fetches both, and that
@@ -470,6 +495,12 @@ runner whose contents nothing short of root can change. Every invocation takes i
 Naming a narrower scope here would leave a reader believing a `scripts/*.sh` invocation goes
 unchecked.
 
+No environment variable does the same job. Measured on bun 1.3.5, `BUN_CONFIG_FILE=/dev/null
+bun main.ts` ran the `preload` the working directory's `bunfig.toml` named, and
+`bun --config=/dev/null main.ts` did not, so a variable set once for the whole run would
+replace nothing. A guard written inside the script would run too late, because the preload
+runs first.
+
 The working directory still moves, because a relative path in a report or an argument
 resolves against it. Only the orchestrator starts in the workspace, in a subshell of its
 own, because its lenses read whatever tree their session started in. The tools take the
@@ -525,9 +556,11 @@ Measured in a Linux container against the two step bodies as `action.yml` shippe
 agent's own environment was clean, and `tr '\0' '\n' </proc/$PPID/environ` from the agent
 returned `GITHUB_TOKEN=<value>` out of `run.sh`'s, and again out of the step shell's above it.
 
-So the value never enters that environment. A step of its own writes it to
+So the value never enters that environment. A value in a step's `env:` is in the environment
+of every process that step starts, so the step that execs the agent declares no
+`github-token` at all. A step of its own writes it to
 `$RUNNER_TEMP/codeferret.token` at mode 0600, the review step is given the path,
-and `run.sh` reads the file and deletes it before it starts anything. `token_file` in
+and `run.sh` reads the file and deletes it before the session starts. `token_file` in
 `lib.sh` is the one place either path is built, and `local-run.sh` does the same with the
 `gh` credential and drops the variable before it `exec`s. Over the fixed shape the same
 measurement came back empty: no ancestor's environment held the token, and no file under
