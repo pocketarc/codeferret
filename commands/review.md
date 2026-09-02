@@ -179,6 +179,12 @@ review names is a line of the commit the lenses read, so a review of work GitHub
 seen sends its reader to code that is not there. `dirty=0` still applies when the review
 covered committed work only, because the lenses read files as they find them.
 
+Do not offer at all when step 4 ran with `INCLUDE_WORKING_TREE=1`. Such a run was given the
+base alone as its range, so it names no commit, and `local-post.sh` refuses it before it
+reaches any of the conditions above. The preflight has no line for this and nothing could
+add one: the answer is in how the run was started rather than in the repository. Say that in
+place of the offer, and say that posting takes a review of committed work.
+
 These conditions decide what to offer, not what is allowed. `local-post.sh` decides each of
 them again for itself, against the commit the lenses read rather than against a preflight
 taken before them, and refuses rather than asking. So relay what it prints instead of

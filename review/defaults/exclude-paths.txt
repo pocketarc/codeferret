@@ -12,6 +12,8 @@
 out/**
 build/**
 **/out/_next/**
+**/out/**/*.html
+**/out/**/*.txt
 apps/*/out/**
 apps/*/build/**
 packages/*/out/**

@@ -37,11 +37,10 @@ jobs:
             # as what a review talked into running a command could reach, not as what the
             # action itself needs.
             #
-            # `contents: write` is the one to weigh hardest, because a token that can write
-            # contents is a token that can push. `contents: write` plus
-            # `resolve-threads: 'true'` is what it takes to have CodeFerret close the inline
-            # threads its older versions left behind, and it is worth granting only while an
-            # open pull request still has one of those threads on it.
+            # One feature asks for `write` here, and it is `resolve-threads: 'true'`, which
+            # closes the inline threads CodeFerret's older versions left behind. Grant the
+            # pair only while an open pull request still carries one of those threads, and
+            # put this back to `read` once none does.
             contents: read
             # Granted unconditionally, and this is the one that writes to the pull request.
             # Splitting the posting into a second job that never runs the agent is what would
