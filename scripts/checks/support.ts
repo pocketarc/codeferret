@@ -96,7 +96,7 @@ export interface Action {
     inputs?: Record<string, { description?: string; required?: boolean; default?: unknown }>;
     runs?: {
         using?: string;
-        steps?: Array<{ name?: string; shell?: string; uses?: string; run?: string }>;
+        steps?: Array<{ name?: string; shell?: string; uses?: string; run?: string; env?: Record<string, unknown> }>;
     };
 }
 

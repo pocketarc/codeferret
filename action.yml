@@ -76,13 +76,25 @@ inputs:
             Next.js path and an underscore-prefixed segment, which is the App Router's one
             documented convention for a folder that is never a route, so this hides no
             routable file the way `**/out/**` would. The `out/` parent keeps it away from a
-            hand-written `app/_next/`. Only the hashed assets are covered: the exported
-            pages, one `.html` per prerendered route, their `.txt` React Server Component
-            prefetch payloads, and a copy of everything under `public/` all still reach
-            every lens. Add `<your-root>/out/**` to `exclude-paths` if the export lives
-            somewhere other than the repository root, `apps/*` or `packages/*`: not
-            `**/out/**/*.html` or `**/out/**/*.txt`, which would also hide a hand-written
-            `app/out/` route segment.
+            hand-written `app/_next/`.
+
+            `**/out/**/*.html` and `**/out/**/*.txt` cover the rest of that export, at any
+            depth. `next build` writes one `.html` per prerendered route and one `.txt`
+            React Server Component prefetch payload beside it, which on a site of any size is
+            hundreds of generated files in the diff every lens reads. Neither glob can hide a
+            route, whatever directory that route sits in: a segment becomes routable through
+            `page` or `route`, with `layout`, `template`, `loading`, `error`, `not-found` and
+            `default` beside them, and every one of those is `.js`, `.jsx`, `.ts` or `.tsx`,
+            while raw HTML is served from `public/` rather than from `app/`. What they do
+            hide is hand-written HTML or text sitting inside some `out/` directory: a mail
+            template a route imports, a checked-in fixture under `tests/out/`. Drop both
+            lines if your repository has one, because an excluded file is not in the diff and
+            nothing in the review says it was left out.
+
+            What the two leave behind is the export's copy of everything under `public/`: the
+            same bytes twice, when the source path alone is worth reading. Add
+            `<your-root>/out/**` to `exclude-paths` if the export lives somewhere other than
+            the repository root, `apps/*` or `packages/*`.
 
             `dist` and `vendor` are matched at any depth, and that is a trade rather than a
             rule. A package's `dist/` and a Composer `vendor/` both turn up at depths no
@@ -135,6 +147,8 @@ inputs:
             out/**
             build/**
             **/out/_next/**
+            **/out/**/*.html
+            **/out/**/*.txt
             apps/*/out/**
             apps/*/build/**
             packages/*/out/**
@@ -490,62 +504,22 @@ runs:
               emit_output pr "${PR_NUMBER:-$DEFAULT_PR}"
               emit_output head "${HEAD_SHA:-$DEFAULT_HEAD}"
 
-        # After the last fetch above, and before anything starts an agent.
+        # After the last fetch above, and before anything starts an agent. review/lib.sh's
+        # two GitHub fetches go over the API rather than over git, so nothing later in the
+        # run needs the credential this takes away. A `git fetch` added after this step
+        # fails on a private repository and passes on a public one, and nothing here tests
+        # for that difference.
         #
-        # `actions/checkout` defaults `persist-credentials` to true, so the token it cloned
-        # with stays in the workspace's own git config as an `http.<server>.extraheader`
-        # holding `x-access-token:<token>` in base64. `run.sh` starts the orchestrator
-        # inside that workspace and every lens has Bash, so a lens can run
-        # `git config --get-regexp extraheader` and read out the same token the step below
-        # stages in a file to keep out of an environment block. Five lenses found it.
-        #
-        # Unset here rather than `persist-credentials: false` on the checkout, for two
-        # reasons. The fetches above need the credential on a private repository, and
-        # handing it to them explicitly would put it in argv, where the same lens reads it
-        # out of /proc. And when a caller checks out for themselves, the probe step skips
-        # this action's own checkout, so a flag there covers only one of the two
-        # installation shapes; this covers whatever is in the workspace, whoever cloned it.
+        # The script has the whole argument, and review/scrub-credentials.test.ts has the
+        # cases.
         - name: Take the token back out of the checkout
           shell: bash
-          run: |
-              cd "$GITHUB_WORKSPACE" || exit 1
+          run: bash "$GITHUB_ACTION_PATH/review/scrub-credentials.sh" "$GITHUB_WORKSPACE"
 
-              # The one case that may exit 0: `checkout: 'skip'` with nothing cloned yet.
-              # No repository means no config, so nothing is holding a credential.
-              if ! git rev-parse --git-dir >/dev/null 2>&1; then
-                  echo "no checkout in $GITHUB_WORKSPACE, so nothing holds a credential yet" >&2
-                  exit 0
-              fi
-
-              found=0
-
-              # The pattern matches every server rather than github.com, because the key
-              # carries the server URL and that is the Enterprise host on an Enterprise
-              # runner.
-              while IFS= read -r key; do
-                  found=1
-                  git config --local --unset-all "$key" || true
-              done < <(git config --local --name-only --get-regexp '^http\..*\.extraheader$' || true)
-
-              # The unsets above are `|| true`, so this read-back is the only thing left
-              # that can fail. A key still set leaves the credential in the tree a lens
-              # reads.
-              if git config --local --name-only --get-regexp '^http\..*\.extraheader$' >/dev/null 2>&1; then
-                  echo "the checkout's credential is still in .git/config, and a lens reads that tree" >&2
-                  exit 1
-              fi
-
-              if [ "$found" = 1 ]; then
-                  echo "took the checkout's credential out of .git/config"
-              fi
-
-        # A step of its own, and it must stay one. A value in a step's `env:` is in the
-        # environment every process that step starts was execve'd with, and
-        # /proc/<pid>/environ holds that block for the life of the process, whatever the
-        # shell unsets afterwards. A lens runs as the same user with Bash, so `github-token`
-        # in the environment of the step that execs the agent is a token a lens can read.
-        # The step below is given the path instead, and run.sh reads the file and deletes it
-        # before it starts anything.
+        # This is a step of its own and has to stay one: `github-token` in the `env:` of the
+        # step that execs the agent is a token a lens can read back, and no later unset takes
+        # it away again. "The GitHub token never enters the step that runs the agent" in
+        # review/DECISIONS.md has the measurement.
         - name: Leave the token the review's fetches need
           if: steps.target.outputs.pr != ''
           shell: bash

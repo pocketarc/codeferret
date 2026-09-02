@@ -12,6 +12,7 @@
  */
 
 import { checkAction } from "./action.ts";
+import { checkAgentToken } from "./agent-token.ts";
 import { checkActionShell } from "./action-shell.ts";
 import { checkBunConfig } from "./bun-config.ts";
 import { checkBundledSkills } from "./skills.ts";
@@ -28,6 +29,7 @@ import { checkShippedVersions } from "./versions.ts";
 import { checkSkillFences } from "./skill-fences.ts";
 import { checkStandingDetail } from "./standing-detail.ts";
 import { checkToolchainPin } from "./toolchain.ts";
+import { checkValueGuards } from "./value-guards.ts";
 import { checkWorkflowLenses } from "./workflow-lenses.ts";
 import { checkWorkflows } from "./workflows.ts";
 import type { Failures } from "./support.ts";
@@ -36,6 +38,7 @@ export type Check = [name: string, run: () => Promise<Failures>];
 
 export const CHECKS: Check[] = [
     ["action", checkAction],
+    ["agent-token", checkAgentToken],
     ["action-shell", checkActionShell],
     ["plugin", checkPluginManifest],
     ["marketplace", checkMarketplace],
@@ -50,6 +53,7 @@ export const CHECKS: Check[] = [
     ["run-files", checkRunFiles],
     ["bun-config", checkBunConfig],
     ["toolchain", checkToolchainPin],
+    ["value-guards", checkValueGuards],
     ["standing-detail", checkStandingDetail],
     ["prompts", checkPrompts],
     ["workflows", checkWorkflows],
