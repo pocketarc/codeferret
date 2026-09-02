@@ -55,6 +55,30 @@ describe("applyRules", () => {
         expect(out.repairs.some((r) => r.includes("needing attention"))).toBe(true);
     });
 
+    test("a negative finding count is repaired rather than rendered", () => {
+        const out = check({
+            findings: [finding()],
+            lens_health: [{ lens: "codeferret:a", findings_returned: -3, ok: true }],
+        });
+
+        const health = out.merged.lens_health as Array<{ findings_returned?: unknown }>;
+
+        expect(health[0]?.findings_returned).toBe(0);
+        expect(out.repairs.some((r) => r.includes("-3"))).toBe(true);
+    });
+
+    test("a lens that returned nothing keeps its zero", () => {
+        const out = check({
+            findings: [finding()],
+            lens_health: [{ lens: "codeferret:a", findings_returned: 0, ok: true }],
+        });
+
+        const health = out.merged.lens_health as Array<{ findings_returned?: unknown }>;
+
+        expect(health[0]?.findings_returned).toBe(0);
+        expect(out.repairs.some((r) => r.includes("is not a count"))).toBe(false);
+    });
+
     test("a dispatched lens with no health of its own is named", () => {
         const out = check(
             { findings: [finding()], lens_health: [{ lens: "codeferret:a", findings_returned: 1, ok: true }] },

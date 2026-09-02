@@ -64,11 +64,45 @@ const MAX_FINDING_BODY = 4000;
 export const MAX_TITLE = 200;
 
 /**
+ * A finding's path, which arrives from the model and is checked only for being a non-empty
+ * string.
+ *
+ * Long enough for any path a repository holds, including a monorepo's. What it stops is the
+ * runaway: `code(where(f))` and `mention` both wrap this without a bound of their own, and
+ * `assemble` charges the whole tail against the body before it measures a single finding
+ * bullet, so forty suppressed findings each carrying a multi-kilobyte path drive the budget
+ * negative and every fresh finding is skipped.
+ *
+ * The cut is marked with an ellipsis rather than `clampTo`'s marker, because the result goes
+ * inside a code span where markdown is text.
+ */
+export const MAX_PATH = 200;
+
+/**
+ * A finding's category, which is a slug in every finding that has one.
+ *
+ * Bounded for the reason the path is. `bullet` renders it as a line of its own under the body,
+ * where a runaway is both a wall of italics and length `assemble` charged the section for.
+ */
+const MAX_CATEGORY = 100;
+
+/**
+ * A lens's name, as the orchestrator reported it.
+ *
+ * `merged-schema.json` declares `lens_health[].lens` as a bare string, so this is unconstrained
+ * model output rendered at a list item's content column. Unbounded, the only thing left holding
+ * a runaway out of the body is `boundedBlock` dropping that lens's whole line, which costs the
+ * reader the lens.
+ */
+const MAX_LENS_NAME = 100;
+
+/**
  * Where this review is being posted. `listedIn` reads it to bound what the body carries.
  *
- * Three states and three variants. As two variants and an `artifact` boolean, no reader read
- * the boolean: each folded it back into "is there a run holding the rest" and then asked
- * `kind` as well to tell the remaining two apart, so the one question took two answers.
+ * Each destination has a variant of its own. With a pair of variants and an `artifact` boolean
+ * instead, no reader read the boolean: each folded it back into "is there a run holding the
+ * rest" and then asked `kind` as well to tell the rest apart, so the one question took two
+ * answers.
  */
 export type Destination =
     | { kind: "artifact"; url: string }
@@ -76,7 +110,7 @@ export type Destination =
     | { kind: "session" };
 
 /**
- * Which of the three this run is.
+ * Which destination this run is posting to.
  *
  * Answered once, at the boundary: five branches over the same three environment variables
  * is five chances for the body and the log beside it to describe different reviews.
@@ -135,8 +169,12 @@ export function bullet(f: Finding): string {
     //
     // check-findings.ts keeps a finding whose category is missing rather than dropping it,
     // so this line is omitted. Rendering it anyway puts the word "undefined" under the body.
-    const label = typeof f.category === "string" ? escapeInline(f.category) : "";
-    const category = label === "" ? "" : `\n\n  _${label}_`;
+    const { kept, marker } = clampTo(typeof f.category === "string" ? flatten(f.category) : "", MAX_CATEGORY);
+    const label = escapeInline(kept);
+    // The marker sits outside the emphasis, because `clampTo` writes it as markdown of its own
+    // and a second pair of underscores inside the first renders as literal punctuation.
+    const cut = marker === "" ? "" : " (cut for length)";
+    const category = label === "" ? "" : `\n\n  _${label}_${cut}`;
 
     return `- ${code(where(f))}: **${title(f)}**\n\n  ${body}${category}`;
 }
@@ -180,12 +218,20 @@ function title(f: Finding): string {
  */
 export function where(f: Finding): string {
     const line = lineOf(f);
+    const file = boundedPath(f.file);
 
-    if (line === undefined) return f.file;
+    if (line === undefined) return file;
     if (Number.isInteger(f.end_line) && f.end_line && f.end_line > line) {
-        return `${f.file}:${line}-${f.end_line}`;
+        return `${file}:${line}-${f.end_line}`;
     }
-    return `${f.file}:${line}`;
+    return `${file}:${line}`;
+}
+
+/** Bounds the path by itself, so the cut takes path characters and leaves the line number. */
+function boundedPath(file: string): string {
+    const { kept, marker } = clampTo(flatten(file), MAX_PATH);
+
+    return marker === "" ? kept : `${kept}…`;
 }
 
 /**
@@ -435,11 +481,18 @@ export function composeReview(merged: Merged, posting: Posting, parts: Partition
  * `escapeInline` around every stretch that came from a model or from GitHub, and around
  * nothing else: the fixed prose carries backticks of its own that a general escape would put
  * on the page as backslashes.
+ *
+ * `escapeBlockStart` around the finished sentence, because `> ` is the blockquote's content
+ * column and `escapeInline` leaves `#` and `>` alone by design. `silent` starts with lens names
+ * read out of a file the review session can write, so one named `# foo` opened an h1 inside the
+ * alert, in a body whose own headings start at h2. Here rather than in each notice, so that
+ * nobody adding a sentence later has to remember it; every notice is one line by construction,
+ * so the escape sees the whole of what follows the `> `.
  */
 function alertBlock<T>(notice: Notice<T>, subject: T): string {
     const level = notice.level === "note" ? "NOTE" : "WARNING";
 
-    return `> [!${level}]\n> ${notice.say(subject, escapeInline)}`;
+    return `> [!${level}]\n> ${escapeBlockStart(notice.say(subject, escapeInline))}`;
 }
 
 /**
@@ -452,6 +505,9 @@ function alertBlock<T>(notice: Notice<T>, subject: T): string {
  * it. `threadsLeftOpen` was keyed off the permission denial rather than off the fact, so a
  * thread left open by a stale node id or a transient GraphQL error went to stderr and nowhere
  * a reader of the pull request would find it.
+ *
+ * Anything else the body has to say about its own posting belongs here beside it, rather than as
+ * an `if` in `tailOf` and a second reading of the same condition in `warned`.
  */
 const POSTING_ORDER = ["threadsLeftOpen"] as const;
 
@@ -515,7 +571,7 @@ function headOf(merged: Merged, parts: Partitioned, coverage: Coverage, raised: 
     // most lenses report no detail at all. Punctuation a screen reader speaks, for the reason
     // the counts above are a list.
     const items = health.map((h) => {
-        const name = escapeInline(lensLabel(h.lens));
+        const name = oneLine(lensLabel(h.lens), MAX_LENS_NAME);
         const flag = h.ok ? "" : ", **needs attention**";
         const caveat = caveatOf(h);
         const detail = caveat ? lensDetail(caveat) : "";
@@ -532,50 +588,70 @@ function headOf(merged: Merged, parts: Partitioned, coverage: Coverage, raised: 
     // Open when a lens named a limit, not only when one broke. The note above says "the list
     // below has each in its own words", and a `<details>` a reader has to click is not below
     // anything: the sentence promised the words and then hid them.
-    head.push(details(heading, boundedBlock(items, "lens"), raised.includes("broken") || raised.includes("limited")));
+    head.push(
+        details(
+            heading,
+            boundedBlock(items, MAX_LENS_BLOCK, lenses),
+            raised.includes("broken") || raised.includes("limited"),
+        ),
+    );
 
     return head;
 }
 
 /**
- * How many lines one of the tail's three lists prints before it says what it left out.
+ * How much one of the tail's lists may spend before it says what it left out.
  *
  * `assemble` charges the whole tail against the budget before it measures a single finding
- * bullet, on the stated premise that everything but the listing is short. These three were
- * the exception: one line per suppressed finding, per declined finding and per resolved
- * thread, and a long-lived pull request accumulates all three. Unbounded they push the budget
- * negative before the first bullet, so the findings section renders as a heading over nothing
- * but its own omission line, and `fit` then cuts from the end, which is where the caveats are.
+ * bullet, on the stated premise that everything but the listing is short. These lists were the
+ * exception: one line per suppressed finding, per declined finding and per resolved thread, and
+ * a long-lived pull request accumulates all of them. Unbounded they push the budget negative
+ * before the first bullet, so the findings section renders as a heading over nothing but its own
+ * omission line, and `fit` then cuts from the end, which is where the caveats are.
  *
- * Forty of each at roughly a hundred characters a line is around 12k of a 60k body, which
- * leaves the listing the rest. The count above each block stays the true one: it is the
- * `<details>` heading, which is built from the whole list.
+ * A count is the wrong measure for that, and forty items was the bound these carried. A
+ * `mention` is a path and a title, both of them model-written, plus a link to a comment: forty
+ * of each comes to around 12k of a 60k body at a hundred characters a line, and to several times
+ * that at the lengths `MAX_PATH` and `MAX_TITLE` allow, so the 12k the budget was reasoned about
+ * is not the space it got. A budget in characters is what that reasoning assumed all along, and
+ * four thousand per list holds the tail to what the old note claimed for it.
+ *
+ * The count above each block stays the true one: it is the `<details>` heading, which is built
+ * from the whole list.
  */
-const MAX_MENTIONS = 40;
+const MAX_MENTION_BLOCK = 4000;
 
 /**
- * The head's lens block, cut to a length rather than a count.
+ * How much the head's lens block may spend, which is more than a tail list gets.
  *
- * Every other bounded list here is bounded by how many items it holds, and that is the wrong
- * measure for this one: `lensDetail` already allows each lens up to `MAX_LENS_DETAIL`, so a
- * dozen lenses answering in full is a head section larger than most whole reviews. `assemble`
- * charges the head against `MAX_BODY` before it measures a single finding, so what a lens
- * said about itself would push out the findings a reader came for.
+ * `lensDetail` allows each lens up to `MAX_LENS_DETAIL`, so a dozen lenses answering in full is
+ * a head section larger than most whole reviews. `assemble` charges the head against `MAX_BODY`
+ * before it measures a single finding, so what a lens said about itself would push out the
+ * findings a reader came for.
  *
- * A lens too long for what is left costs only its own line, which is `assemble`'s rule for
- * findings and holds harder here. This block is the review's only per-lens channel: it
- * carries the `needs attention` flag for a lens that broke and the standing sentence for one
- * shipping without the capability its skill describes. Stopping at the first verbose lens
- * would drop every lens after it while the alerts above went on counting the whole list.
+ * This block is also the review's only per-lens channel: it carries the `needs attention` flag
+ * for a lens that broke and the standing sentence for one shipping without the capability its
+ * skill describes.
  */
 const MAX_LENS_BLOCK = 12_000;
 
-function boundedBlock(items: string[], noun: string): string {
+/**
+ * A list of rendered lines, cut to a character budget, with a line saying how many went.
+ *
+ * An item too long for what is left costs only itself, which is `assemble`'s rule for findings
+ * and holds harder here: stopping at the first verbose lens would drop every lens after it
+ * while the alerts above went on counting the whole list.
+ *
+ * `omitted` inflects the count, rather than the helper appending an `s` to a noun the caller
+ * names. The lens block is the one list here whose noun does not take one, and it printed
+ * "further lenss" on any run that overflowed.
+ */
+function boundedBlock(items: string[], limit: number, omitted: (n: number) => string): string {
     const kept: string[] = [];
     let used = 0;
 
     for (const item of items) {
-        if (used + item.length + 1 > MAX_LENS_BLOCK) continue;
+        if (used + item.length + 1 > limit) continue;
 
         kept.push(item);
         used += item.length + 1;
@@ -583,18 +659,11 @@ function boundedBlock(items: string[], noun: string): string {
 
     if (kept.length === items.length) return kept.join("\n");
 
-    return [...kept, `- _${plural(items.length - kept.length, `further ${noun}`)} left out for length._`].join("\n");
+    return [...kept, `- _${omitted(items.length - kept.length)} left out for length._`].join("\n");
 }
 
-/** One of those lists, cut to `MAX_MENTIONS` with a line saying how many went. */
-function bounded(items: string[], noun: string): string {
-    if (items.length <= MAX_MENTIONS) return items.join("\n");
-
-    const missing = items.length - MAX_MENTIONS;
-
-    return [...items.slice(0, MAX_MENTIONS), `- _${plural(missing, `further ${noun}`)} left out for length._`].join(
-        "\n",
-    );
+function furtherFindings(n: number): string {
+    return plural(n, "further finding");
 }
 
 /**
@@ -611,9 +680,10 @@ function tailOf(merged: Merged, parts: Partitioned, posting: Posting, aboutPosti
         tail.push(
             details(
                 `${plural(suppressed.length, "finding")} raised in an earlier review`,
-                bounded(
+                boundedBlock(
                     suppressed.map((f) => mention(f, "earlier comment", linkable)),
-                    "finding",
+                    MAX_MENTION_BLOCK,
+                    furtherFindings,
                 ),
             ),
         );
@@ -623,9 +693,10 @@ function tailOf(merged: Merged, parts: Partitioned, posting: Posting, aboutPosti
         tail.push(
             details(
                 `${plural(declined.length, "finding")} raised before and declined`,
-                bounded(
+                boundedBlock(
                     declined.map((f) => mention(f, "thread", linkable)),
-                    "finding",
+                    MAX_MENTION_BLOCK,
+                    furtherFindings,
                 ),
             ),
         );
@@ -635,9 +706,10 @@ function tailOf(merged: Merged, parts: Partitioned, posting: Posting, aboutPosti
         tail.push(
             details(
                 `${plural(resolved.length, "thread")} resolved`,
-                bounded(
+                boundedBlock(
                     resolved.map((r) => `- ${oneLine(r.reason, MAX_TITLE)}`),
-                    "thread",
+                    MAX_MENTION_BLOCK,
+                    (n) => plural(n, "further thread"),
                 ),
             ),
         );

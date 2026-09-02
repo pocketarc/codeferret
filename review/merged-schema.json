@@ -36,7 +36,7 @@
                 "additionalProperties": false,
                 "properties": {
                     "lens": { "type": "string" },
-                    "findings_returned": { "type": "integer" },
+                    "findings_returned": { "type": "integer", "minimum": 0 },
                     "ok": {
                         "type": "boolean",
                         "description": "False when the lens errored, could not load its skill, or returned an unusable response."

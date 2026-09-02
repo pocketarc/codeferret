@@ -212,7 +212,11 @@ function lensName(value: unknown): Repaired | null {
  * that lens returned; this field is only its own account of it.
  */
 function count(value: unknown): Repaired | null {
-    if (Number.isInteger(value)) return null;
+    // Zero and up, not merely an integer. A lens that returned nothing is the case
+    // `lens_health` exists to make visible, so 0 is a real answer here and `positive` is the
+    // wrong predicate; a negative is not, and `headOf` renders whatever arrives straight
+    // into the lens block as `-3 findings`.
+    if (typeof value === "number" && Number.isInteger(value) && value >= 0) return null;
 
     return { set: 0, note: `${JSON.stringify(value)} is not a count, so it reads 0` };
 }

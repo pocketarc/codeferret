@@ -10,6 +10,7 @@ import {
     destinationOf,
     MAX_BODY,
     MAX_LENS_DETAIL,
+    MAX_PATH,
     MAX_TITLE,
     mention,
 } from "./review-body.ts";
@@ -96,6 +97,25 @@ describe("bullet", () => {
         expect(line.length).toBeLessThan(MAX_TITLE + 200);
     });
 
+    test("bounds a runaway path, which nothing upstream bounds", () => {
+        const line = bullet(finding({ file: "a/".repeat(5000) })).split("\n")[0] ?? "";
+
+        expect(line.length).toBeLessThan(MAX_PATH + 100);
+    });
+
+    test("keeps the line number beside a path the bound cut", () => {
+        const line = bullet(finding({ file: `${"a/".repeat(5000)}b.ts`, line: 42 })).split("\n")[0] ?? "";
+
+        expect(line).toContain(":42`");
+    });
+
+    test("bounds a runaway category, and marks the cut outside the emphasis", () => {
+        const line = bullet(finding({ category: "c".repeat(9000) })).split("\n").at(-1) ?? "";
+
+        expect(line.length).toBeLessThan(200);
+        expect(line).toEndWith("_ (cut for length)");
+    });
+
     // The cut lands inside the span, because a span may hold the space `clamp` cuts on.
     test("leaves no code span open when the cut lands inside one", () => {
         const title = `Quote the ref in ${"x".repeat(160)} \`git rev-parse --verify -- $ref\` now`;
@@ -150,6 +170,12 @@ describe("mention", () => {
         const line = mention(finding({ title: "t".repeat(4000) }), "thread", onThePullRequest);
 
         expect(line.length).toBeLessThan(MAX_TITLE + 200);
+    });
+
+    test("bounds a runaway path, which the tail is charged for before any finding", () => {
+        const line = mention(finding({ file: "a/".repeat(5000) }), "thread", onThePullRequest);
+
+        expect(line.length).toBeLessThan(MAX_PATH + MAX_TITLE + 100);
     });
 });
 
@@ -552,13 +578,75 @@ describe("composeReview", () => {
 
     test("bounds the suppressed list, which assemble charges against the findings' budget", () => {
         const many = Array.from({ length: 120 }, (_, i) =>
-            finding({ title: `Seen ${i}`, status: "already-reported" }),
+            finding({ title: `Seen ${i} ${"t".repeat(100)}`, status: "already-reported" }),
         );
         const body = review({ findings: many });
 
         expect(body).toContain("120 findings raised in an earlier review");
-        expect(body).toMatch(/80 further findings left out for length/);
+        expect(body).toMatch(/\d+ further findings left out for length/);
         expect(body).not.toContain("Seen 119");
+    });
+
+    // Few enough to sit inside the forty-item count the tail used to be held to, and long enough
+    // together to take several times the space that count was budgeted for.
+    test("bounds the suppressed list by length, not by how many lines it holds", () => {
+        const many = Array.from({ length: 30 }, (_, i) =>
+            finding({ title: `Seen ${i} ${"word ".repeat(38)}`, status: "already-reported" }),
+        );
+        const body = review({ findings: many });
+
+        expect(body).toContain("30 findings raised in an earlier review");
+        expect(body).toMatch(/\d+ further findings left out for length/);
+    });
+
+    // The tail is charged against the body before a single finding bullet is measured, so what an
+    // unbounded path in a suppressed finding costs is the findings section.
+    test("lists a new finding beside suppressed findings carrying runaway paths", () => {
+        const suppressed = Array.from({ length: 40 }, (_, i) =>
+            finding({ title: `Seen ${i}`, file: `${"a/".repeat(4000)}${i}.ts`, status: "already-reported" }),
+        );
+        const body = review({ findings: [...suppressed, finding({ title: "Still worth reading" })] });
+
+        expect(body).toContain("Still worth reading");
+        expect(body.length).toBeLessThanOrEqual(MAX_BODY);
+    });
+
+    test("counts the lenses it left out as lenses", () => {
+        const body = review({
+            lens_health: Array.from({ length: 12 }, (_, i) => ({
+                lens: `codeferret:lens-${i}`,
+                findings_returned: 1,
+                ok: true,
+                detail: "d".repeat(MAX_LENS_DETAIL - 100),
+            })),
+        });
+
+        expect(body).toMatch(/- _\d+ lenses left out for length\._/);
+        expect(body).not.toContain("lenss");
+    });
+
+    test("escapes a heading a lens name would open in the lens list", () => {
+        const body = review({ lens_health: [{ lens: "codeferret:# Big", findings_returned: 3, ok: true }] });
+
+        expect(body).toContain("- \\# Big: 3 findings");
+    });
+
+    test("bounds a runaway lens name rather than escaping the whole of it", () => {
+        const long = `codeferret:${"n".repeat(9000)}`;
+        const body = review({ lens_health: [{ lens: long, findings_returned: 0, ok: true }] });
+        const item = body.split("\n").find((line) => line.startsWith("- nnn")) ?? "";
+
+        expect(item.length).toBeLessThan(300);
+    });
+
+    test("escapes a heading a silent lens's name would open at the alert's content column", () => {
+        const body = review(
+            { lens_health: [{ lens: "codeferret:x", findings_returned: 1, ok: true }] },
+            { dispatched: ["codeferret:x", "codeferret:# foo"] },
+        );
+
+        expect(body).toContain("> \\# foo ran and reported nothing about themselves");
+        expect(body).not.toContain("> # foo");
     });
 
     test("names an input the session changed, which is what the lens counts rest on", () => {
