@@ -172,7 +172,16 @@ fi
 
 DEFAULT=$(default_branch)
 
-say default_branch "${DEFAULT:-unknown}"
+# `default_branch` reads the name out of the remote, so on a clone of somebody else's
+# repository it is a string that repository's owner chose. Non-fatal, unlike `base`:
+# `resolve_base` feeds it through `plain_ref` again where it becomes the base.
+if [ -z "$DEFAULT" ]; then
+    say default_branch unknown
+elif plain_ref "$DEFAULT"; then
+    say default_branch "$DEFAULT"
+else
+    say default_branch unsafe
+fi
 
 BASE=$(resolve_base "$WANTED_BASE")
 
@@ -191,7 +200,7 @@ fi
 
 say base "$BASE"
 
-if git rev-parse --verify --quiet "$BASE" >/dev/null; then
+if git rev-parse --verify --quiet --end-of-options "$BASE" >/dev/null; then
     say base_resolves yes
 
     # Unrelated histories have no merge base: a fresh repository with a remote added

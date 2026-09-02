@@ -64,17 +64,10 @@ empty_existing() {
     printf '{"threads": [], "conversation": []}\n' >"$1"
 }
 
-# What existing.json says when the fetch meant to write it failed before it wrote anything at
-# all: the same shape as `empty_existing`, naming why.
+# What existing.json says when the fetch died before it could write: the empty shape, naming
+# why, so `unreadOf` puts a caveat on the page.
 #
-# Not what a *partial* failure leaves. fetch-existing.ts writes `error` or `conversation_error`
-# itself, ahead of exiting non-zero, when one half of the fetch failed and the other did not;
-# `fetch_existing` below checks for that and leaves it alone. This is for the failure that the
-# script cannot report on its own: a crash, a missing `bun`, an exit before line one runs. Then
-# the path this writes to still holds whatever `run.sh` put there before the session, which is
-# `empty_existing`'s output and carries neither field, so `unreadOf` stays silent and
-# `vetSuppression` reopens every suppression resting on this file with nothing on the page
-# saying why.
+# `$2` is interpolated into JSON unescaped, so it takes a literal and nothing else.
 failed_existing() {
     printf '{"threads": [], "conversation": [], "error": "%s"}\n' "$2" >"$1"
 }
@@ -132,30 +125,26 @@ run_tool() {
 
 # What puts a real one back, once the session has exited. The token comes in on stdin.
 #
-# The orchestrator is handed this path in the same prompt as the rule `vetSuppression`
-# applies, so the copy it was given is not evidence about the session, and run.sh empties the
-# file rather than leaving it. This fetch is what the vetting reads instead, and it carries
-# whatever was said during the review as well.
-#
-# Here rather than in run.sh, which is the script that starts the agent. A token that script
-# still held afterwards would go to a `bun` the session has had a whole review to overwrite,
-# and to a script under the action path it could have rewritten just as easily. So the fetch
-# belongs to the post and print paths, each of which already holds a credential for its own
-# work and runs once the session is gone.
+# This runs here rather than in run.sh, the script that starts the agent: a token that script
+# still held afterwards would go to code the session has had a whole review to replace. So the
+# fetch belongs to the post and print paths, which already hold a credential for their own work
+# and run once the session is gone, and it carries whatever was said during the review as well.
+# "The GitHub token never enters the step that runs the agent" in review/DECISIONS.md has which
+# files those are.
 #
 # Usage: fetch_existing <root> <build-dir> <pr> [<own-login>], token on stdin.
 fetch_existing() {
     local root=$1 build=$2 pr=$3 login=${4:-}
     local target="$build/existing.json"
 
+    # Down before the fetch, not reconstructed after it. Testing the file afterwards for
+    # `error"` reads a substring off other people's comment bodies: a comment ending in the
+    # word error answers yes, and on the print path that hands the vetting the previous
+    # invocation's comments as this run's answer with `unreadOf` reporting nothing.
+    failed_existing "$target" "the fetch failed before it could read anything"
+
     if ! run_tool "$root" fetch-existing.ts -- "$pr" "$target" ${login:+"$login"}; then
         echo "could not read all of this pull request's comments. Whatever went unread counts as new." >&2
-
-        # A whole-process failure only: `grep` finds `error"` in what fetch-existing.ts wrote
-        # itself for a partial one, which is the more precise reason and stays.
-        if ! grep -q 'error"' "$target" 2>/dev/null; then
-            failed_existing "$target" "the fetch failed before it could read anything"
-        fi
     fi
 }
 
@@ -268,8 +257,8 @@ stage_token() {
 # passed it.
 #
 # One home because the pair is one fact, and both local scripts asked it in the same words
-# down to the hint line. run.sh writes `findings-checked` only where the check passed, and the
-# action posts on nothing else. Printing is held to the same bar as posting because it reaches
+# down to the hint line. finalise.ts writes `findings-checked` only where the check passed,
+# and the action posts on nothing else. Printing is held to the same bar as posting because it reaches
 # the same fields: `readMerged` checks that `findings` is an array and nothing more, and
 # print-findings.ts then calls `.localeCompare` on a finding's file and `.replace` on a lens
 # name, which nothing else narrows, so a `lens_health` entry naming its lens as a number ends
