@@ -157,16 +157,20 @@ statement as written: an author pastes it into a migration and gets a syntax err
 
 Its MySQL "Database-Specific Best Practices" example carries the same standing and the same
 gap: `CREATE TABLE sessions (id VARCHAR(128) PRIMARY KEY, data TEXT, expires TIMESTAMP)
-ENGINE=InnoDB;` has no index on `expires`, though the only query a sessions table gets
-besides the primary-key lookup is the garbage-collection sweep, `DELETE FROM sessions WHERE
-expires < NOW()`, which against this DDL is a full table scan taking row locks across the
-whole table. `TIMESTAMP` rather than `DATETIME` also caps the column at 2038-01-19 UTC, and
-on a server where `explicit_defaults_for_timestamp` is off (the default on 5.7 and on an
-8.0 instance that has not turned it on), the first `TIMESTAMP` column in a table is
-implicitly `NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`, so every write
-to `data` silently resets `expires` to now. Recommend `expires DATETIME NOT NULL` with an
-explicit `KEY idx_sessions_expires (expires)`, and raise the same gap where a reviewed diff
-copies this shape.
+ENGINE=InnoDB;` has no index on `expires`, though the only query run against a sessions
+table besides the primary-key lookup is the garbage-collection sweep, `DELETE FROM sessions
+WHERE expires < NOW()`, which against this DDL is a full table scan taking row locks across
+the whole table. `TIMESTAMP` rather than `DATETIME` also caps the column at 2038-01-19 UTC.
+On a server where `explicit_defaults_for_timestamp` is off, the first `TIMESTAMP` column in
+a table is implicitly `NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`, so
+MySQL resets `expires` to now on every write to `data`, with nothing in the DDL to say so.
+Off is the default on 5.7 and on 8.0.0 and 8.0.1; from 8.0.2 on the default is on, so on a
+stock 8.0 or 8.4 instance `expires` is nullable with a default of `NULL` and MySQL rewrites
+nothing. Work out which server the diff targets before you name the reset: on 8.0.2 and
+later it takes an instance where somebody turned the variable off, or where an inherited
+config does. The missing index is a defect on either server.
+Recommend `expires DATETIME NOT NULL` with an explicit `KEY idx_sessions_expires (expires)`,
+and raise the same gap where a reviewed diff copies this shape.
 
 Its PostgreSQL "Database-Specific Best Practices" example, `CREATE TABLE tags (post_id INT,
 tag_names TEXT[]);`, illustrates the `TEXT[]` type and is not a schema to copy: it has no

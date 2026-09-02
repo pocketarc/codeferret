@@ -2,23 +2,28 @@
  * That every correction in `review/lens-extras/` still quotes text the vendored skill has.
  *
  * A lens loads the vendored skill and the extras together, and the extras corrects the skill
- * by quoting it: this example returns different rows, that statement does not parse, this
- * checklist line holds for one case of two. The skill is pinned in
- * `lenses/skills/PROVENANCE.tsv`, and nothing tied a quotation to the pin. Re-vendor at a
- * commit where upstream has fixed one of them, and the correction goes on telling the lens
- * that the skill says something it no longer says.
- *
- * A stale correction is not a harmless one. It is a second, contradictory instruction about
- * SQL that the lens carries into every review, and nothing fails.
+ * by quoting it. The skill is pinned in `lenses/skills/PROVENANCE.tsv`, and nothing tied a
+ * quotation to the pin, so a re-vendor at a commit where upstream has fixed one of them
+ * leaves the lens carrying a second, contradictory instruction into every review, and
+ * nothing fails.
  *
  * `checkSkillFences` is the same shape of problem already solved once: a deliberate edit to a
  * vendored file that a re-vendor would otherwise drop in silence. This is the larger deliberate
  * edit to the same pinned material.
  *
- * One fragment per correction, chosen to sit on one line of the vendored file, because the
- * extras reflows its quotations across lines and a whole-paragraph match would fail on the
- * wrapping alone. What each fragment stands for is the paragraph that quotes it, so add a
- * line here whenever you add a correction to an extras file.
+ * One fragment per correction, and each fragment has to stop matching once upstream fixes
+ * what the correction is about. A single line of the vendored file usually carries that.
+ * Where the defect is a pairing rather than a line (a predicate in the wrong clause of a
+ * join, a column list with no key under it), the fragment spans the lines whose pairing is
+ * the defect, because either line alone survives the fix.
+ *
+ * A presence check cannot bind a correction whose substance is an absence. Widening the
+ * fragment across the line an addition would have to be inserted at covers most of them;
+ * where even that leaves the correction unbound, say so in the comment beside the quote, so
+ * nobody reads a green `OK lens-extras` as "every correction is still true".
+ *
+ * What each fragment stands for is the paragraph that quotes it, so add a line here whenever
+ * you add a correction to an extras file.
  */
 
 import { existsSync } from "node:fs";
@@ -44,6 +49,9 @@ const CORRECTIONS: Correction[] = [
             // The same example's BAD query, whose products join excludes rows the GOOD query
             // includes.
             "FROM users u, orders o, products p",
+            // The same example's GOOD query. That it also drops the products join stays
+            // unbound: an absence no fragment can carry.
+            "SELECT u.id, u.name, u.email",
             // The "Overuse of DISTINCT" rewrite, which deduplicates at the same cost.
             "GROUP BY u.name",
             // The N+1 replacement, which reads every user and every order.
@@ -53,18 +61,25 @@ const CORRECTIONS: Correction[] = [
             "SELECT * FROM users WHERE id = ?",
             // The "SECURE" parameterisation, which is MySQL's syntax labelled as PostgreSQL's.
             "PREPARE stmt FROM",
-            // The "Function Misuse in WHERE Clauses" replacement, which keeps SELECT * on orders.
-            "SELECT * FROM orders ",
+            // The "Function Misuse in WHERE Clauses" replacement. Stops before the trailing
+            // space both lines end in, which is invisible to a reader and to any pass that
+            // trims it.
+            "GOOD: Range conditions use indexes\nSELECT * FROM orders",
             // The columnstore statement, which does not parse in T-SQL.
             "CREATE COLUMNSTORE INDEX idx_sales_cs ON sales",
-            // The formatting example's LEFT JOIN, filtered in the WHERE clause.
-            "  AND o.order_date >= '2024-01-01';",
+            // The formatting example's LEFT JOIN, filtered in the WHERE clause. The defect is
+            // that pairing, so the fragment spans both: either fix in the extras (writing
+            // INNER JOIN, or moving the predicate into the ON clause) breaks it.
+            "LEFT JOIN orders o ON u.id = o.user_id\nWHERE u.status = 'active'",
             // The checklist line the corrections above go the other way on.
             "Subqueries are optimized or converted to JOINs",
-            // The MySQL sessions table, with no index on the column its sweep query filters.
-            "    expires TIMESTAMP",
-            // The PostgreSQL array table, with no key and no foreign key to posts.
-            "    tag_names TEXT[]",
+            // The MySQL sessions table. Carried through to the closing line so that an index
+            // added to the table breaks it; the column line alone would survive the addition
+            // the correction asks for.
+            "    expires TIMESTAMP\n) ENGINE=InnoDB;",
+            // The PostgreSQL array table. Spans the whole body for the same reason: a key, a
+            // constraint or a REFERENCES clause has to land inside these lines.
+            "    post_id INT,\n    tag_names TEXT[]\n);",
         ],
     },
     {
@@ -107,6 +122,70 @@ const CORRECTIONS: Correction[] = [
             "### Motion",
             "## Priority Matrix",
         ],
+    },
+    {
+        file: "anthropic-accessibility-review/SKILL.md",
+        extras: "review/lens-extras/anthropic-accessibility-review.md",
+        quotes: [
+            "### Color Contrast Check",
+            "### Keyboard Navigation",
+            "### Screen Reader",
+            "| Element | Announced As | Issue |",
+            "1. **Start with contrast and keyboard**",
+            "## Testing Approach",
+            "1. Automated scan",
+            "2. Keyboard-only navigation",
+            "3. Screen reader testing",
+            "4. Color contrast verification",
+            "5. Zoom to 200%",
+            "5. Focus traps in modals",
+            "6. Missing ARIA landmarks",
+            "## WCAG 2.1 AA Quick Reference",
+            "- **2.5.5** Touch target",
+            // The extras rests on this table naming 3.2.1 and no 3.2.2, and a 3.2.2 row added
+            // beside it would leave that claim wrong with the fragment still matching.
+            "- **3.2.1** Predictable on focus",
+        ],
+    },
+    {
+        file: "vercel-next-best-practices/self-hosting.md",
+        extras: "review/lens-extras/vercel-next-best-practices.md",
+        quotes: [
+            "node .next/standalone/server.js",
+            "## Testing Cache Handler",
+            "**Critical**: Test your cache handler",
+            "## Pre-Deployment Checklist",
+            "npm run build",
+            "pm2 start ecosystem.config.js",
+            "npx create-sst@latest",
+            "npx @opennextjs/aws build",
+        ],
+    },
+    {
+        file: "vercel-next-best-practices/debug-tricks.md",
+        extras: "review/lens-extras/vercel-next-best-practices.md",
+        // One fragment per half, because the extras skips the file on the strength of both.
+        quotes: ["/_next/mcp", "--debug-build-paths"],
+    },
+    {
+        file: "vercel-next-best-practices/bundling.md",
+        extras: "review/lens-extras/vercel-next-best-practices.md",
+        quotes: ["## Bundle Analysis"],
+    },
+    {
+        file: "vercel-next-best-practices/hydration-error.md",
+        extras: "review/lens-extras/vercel-next-best-practices.md",
+        quotes: ["## Debugging"],
+    },
+    {
+        file: "vercel-next-best-practices/file-conventions.md",
+        extras: "review/lens-extras/vercel-next-best-practices.md",
+        quotes: ["npx @next/codemod@latest upgrade"],
+    },
+    {
+        file: "vercel-next-best-practices/async-patterns.md",
+        extras: "review/lens-extras/vercel-next-best-practices.md",
+        quotes: ["npx @next/codemod@latest next-async-request-api ."],
     },
 ];
 
