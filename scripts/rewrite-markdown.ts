@@ -1,5 +1,5 @@
 /**
- * The body rewrites a vendored skill needs, as three passes over its lines.
+ * The body rewrites a vendored skill needs, as a series of passes over its lines.
  *
  * One of these deletes whole lines on a heuristic, which is why they sit apart from
  * prepare-skill.ts: otherwise the only way to check one is to vendor a skill and read the
@@ -268,7 +268,7 @@ export function substitutePlaceholders(label: string, lines: string[]): Pass {
     return { lines: out, notes };
 }
 
-/** The three passes in order, and everything they changed. */
+/** The passes in order, and everything they changed. */
 export function rewriteMarkdown(label: string, markdown: string): { text: string; notes: string[] } {
     const notes: string[] = [];
     let lines = splitLines(markdown);
