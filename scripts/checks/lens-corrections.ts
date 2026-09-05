@@ -73,6 +73,11 @@ const CORRECTIONS: Correction[] = [
             "LEFT JOIN orders o ON u.id = o.user_id\nWHERE u.status = 'active'",
             // The checklist line the corrections above go the other way on.
             "Subqueries are optimized or converted to JOINs",
+            // The join order bullet, which the extras narrows to the few cases where the
+            // order the clauses are written in decides anything. Carried to the line below,
+            // so that a qualification appended upstream breaks it; the bullet alone would
+            // still match with the correction half-answered.
+            "- **Join Order**: Optimize for smaller result sets first\n- **Cartesian Products**:",
             // The MySQL sessions table. Carried through to the closing line so that an index
             // added to the table breaks it; the column line alone would survive the addition
             // the correction asks for.

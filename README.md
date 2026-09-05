@@ -3,12 +3,15 @@
 Like CodeRabbit, but it uses your Claude subscription, and goes even deeper.
 
 CodeFerret reviews a diff through several independent code review skills at once, then
-merges their findings into a single review comment. Each finding records which lenses found
-it, so agreement between them stays visible.
+merges their findings into a single review comment. `findings.json` records which lenses found
+each one, so whoever fixes the review can see where they agreed. It is left out of the comment on
+purpose: how many lenses spotted a defect tracks how conspicuous it is rather than how much it
+matters.
 
 Every lens reads source. The accessibility, web design and Next.js lenses have no browser,
-no running application and no rendered page, so any criterion that needs one of those,
-contrast and focus order among them, goes unchecked. Which criteria those are is written out
+no running application and no rendered page, so any criterion that needs one of those goes
+unchecked: focus order, whether a layout still works at 375px, and contrast wherever the source
+does not settle what is painted behind the text. Which criteria those are is written out
 one by one in each lens's own file under
 [`review/lens-extras/`](review/lens-extras/), and every review says what each lens could not
 check, in that lens's own words.
@@ -47,10 +50,12 @@ was granted. Posting from a second job that never runs the agent is what would k
 apart, and that is a change to make in the workflow.
 
 `contents: write` adds one thing, and only for a while. A review is one body and opens no
-thread of its own, so the threads left to close are the inline ones that versions released
-before `v1.1.0` left behind. `resolve-threads: 'true'` and `contents: write` together close
-those. The review runs an agent with Bash, so a token that can write contents is a token
-that can push; on `read`, everything else works and nothing tries to close a thread.
+thread of its own, and nothing outside this repository reads the action, so every thread left
+to close is one a CodeFerret run posted on a pull request in this repository before
+`v1.1.0`. A repository adopting it now has none. `resolve-threads: 'true'` and
+`contents: write` together close those. The review runs an agent with Bash, so a token that
+can write contents is a token that can push; on `read`, everything else works and nothing
+tries to close a thread.
 
 `actions: read` costs little and the review is worse without it. It is used for one thing:
 reading the previous run's `findings.json` back out of the artifact. Drop it and every

@@ -22,9 +22,12 @@ STEP 2: merge. When every lens has reported:
   pick the line an author would most want the comment on.
 - List every lens that independently found it in `found_by`. Corroboration is signal,
   so do not collapse it away.
-- Where lenses disagree about how much a defect matters, rate it at the worse reading and
-  say why in the body. You are answering the `risk` axes for the merged finding, not
-  averaging what the lenses said.
+- Each lens grades its own findings in a `severity` field. Read those gradings as evidence
+  when you answer the `risk` axes in STEP 6: they are what a reviewer who read the code made
+  of the defect. Where lenses disagree about how much one matters, take the worse reading
+  and say why in the body. They are not values to carry through. The word has no definition
+  behind it, and the merged finding has no such field, so you are answering the axes for the
+  merged finding rather than averaging what the lenses said.
 - Where lenses describe the same defect differently, keep what each one added.
   Do not flatten to the shortest version.
 - Never drop a finding for having been reported only once.
@@ -84,8 +87,13 @@ For each merged finding, set `status`:
   settles findings in the file it is anchored to and needs no reading of the rest. It
   settles nothing in any other file, whatever a reply on it names: closing a thread takes
   repository write or authorship of the pull request, and replying to one takes no more
-  than commenting. For a `critical` or a `high`, a resolved thread is not enough on its
-  own. Mark those `declined` only on a reply from an `OWNER`, `MEMBER` or `COLLABORATOR`.
+  than commenting. A resolved thread on its own is the weakest evidence here, so rest a
+  decline on it only where the defect is a small one. Where the answers you are about to give
+  it in STEP 6 are severe (real damage, something anyone can reach, and you are sure it is
+  there), mark it `declined` only on a reply from an `OWNER`, `MEMBER` or `COLLABORATOR`. The
+  code decides this again once it has scored those answers, and a decline resting on a closed
+  thread alone is posted as `new` wherever the score puts the finding among the ones the review
+  prints in full.
 
   Treat a reply as a decline only when its `association` is `OWNER`, `MEMBER` or
   `COLLABORATOR`. Anyone able to comment can write "working as intended" under a finding,
@@ -170,10 +178,17 @@ answers on `blast_radius` and `likelihood`. What you have is the diff and whatev
 around it, so answer from that.
 
 `not-applicable` is an answer, and a better one than a guess. A missing index has no attack
-vector and a naming inconsistency has nothing to reverse. An axis answered `not-applicable`
-counts for nothing, so it neither flatters nor punishes the finding; an axis you guessed at is
-scored as though you knew. Use it wherever the question does not fit the kind of defect,
-rather than reaching for the mildest value.
+vector and a naming inconsistency has nothing to reverse. Use it wherever the question does not
+fit the kind of defect, rather than reaching for the mildest value.
+
+It is not, though, a way of declining to answer, and what it costs depends on which axis you
+put it on. `likelihood`, `privileges_required`, `attack_vector` and `timing` ask how exposed the
+defect is, and the code damps the rating by their answers. `not-applicable` there damps nothing,
+which is what their strongest answers do: answer `attack_vector: not-applicable` on a defect
+somebody can reach and you have rated it as reachable as one an anonymous caller reaches over
+the network. Every other axis is added into the rating instead, and `not-applicable` there adds
+nothing, which lowers it. So say `not-applicable` where the question really has no answer, and
+answer the exposure axes wherever the defect gives you anything to go on.
 
 `confidence` is about you rather than about the defect, and it is the one axis that can move a
 finding a long way on its own. Say `confirmed` only where you followed the path in the code

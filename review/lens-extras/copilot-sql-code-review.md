@@ -95,6 +95,15 @@ filtered anywhere but the `ON` clause, except an `IS NULL` test, which is the an
 "Join Optimization" checklist has "Verify appropriate join types" and no example of a wrong
 join.
 
+The line under it, "Join Order: Optimize for smaller result sets first", is not a knob an author
+has. Every engine the skill names reorders inner joins by cost, so the order the `JOIN`
+clauses are written in is not the order they run in, and asking for them to be reordered changes
+no plan and no row. The exceptions are narrow, and outside them there is nothing to raise:
+MySQL's `STRAIGHT_JOIN`, a PostgreSQL query past `join_collapse_limit` or
+`from_collapse_limit`, which both default to 8, and outer joins, whose order is fixed by what
+they mean rather than chosen for size. Raise join order only in one of those cases, and name
+which one it is.
+
 Its checklist line "Subqueries are optimized or converted to JOINs" holds for one case and not
 the other, and the corrections above on its `DISTINCT` examples go the other way. A correlated
 scalar subquery in the projection, which is what its own "Aggregate and Window Functions"

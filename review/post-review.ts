@@ -24,7 +24,7 @@
 import { dirname, join } from "node:path";
 import { ownThreads, planResolution } from "./existing.ts";
 import { partition } from "./findings.ts";
-import { isTier, TIER_NAMES } from "./risk.ts";
+import { isTier, TIER_NAMES, tierRank } from "./risk.ts";
 import type { Tier } from "./risk.ts";
 import { readMerged, REVIEW_THRESHOLD, runFacts, vetAgainstExisting } from "./read-run.ts";
 import { graphql, graphqlFailure, requirePullNumber, requireRepository, rest, tokenFromStdinOrEnv } from "./github.ts";
@@ -78,6 +78,11 @@ if (thresholdInput !== "" && !isTier(thresholdInput)) {
 
 const threshold: Tier = isTier(thresholdInput) ? thresholdInput : REVIEW_THRESHOLD;
 
+/** The one of two thresholds that lists more findings, so neither can narrow what the other covers. */
+function protecting(a: Tier, b: Tier): Tier {
+    return tierRank(a) >= tierRank(b) ? a : b;
+}
+
 const findingsFile: string = findingsPath;
 const buildDir = dirname(findingsFile);
 
@@ -106,7 +111,15 @@ const vetted = await vetAgainstExisting(
     // author can close threads on their own work. Wiring the input here made a consumer who
     // wanted a shorter comment widen that, silently: at `print-threshold: high` every medium
     // finding became dismissable by the author closing their own thread. Six lenses found it.
-    REVIEW_THRESHOLD,
+    //
+    // Whichever of the two lists more findings, rather than the constant alone. The constant
+    // alone fixed the widening and opened the other direction: at `print-threshold: low` the
+    // body prints a `low` finding whole while `isListed(f, "medium")` answers false for it, so
+    // a finding a reader is looking at could be dismissed for good by a closed thread on its
+    // own. Taking the wider of the two keeps both properties — raising the input never widens
+    // the bar, and nothing the comment prints in full is settled on less than an entitled
+    // reply.
+    protecting(threshold, REVIEW_THRESHOLD),
 );
 const existing = vetted.existing;
 

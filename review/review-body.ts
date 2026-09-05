@@ -8,7 +8,7 @@
  * what the run says about itself, in the words a printed review uses too, is in `caveats.ts`.
  */
 
-import { caveatOf, COVERAGE_NOTICES, coverageOf, noticesFor, raisedIn } from "./caveats.ts";
+import { anyWarning, caveatOf, COVERAGE_NOTICES, coverageOf, noticesFor, raisedIn } from "./caveats.ts";
 import type { Coverage, CoverageAlert, Notice, RunFacts } from "./caveats.ts";
 import { isListed, lensLabel, lineOf } from "./findings.ts";
 import type { Finding, Merged, Partitioned, Tier } from "./findings.ts";
@@ -303,6 +303,39 @@ interface Listing {
 }
 
 /**
+ * Held back from a list's budget for the line saying what the budget left out.
+ *
+ * Wide enough for the longest of those lines, the findings listing's: a count plus the
+ * sentence `omissionFor` gives this destination. A fourth, longer sentence there eats the
+ * margin and nothing fails.
+ */
+const OMISSION_RESERVE = 200;
+
+/** Items rendered and kept while they fit, with the rest dropped whole. */
+function cutToFit<T>(
+    items: T[],
+    render: (item: T) => string,
+    limit: number,
+    separator: number,
+): { kept: T[]; lines: string[] } {
+    const kept: T[] = [];
+    const lines: string[] = [];
+    let used = 0;
+
+    for (const item of items) {
+        const text = render(item);
+
+        if (used + text.length + separator > limit) continue;
+
+        kept.push(item);
+        lines.push(text);
+        used += text.length + separator;
+    }
+
+    return { kept, lines };
+}
+
+/**
  * Join the review into one body no longer than GitHub accepts.
  *
  * Everything but the listing is short, and it is the part that makes the review honest: the
@@ -311,10 +344,6 @@ interface Listing {
  * findings rather than being cut at a character offset. An offset lands inside a
  * `<details>`, a fenced block, or a finding's own markup, and GitHub renders the wreckage.
  *
- * A finding too long for what is left costs only itself. `partition` orders by risk, so
- * stopping at the first one that does not fit would let a verbose critical finding at the
- * top empty the whole section.
- *
  * Exported for review-body.test.ts. `composeReview` is what a run calls, and the cutting is
  * the part with cases worth writing down one by one.
  */
@@ -322,30 +351,22 @@ export function assemble(head: string[], listing: Listing | null, tail: string[]
     let budget = MAX_BODY - [...head, ...tail].reduce((total, s) => total + s.length + 2, 0);
 
     const rendered = [...head];
-    const printed: Finding[] = [];
+    let printed: Finding[] = [];
 
     if (listing) {
         const heading = listing.lead ? `### ${listing.heading}\n\n${listing.lead}` : `### ${listing.heading}`;
-        // Reserved for the omission line, so saying what went missing cannot itself be
-        // the thing that does not fit.
-        budget -= heading.length + 2 + 200;
+        budget -= heading.length + 2 + OMISSION_RESERVE;
 
-        const kept: string[] = [];
-        for (const finding of listing.items) {
-            const text = bullet(finding);
-            if (text.length + 2 > budget) continue;
-            kept.push(text);
-            printed.push(finding);
-            budget -= text.length + 2;
-        }
-
+        const { kept, lines } = cutToFit(listing.items, bullet, budget, 2);
         const missing = listing.items.length - kept.length;
 
+        printed = kept;
+
         if (missing > 0) {
-            kept.push(`- _${plural(missing, "further finding")} left out for length. ${listing.omission}_`);
+            lines.push(`- _${plural(missing, "further finding")} left out for length. ${listing.omission}_`);
         }
 
-        rendered.push([heading, ...kept].join("\n\n"));
+        rendered.push([heading, ...lines].join("\n\n"));
     }
 
     rendered.push(...tail);
@@ -465,16 +486,9 @@ export function composeReview(merged: Merged, posting: Posting, parts: Partition
         notice === null ? tail : [notice, ...tail],
     );
 
-    // A `note` does not force a post on its own. `limited` is one, and on the shipped lens
-    // set it is permanent: three lenses have no browser today and every run says so, whatever
-    // the diff. Counting it here made `warned` true on every run, which made the "nothing new,
-    // post nothing" branch in post-review.ts unreachable — a quiet pull request got a fresh
-    // "0 new findings" comment on every push, which is the exact noise that branch exists to
-    // stop. A `warning` is news about this run and still forces a post; a standing `note` does
-    // not, though it still renders whenever the body posts for some other reason.
-    const warnings = raised.filter((name) => COVERAGE_NOTICES[name].level === "warning");
+    const warned = anyWarning(raised, COVERAGE_NOTICES) || anyWarning(aboutPosting, POSTING_NOTICES);
 
-    return { body, listed: printed, warned: warnings.length > 0 || aboutPosting.length > 0 };
+    return { body, listed: printed, warned };
 }
 
 /**
@@ -640,28 +654,17 @@ const MAX_LENS_BLOCK = 12_000;
 /**
  * A list of rendered lines, cut to a character budget, with a line saying how many went.
  *
- * An item too long for what is left costs only itself, which is `assemble`'s rule for findings
- * and holds harder here: stopping at the first verbose lens would drop every lens after it
- * while the alerts above went on counting the whole list.
- *
  * `omitted` inflects the count, rather than the helper appending an `s` to a noun the caller
  * names. The lens block is the one list here whose noun does not take one, and it printed
  * "further lenss" on any run that overflowed.
  */
-function boundedBlock(items: string[], limit: number, omitted: (n: number) => string): string {
-    const kept: string[] = [];
-    let used = 0;
+export function boundedBlock(items: string[], limit: number, omitted: (n: number) => string): string {
+    const { lines } = cutToFit(items, (item) => item, limit - OMISSION_RESERVE, 1);
+    const missing = items.length - lines.length;
 
-    for (const item of items) {
-        if (used + item.length + 1 > limit) continue;
+    if (missing === 0) return lines.join("\n");
 
-        kept.push(item);
-        used += item.length + 1;
-    }
-
-    if (kept.length === items.length) return kept.join("\n");
-
-    return [...kept, `- _${omitted(items.length - kept.length)} left out for length._`].join("\n");
+    return [...lines, `- _${omitted(missing)} left out for length._`].join("\n");
 }
 
 function furtherFindings(n: number): string {

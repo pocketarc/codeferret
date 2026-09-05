@@ -36,11 +36,12 @@ place, and the action fails on that too, so anybody who wants external pull requ
 cannot get there by loosening this file.
 
 `contents: read` is what the template ships, and everything works under it. The one thing
-`contents: write` adds is closing the inline threads CodeFerret left on this repository
-before `v1.1.0`: a review is one body now and opens no thread of its own, so
-`contents: write` is worth granting only while an open pull request still has one of
-those threads on it. Offer that rather than assuming it, and say what it costs: the review agent
-runs with Bash, so a token that can write contents is a token that can push. Taking it
+`contents: write` adds is closing inline threads a CodeFerret run left behind before
+`v1.1.0`: a review is one body now and opens no thread of its own, so `contents: write` is
+worth granting only where an open pull request in this repository still carries one, which is
+never the case the first time the workflow is installed. Offer that rather than
+assuming it, and say what it costs: the review agent runs with Bash, so a token that can
+write contents is a token that can push. Taking it
 means setting `resolve-threads: 'true'` in the same edit.
 
 The template grants a second permission the user should know about rather than decide on:

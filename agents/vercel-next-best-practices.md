@@ -27,7 +27,9 @@ finding you only write as prose is a finding nobody receives.
 Put the claim in the schema fields below and nowhere else: no severity markers, no emoji,
 no tables, no headings. Some skills grade with a red circle or a tick in their own output
 template, and that template is for the prose it describes, not for these fields. Severity
-has a field of its own, and a reader is shown neither it nor anything standing in for it.
+has a field of its own. It goes to the aggregator, which weighs your grading with the other
+lenses' when it rates the merged finding; no reader of the review is shown it or anything
+standing in for it.
 
 Wrap every code fragment in a `body` in a code span or a fenced block. A body renders as
 markdown, and a fragment left bare is read as markup: two `COUNT(*)` in one paragraph
@@ -153,6 +155,7 @@ Return JSON matching this schema as your entire final message:
                     },
                     "severity": {
                         "type": "string",
+                        "description": "Your judgement of how much this finding matters. The aggregator weighs it with the other lenses' gradings when it rates the merged finding, and no reader of the review is shown it.",
                         "enum": ["critical", "high", "medium", "low", "nit", "question"]
                     },
                     "category": {

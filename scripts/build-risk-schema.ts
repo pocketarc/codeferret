@@ -67,9 +67,12 @@ export function riskSchema(): Property {
         additionalProperties: false,
         description:
             "How much this finding matters, as answers a diff can support rather than one overall word. " +
-            `Every axis is required; answer \`${NOT_APPLICABLE}\` where the question does not apply to this ` +
-            "kind of defect rather than guessing, because a guess is scored and a stated non-answer is not. " +
-            "review/risk.ts turns these into a number and a tier; nothing here is a tier.",
+            `Every axis is required. Answer \`${NOT_APPLICABLE}\` where the question genuinely has no answer ` +
+            "for this kind of defect rather than reaching for the mildest value, but not as a way of " +
+            "declining to answer: what it costs differs by axis. On the axes asking how exposed the defect " +
+            "is, it damps the rating no more than their strongest answers do, so a defect somebody can " +
+            "reach reads as reachable by anyone. On every other axis it adds nothing, which lowers the " +
+            "rating. review/risk.ts weighs these into a number and a tier; nothing here is a tier.",
         properties,
     };
 }

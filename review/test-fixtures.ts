@@ -20,7 +20,7 @@ import type { Finding } from "./findings.ts";
  * Risk answers that land a finding in the tier a case is about.
  *
  * A test that wants a critical finding wants one because of where it sorts or whether the
- * body prints it, not because of what it is made of, and spelling twelve axes out at each
+ * body prints it, not because of what it is made of, and spelling every axis out at each
  * such case would bury that. `riskFor` is asserted to produce the tier it names, so a weight
  * change that moves a band fails here rather than silently retuning every suite that
  * depends on one.

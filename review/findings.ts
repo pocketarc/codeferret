@@ -331,8 +331,11 @@ export function vetSuppression(
             // that file is declined for as long as the pull request lives.
             //
             // A finding the body prints in full is held to the association instead, matching
-            // the `already-reported` branch below. That set is whatever `isListed` answers, so
-            // it is the body's set by construction rather than by agreement.
+            // the `already-reported` branch below. `isListed` is the tier alone, and the
+            // body's own set is `listedIn`: with no artifact behind the run it prints every
+            // fresh finding whole, so a `low` on such a run is settled here by a closed
+            // thread and any commenter. Closing that takes the printed set passed in from
+            // `post-review.ts`.
             // `orchestrator.md` carves out a security defect from any reply, and that
             // carve-out is prompt text sitting in the same context as the comments it judges,
             // so this branch is where refusing costs an attacker anything.

@@ -15,7 +15,7 @@
  * values this file scores. Adding an axis here and forgetting the schema is a failing check
  * rather than an axis nothing fills in.
  *
- * Two kinds of axis, because they do not combine the same way.
+ * The kinds of axis do not combine the same way.
  *
  * `weighted` axes say how bad the thing is. They are a sum over the whole set, so an axis
  * that says nothing contributes nothing. Sharing its weight among the axes that did answer
@@ -27,6 +27,11 @@
  * suggest, in proportion rather than by a fixed subtraction. Added instead, a speculative
  * catastrophe outranks a confirmed moderate defect, which is the failure mode this whole
  * file exists to avoid.
+ *
+ * A `cost` axis says what the defect costs to live with when nothing ever goes wrong at run
+ * time. It is scored on a scale of its own, bounded by `COST_CEILING`, and the score is the
+ * greater of the two: a finding qualifies on danger or on cost, whichever is worse. The
+ * comment in `score` has the measurement that separated them.
  */
 
 /** A value a model may answer with, the prose it reads to choose it, and what it is worth. */
@@ -41,7 +46,7 @@ export interface Axis {
     readonly kind: "weighted" | "scaling" | "cost";
     /** What the model is asked. Rendered into the schema as the field's description. */
     readonly question: string;
-    /** Share of the total for a weighted axis. Ignored for a scaling one. */
+    /** Share of the total for a weighted axis. Ignored for a scaling or a cost one. */
     readonly weight: number;
     readonly levels: readonly Level[];
 }
@@ -156,7 +161,7 @@ export const AXES = {
         levels: [
             { value: "standard", meaning: "Violates a named external standard: a WCAG criterion, an RFC, a documented API contract.", score: 1 },
             { value: "requirement", meaning: "Does not do what this change was asked to do. The issue or the spec states it and the code does otherwise.", score: 0.8 },
-            { value: "house-rule", meaning: "Violates this repository's own written conventions, REVIEW.md included.", score: 0.6 },
+            { value: "house-rule", meaning: "Violates a convention this repository has written down for itself.", score: 0.6 },
             { value: "none", meaning: "No written rule covers it. The claim rests on your judgement.", score: 0 },
         ],
     },
@@ -321,8 +326,8 @@ export function score(risk: Partial<Risk>): number {
     // a score of 20, and that rating is the one a model reaches for about anything sitting in
     // source.
     const reach = Math.max(mean(["privileges_required", "attack_vector"], risk), REACH_FLOOR);
-    const timing = levelScore("timing", risk.timing ?? NOT_APPLICABLE) ?? 1;
-    const likelihood = levelScore("likelihood", risk.likelihood ?? NOT_APPLICABLE) ?? 1;
+    const timing = scaling("timing", risk);
+    const likelihood = scaling("likelihood", risk);
 
     // The three reachability answers combine as a geometric mean rather than a product.
     // Multiplied, they compound at a rate nothing justifies: measured over a real review, a
@@ -336,7 +341,7 @@ export function score(risk: Partial<Risk>): number {
     // Confidence stays a direct multiplier, outside that mean. It is not a reading of how
     // exposed the defect is; it is whether there is a defect. A finding nobody has confirmed
     // should be damped by the whole of that doubt rather than a third of it.
-    const confidence = levelScore("confidence", risk.confidence ?? NOT_APPLICABLE) ?? 1;
+    const confidence = scaling("confidence", risk);
 
     // What it would cost to live with, on a scale of its own rather than as one more term in
     // the sum above. Summed, the two dimensions diluted each other: a finding that is purely
@@ -349,9 +354,44 @@ export function score(risk: Partial<Risk>): number {
     // Cost is not multiplied by `exposure`. A duplicated invariant costs the same to live with
     // whether or not anyone can reach it over a network. It is multiplied by `confidence`,
     // because a cost nobody has confirmed is worth no more than a hazard nobody has confirmed.
-    const cost = (levelScore("maintenance", risk.maintenance ?? NOT_APPLICABLE) ?? 0) * COST_CEILING;
+    const cost = costOf(risk) * COST_CEILING;
 
     return Math.round(100 * confidence * Math.max(base * exposure, cost));
+}
+
+/**
+ * What a scaling axis multiplies by, where the answer is one this file cannot score.
+ *
+ * An axis with a `not-applicable` level can be silent on purpose: no `timing` level fits a
+ * defect nothing triggers, so 1 is the right multiplier and the score is left where the other
+ * axes put it. `confidence` has no such level, because every finding was written with some
+ * degree of certainty behind it, so a `confidence` this file cannot score is a question the
+ * model failed to answer rather than one it declined. It is worth the mildest answer on the
+ * axis, for the same reason a weighted axis nobody answered is worth nothing.
+ *
+ * Falling through to 1 whatever the axis said gave a misspelt `confirmed` the score of
+ * `confirmed`. Measured on the fixture's path traversal, rated `confirmed` and scoring 44:
+ * `speculative` scores it 11, and the typo used to score it 44.
+ */
+function scaling(axis: AxisName, risk: Partial<Risk>): number {
+    const answered = levelScore(axis, risk[axis] ?? NOT_APPLICABLE);
+
+    if (answered !== null) return answered;
+
+    const levels = levelsOf(axis);
+
+    if (levels.some((level) => level.value === NOT_APPLICABLE)) return 1;
+
+    return Math.min(...levels.map((level) => level.score));
+}
+
+/** The worst thing this finding costs to live with, 0 to 1. */
+function costOf(risk: Partial<Risk>): number {
+    const scored = AXIS_NAMES.filter((axis) => AXES[axis].kind === "cost").map(
+        (axis) => levelScore(axis, risk[axis] ?? NOT_APPLICABLE) ?? 0,
+    );
+
+    return Math.max(0, ...scored);
 }
 
 /** The mean of the axes that answered, or 1 where none did, so silence does not damp anything. */
@@ -369,8 +409,15 @@ function mean(axes: readonly AxisName[], risk: Partial<Risk>): number {
  * The bands, highest first. A tier is what the threshold compares against and what the review
  * body says, because a reader ranks "high" faster than they rank 61.
  *
- * The cuts are a starting point to be moved once a real run has been scored, not a claim about
- * where the line belongs. Nothing has been measured against them yet.
+ * The cuts have a measurement behind them. `REVIEW_THRESHOLD` in read-run.ts records a blind
+ * rating of the fixture branch against these bands: six seeded defects between 79 and 36, three
+ * decoys at 11. `COST_CEILING` above was placed against these same bands, on a real review
+ * rather than on the fixture. Move a cut and both readings mean something else; `riskFor` in
+ * test-fixtures.ts fails the moment a shape stops landing in the tier it is named for.
+ *
+ * The band edges are unmeasured. The rating landed the path traversal on 44, a point under
+ * `high`, and says nothing about which side of that line it should have been on. Nothing here
+ * has been scored against a repository unlike the fixture either.
  */
 export const TIERS = [
     { tier: "critical", atLeast: 70 },

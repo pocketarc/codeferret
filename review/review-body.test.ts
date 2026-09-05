@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { partition } from "./findings.ts";
 import type { Finding, Merged } from "./findings.ts";
-import { COVERAGE_NOTICES, coverageOf, noticesFor } from "./caveats.ts";
+import { anyWarning, COVERAGE_NOTICES, coverageOf, noticesFor } from "./caveats.ts";
+import type { Notice } from "./caveats.ts";
 import { closeOpenFence, escapeInline, fenceMap } from "./markdown.ts";
 import {
     assemble,
+    boundedBlock,
     bullet,
     composeReview,
     destinationOf,
@@ -17,6 +19,7 @@ import {
 import type { Posting } from "./review-body.ts";
 import { REVIEW_THRESHOLD } from "./read-run.ts";
 import { finding, NO_RISK, riskFor } from "./test-fixtures.ts";
+import { plural } from "./words.ts";
 
 describe("bullet", () => {
     test("escapes a trailing backslash in a title, which would eat the closing emphasis", () => {
@@ -271,6 +274,43 @@ describe("assemble", () => {
         expect(body).toEndWith("### Caveats");
     });
 
+    // The search needs `printedWith` monotone in `head`, which `cutToFit` does not give in
+    // general: it skips rather than stops, so a wider head can drop one long item and admit
+    // two short ones. These two fixtures are the same length, which is what makes it hold.
+    describe("where the cut falls", () => {
+        const first = finding({ title: "First", body: "x".repeat(500) });
+        const second = finding({ title: "Second", body: "y".repeat(500) });
+        const items = [first, second];
+
+        function printedWith(head: number): number {
+            return assemble(["x".repeat(head)], listing(items), []).printed.length;
+        }
+
+        function widestHead(count: number): number {
+            let low = 0;
+            let high = MAX_BODY;
+
+            while (low < high) {
+                const mid = Math.ceil((low + high) / 2);
+
+                if (printedWith(mid) >= count) low = mid;
+                else high = mid - 1;
+            }
+
+            return low;
+        }
+
+        test("lists a finding that exactly fits, and drops it one character later", () => {
+            expect(printedWith(widestHead(1))).toBe(1);
+            expect(printedWith(widestHead(1) + 1)).toBe(0);
+        });
+
+        test("charges a second finding its bullet and the blank line before it, and nothing else", () => {
+            expect(widestHead(2)).toBeGreaterThan(0);
+            expect(widestHead(1) - widestHead(2)).toBe(bullet(second).length + 2);
+        });
+    });
+
     test("leaves no disclosure control the cut emptied", () => {
         const filler = Array.from({ length: 400 }, (_, i) => `- lens ${i}: ${"d".repeat(200)}`).join("\n");
         const { body } = assemble(
@@ -285,6 +325,41 @@ describe("assemble", () => {
 
         expect(body).not.toMatch(/<details>\n(<summary>[^\n]*<\/summary>\n)?<\/details>/);
         expect((body.match(/<details/g) ?? []).length).toBe((body.match(/<\/details>/g) ?? []).length);
+    });
+});
+
+describe("boundedBlock", () => {
+    const furtherItems = (n: number): string => plural(n, "further item");
+
+    test("holds a block to its limit when the line about what was dropped is what would overrun it", () => {
+        const items = Array.from({ length: 5 }, (_, i) => `- item ${i} ${"x".repeat(90)}`);
+        const block = boundedBlock(items, 400, furtherItems);
+
+        expect(block).toContain("left out for length");
+        expect(block.length).toBeLessThanOrEqual(400);
+    });
+
+    test("leaves a list that fits whole, with no line about omissions", () => {
+        expect(boundedBlock(["- one", "- two"], 400, furtherItems)).toBe("- one\n- two");
+    });
+});
+
+describe("anyWarning, the one test both notice tables go through", () => {
+    const table: Record<"news" | "standing", Notice<null>> = {
+        news: { level: "warning", raised: () => true, say: () => "" },
+        standing: { level: "note", raised: () => true, say: () => "" },
+    };
+
+    test("a note raised on its own does not make a run worth posting", () => {
+        expect(anyWarning(["standing"], table)).toBe(false);
+    });
+
+    test("a warning does", () => {
+        expect(anyWarning(["news"], table)).toBe(true);
+    });
+
+    test("a warning beside a note still does", () => {
+        expect(anyWarning(["standing", "news"], table)).toBe(true);
     });
 });
 
@@ -717,11 +792,6 @@ describe("composeReview", () => {
             ).toBe(true);
         });
 
-        // `limited` is a `note`, not a `warning`, and on the shipped lens set it is
-        // permanent: the three capability-less lenses name what they could not check on
-        // every run, whatever the diff. Counting it here made `warned` true always, so a
-        // quiet pull request with nothing new never reached post-review.ts's "post
-        // nothing" branch and got a fresh "0 new findings" comment on every push instead.
         test("a lens that named something it could not check does not, on its own", () => {
             const limited = { lens: "codeferret:anthropic-accessibility-review", findings_returned: 0, ok: true };
 
@@ -757,10 +827,10 @@ describe("composeReview", () => {
 
         // The test above is this repository's own dispatched set: action.yml's default minus
         // `comment-review` and `writing-review`, which .github/workflows/codeferret.yml
-        // excludes. A consumer who does not exclude them runs all twelve, and neither has a
+        // excludes. A consumer who excludes neither runs both as well, and neither has a
         // `STANDING_DETAIL` entry, so this covers the same ground with the full default rather
         // than trusting that the two missing names cannot matter.
-        test("the full shipped default, twelve lenses, stays quiet too", () => {
+        test("the full shipped default, excluding nothing, stays quiet too", () => {
             const lenses = [
                 "caveman-review",
                 "anthropic-code-review",

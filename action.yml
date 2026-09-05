@@ -100,12 +100,14 @@ inputs:
             `**/out/**/*.html` and `**/out/**/*.txt` cover the rest of that export, at any
             depth. `next build` writes one `.html` per prerendered route and one `.txt`
             React Server Component prefetch payload beside it, which on a site of any size is
-            hundreds of generated files in the diff every lens reads. Neither glob can hide a
-            route, whatever directory that route sits in: a segment becomes routable through
-            `page` or `route`, with `layout`, `template`, `loading`, `error`, `not-found` and
-            `default` beside them, and every one of those is `.js`, `.jsx`, `.ts` or `.tsx`,
-            while raw HTML is served from `public/` rather than from `app/`. What they do
-            hide is hand-written HTML or text sitting inside some `out/` directory: a mail
+            hundreds of generated files in the diff every lens reads. What bounds both is the
+            `out/` in the middle: they match only below a directory of that name, and an App
+            Router route sits under `app/`. Do not widen either to `**/*.html` or `**/*.txt`
+            on the assumption that a route is always JavaScript. It is not: `app/robots.txt`,
+            `app/sitemap.xml` and `app/manifest.json` are file conventions that serve the
+            paths they are named for, and `app/**/page.mdx` is routable wherever
+            `pageExtensions` names that extension, which is what an MDX setup does. What they
+            do hide is hand-written HTML or text sitting inside some `out/` directory: a mail
             template a route imports, a checked-in fixture under `tests/out/`. Drop both
             lines if your repository has one, because an excluded file is not in the diff and
             nothing in the review says it was left out.

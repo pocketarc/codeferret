@@ -3,6 +3,8 @@
  * shape of a failure.
  */
 
+import { reason } from "./json.ts";
+
 /** The token. run.sh pipes it in; the environment variable is for running a script by hand. */
 export async function tokenFromStdinOrEnv(): Promise<string> {
     const fromEnvironment = process.env.GITHUB_TOKEN;
@@ -109,23 +111,29 @@ export interface GraphqlResult {
  * message to tell a missing permission from a bad thread id. So neither the status nor the
  * errors are decided here.
  *
- * A body that is not JSON comes back as an error rather than a rejection. GitHub answers a
- * 502 or a gateway timeout with HTML, and post-review.ts resolves threads at the top level
- * before it posts: a throw there ends the process with a review that is written, paid for
- * and unposted, over a thread nobody needed closed.
+ * Nothing here rejects. post-review.ts resolves threads at the top level, before it posts, with
+ * no catch: a throw there ends the process with a review that is written, paid for and unposted,
+ * over a thread nobody needed closed.
  */
 export async function graphql(
     token: string,
     query: string,
     variables: Record<string, unknown>,
 ): Promise<GraphqlResult> {
-    const response = await fetch(`${API}/graphql`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ query, variables }),
-    });
+    let response: Response;
+    let body: string;
 
-    const body = await response.text();
+    try {
+        response = await fetch(`${API}/graphql`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ query, variables }),
+        });
+        body = await response.text();
+    } catch (error) {
+        return { ok: false, status: 0, errors: [{ message: `the request did not complete: ${reason(error)}` }] };
+    }
+
     let payload: { data?: unknown; errors?: Array<{ message: string }> };
 
     try {

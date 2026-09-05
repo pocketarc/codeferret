@@ -103,6 +103,40 @@ describe("score", () => {
         expect(score({ ...WORST, attack_vector: NOT_APPLICABLE, privileges_required: NOT_APPLICABLE })).toBe(score(WORST));
     });
 
+    // `scaling` in risk.ts has why: falling through to 1 gave a misspelt `confirmed` the score
+    // of `confirmed`.
+    describe("a confidence this file cannot score scores as the mildest level", () => {
+        const levels = AXES.confidence.levels;
+        const mildest = levels[levels.length - 1]?.value;
+        const asMildest = score({ ...WORST, confidence: mildest });
+
+        test("the axis has no not-applicable level, which the rest assumes", () => {
+            const values: readonly string[] = levels.map((level) => level.value);
+
+            expect(mildest).toBeString();
+            expect(values).not.toContain(NOT_APPLICABLE);
+        });
+
+        test("a value the table does not carry", () => {
+            expect(score({ ...WORST, confidence: "confrmed" })).toBe(asMildest);
+            expect(asMildest).toBeLessThan(score(WORST));
+        });
+
+        test("not-applicable, which no level on this axis means", () => {
+            expect(score({ ...WORST, confidence: NOT_APPLICABLE })).toBe(asMildest);
+        });
+
+        test("absent altogether", () => {
+            const { confidence: _answered, ...unanswered } = WORST;
+
+            expect(score(unanswered)).toBe(asMildest);
+        });
+    });
+
+    test("an unanswered timing damps nothing, because the axis has a not-applicable level", () => {
+        expect(score({ ...WORST, timing: NOT_APPLICABLE })).toBe(score(WORST));
+    });
+
     test("not-applicable on a weighted axis costs that axis and no more", () => {
         const full = score(WORST);
         const without = score({ ...WORST, availability: NOT_APPLICABLE });
@@ -236,6 +270,18 @@ describe("cost and hazard", () => {
         const hazard = { ...WORST, maintenance: NOT_APPLICABLE };
 
         expect(score(hazard)).toBe(score({ ...WORST, maintenance: "compounding" }));
+    });
+
+    describe("every cost axis moves the score by itself", () => {
+        const nothing = { ...SILENT, confidence: "confirmed" };
+
+        for (const axis of AXIS_NAMES.filter((name) => AXES[name].kind === "cost")) {
+            test(axis, () => {
+                const worst = AXES[axis].levels[0];
+
+                expect(score({ ...nothing, [axis]: worst?.value })).toBeGreaterThan(score(nothing));
+            });
+        }
     });
 
     test("a cost is not damped by how reachable it is", () => {

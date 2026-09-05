@@ -153,12 +153,15 @@ is in `review/DECISIONS.md`.
   finding was a cache-key nit that six lenses spotted, while the missing index, the RSC
   boundary violation and the keyboard-access failure were each found by one. `found_by`
   stays in `findings.json`, where an agent can read it.
-- A finding below `print-threshold` is in `findings.json` and nowhere a person will look.
+- A finding below `print-threshold` is in `findings.json` and nowhere a person will read it.
   `review/risk.ts` scores the risk answers the orchestrator gave a finding and bands the score
-  into a tier, `isListed` compares that tier against `print-threshold`, and the body neither
-  prints such a finding nor says how many it left out. Where there is no artifact to send a
-  reader to, a session prints every finding instead. "A finding shows the claim and nothing
-  else" in `review/DECISIONS.md` has what the trade costs.
+  into a tier, and `isListed` compares that tier against `print-threshold`. The body leads the
+  listing with how many of the run's findings it is showing, so a reader knows the page is
+  partial, and says nothing about what the rest were: a count is not a title, and somebody
+  scanning the comment cannot tell four findings from four with thirty behind them worth
+  reading. Where there is no artifact to send a reader to, a session prints every finding
+  instead. "A finding shows the claim and nothing else" in `review/DECISIONS.md` has what the
+  trade costs.
 - Lenses must not modify the working tree. Every lens reads the same checkout at once,
   so one edit corrupts every other lens's review. `Edit`, `Write`, `NotebookEdit` and
   `Agent` are all kept off the tool list in `agents/`, and `run.sh` denies the first three

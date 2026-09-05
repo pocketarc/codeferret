@@ -309,6 +309,17 @@ export function raisedIn<K extends string, T>(order: readonly K[], table: Record
     return order.filter((name) => table[name].raised(subject));
 }
 
+/**
+ * Whether any of these raised notices is worth posting a review for on its own.
+ *
+ * `level` does double duty: it picks GitHub's alert and it decides whether a notice can break
+ * the silence of a run with nothing new. A notice that must reach a reader on a quiet push has
+ * to be a `warning`, whatever styling suits it.
+ */
+export function anyWarning<K extends string, T>(names: readonly K[], table: Record<K, Notice<T>>): boolean {
+    return names.some((name) => table[name].level === "warning");
+}
+
 /** The notices this run raises, in the order above. */
 export function noticesFor(coverage: Coverage): CoverageAlert[] {
     return raisedIn(COVERAGE_ORDER, COVERAGE_NOTICES, coverage);

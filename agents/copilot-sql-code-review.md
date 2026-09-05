@@ -27,7 +27,9 @@ finding you only write as prose is a finding nobody receives.
 Put the claim in the schema fields below and nowhere else: no severity markers, no emoji,
 no tables, no headings. Some skills grade with a red circle or a tick in their own output
 template, and that template is for the prose it describes, not for these fields. Severity
-has a field of its own, and a reader is shown neither it nor anything standing in for it.
+has a field of its own. It goes to the aggregator, which weighs your grading with the other
+lenses' when it rates the merged finding; no reader of the review is shown it or anything
+standing in for it.
 
 Wrap every code fragment in a `body` in a code span or a fenced block. A body renders as
 markdown, and a fragment left bare is read as markup: two `COUNT(*)` in one paragraph
@@ -143,6 +145,15 @@ filtered anywhere but the `ON` clause, except an `IS NULL` test, which is the an
 "Join Optimization" checklist has "Verify appropriate join types" and no example of a wrong
 join.
 
+The line under it, "Join Order: Optimize for smaller result sets first", is not a knob an author
+has. Every engine the skill names reorders inner joins by cost, so the order the `JOIN`
+clauses are written in is not the order they run in, and asking for them to be reordered changes
+no plan and no row. The exceptions are narrow, and outside them there is nothing to raise:
+MySQL's `STRAIGHT_JOIN`, a PostgreSQL query past `join_collapse_limit` or
+`from_collapse_limit`, which both default to 8, and outer joins, whose order is fixed by what
+they mean rather than chosen for size. Raise join order only in one of those cases, and name
+which one it is.
+
 Its checklist line "Subqueries are optimized or converted to JOINs" holds for one case and not
 the other, and the corrections above on its `DISTINCT` examples go the other way. A correlated
 scalar subquery in the projection, which is what its own "Aggregate and Window Functions"
@@ -245,6 +256,7 @@ Return JSON matching this schema as your entire final message:
                     },
                     "severity": {
                         "type": "string",
+                        "description": "Your judgement of how much this finding matters. The aggregator weighs it with the other lenses' gradings when it rates the merged finding, and no reader of the review is shown it.",
                         "enum": ["critical", "high", "medium", "low", "nit", "question"]
                     },
                     "category": {

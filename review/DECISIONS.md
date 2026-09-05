@@ -354,16 +354,19 @@ The `print-threshold` input then decides which findings the comment prints in fu
 tiers that cleared it, because `bullet` prints no tier and the heading is the reader's only
 account of what was left out; a heading built from the findings present would rename the
 section every run, and a reader could take it as a promise that nothing lower was found. Where
-the band edges belong is still open. They are a starting point nothing has been scored against,
-and so is the `medium` default, which is why the docstring on `REVIEW_THRESHOLD` says so.
+the band edges belong is still open. The bands themselves rest on a blind rating of the fixture
+branch, recorded in the docstring on `REVIEW_THRESHOLD`, which is what put the `medium` default
+where it is; the `TIERS` docstring has what that rating leaves unsettled.
 
 Nobody overlooked the cost. A finding below the threshold is in `findings.json` and nowhere a
-person will look, and nothing in the body says how many there were, so a reader of the comment
-cannot tell a run that found four things from one that found four and left thirty in the file.
-The trade rests on who reads what: whoever fixes a review is an agent reading the file, which is
-complete, and the comment is where a person decides whether to stop and look, which a list of
-every nit makes harder. A count of what was left out would cost one line and is worth adding the
-first time someone is misled by its absence.
+person will look. How many there were is on the page: `listingOf` leads the section with `6 of
+40 findings.` and a link to the artifact holding the rest, so a reader can tell a run that found
+four things from one that found four and left thirty behind. What the line cannot say is what
+those thirty were about, and whether one of them is the one that reader came to find. The trade
+rests on who reads what: whoever fixes a review is an agent reading the file, which is complete, and
+the comment is where a person decides whether to stop and look, which a list of every nit makes
+harder. The lead is written only where there is an artifact to send a reader to; without one the
+body prints every finding, so there is nothing left out to count.
 
 A review posted from a session has no artifact, and its findings file is a path under
 `.git/` on one person's machine. Nothing branches on the tier there: the body prints every
