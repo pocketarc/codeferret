@@ -96,7 +96,17 @@ const vetted = await vetAgainstExisting(
     merged.findings,
     buildDir,
     (line) => console.error(line),
-    threshold,
+    // Not the `print-threshold` input. That value decides what this run's comment prints, which
+    // is a judgement about one page and is remade from scratch on the next push. This one
+    // decides what it takes to dismiss a finding for good: `markPosted` writes the status into
+    // the findings file, `fetch-previous.ts` reads it into the next run's `previous.json`, and
+    // `previousOf` keeps a `declined` entry declined for the life of the pull request. Below
+    // the bar a closed thread settles a finding on its own, and closing one takes repository
+    // write or authorship of the pull request — so on an outside contributor's branch the
+    // author can close threads on their own work. Wiring the input here made a consumer who
+    // wanted a shorter comment widen that, silently: at `print-threshold: high` every medium
+    // finding became dismissable by the author closing their own thread. Six lenses found it.
+    REVIEW_THRESHOLD,
 );
 const existing = vetted.existing;
 

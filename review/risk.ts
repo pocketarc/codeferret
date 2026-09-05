@@ -268,6 +268,33 @@ export function levelScore(axis: AxisName, value: string): number | null {
 }
 
 /**
+ * The axes this risk did not answer: absent, or carrying a value the table does not know.
+ *
+ * `not-applicable` is not among them. That is an answer, and a deliberate one.
+ *
+ * The distinction matters because a score cannot express it. An axis nobody answered
+ * contributes nothing, which is arithmetically identical to an axis answered at its mildest,
+ * so `impact: catastophic` scores what `impact: none` scores: measured, one typo took a
+ * finding from 62 to 36, a whole tier. Nothing downstream could tell that from a finding
+ * somebody had rated as harmless, and a finding with no `risk` object at all scored 0, banded
+ * to `nit`, and left the comment with no sentence anywhere saying why.
+ *
+ * So the failure is reported rather than folded into the number. `isListed` prints an unrated
+ * finding whatever its tier, on the same reasoning the severity this replaced carried about a
+ * label nothing recognised: refusing to print a defect because the rating went wrong is the
+ * wrong way to be wrong.
+ */
+export function unratedAxes(risk: Partial<Risk> | undefined): AxisName[] {
+    if (!risk) return [...AXIS_NAMES];
+
+    return AXIS_NAMES.filter((axis) => {
+        const value = risk[axis];
+
+        return value === undefined || (value !== NOT_APPLICABLE && levelScore(axis, value) === null);
+    });
+}
+
+/**
  * A finding's risk, 0 to 100.
  *
  * The weighted axes are a sum over the whole set, so an axis that says nothing adds nothing.

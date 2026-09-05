@@ -69,9 +69,17 @@ describe("isListed", () => {
         }
     });
 
-    test("leaves out a finding whose risk scores nothing, which puts it in the bottom tier", () => {
+    test("leaves out a finding rated as applying to nothing, which is an answer", () => {
         expect(isListed(finding({ risk: NO_RISK }), REVIEW_THRESHOLD)).toBe(false);
-        expect(isListed(finding({ risk: undefined }), REVIEW_THRESHOLD)).toBe(false);
+    });
+
+    // The distinction this pins: `NO_RISK` above is a finding somebody rated, on every axis,
+    // as touching nothing. These two are findings nobody managed to rate. Both score 0 and
+    // band to `nit`, and the first version of this test asserted both were left out — so a
+    // finding whose rating failed left the comment with nothing on the page saying so.
+    test("prints a finding whose rating failed rather than hiding it on a tier it does not have", () => {
+        expect(isListed(finding({ risk: undefined }), REVIEW_THRESHOLD)).toBe(true);
+        expect(isListed(finding({ risk: { ...riskFor("nit"), impact: "catastophic" } }), REVIEW_THRESHOLD)).toBe(true);
     });
 });
 

@@ -870,6 +870,29 @@ describe("composeReview", () => {
             }
         });
 
+        test("says on the page when a finding could not be rated, and prints it anyway", () => {
+            const merged: Merged = {
+                findings: [
+                    finding({ file: "scored.ts", risk: riskFor("nit") }),
+                    finding({ file: "unrated.ts", title: "No risk at all", risk: undefined }),
+                ],
+            };
+            // On a runner, so there is an artifact to defer the rest to and the tier actually
+            // filters. With no artifact the body prints every finding and the case proves nothing.
+            const posting: Posting = { ...quiet, to: onARunner };
+            const coverage = coverageOf(merged, posting);
+            const { body, warned } = composeReview(merged, posting, partition(merged.findings));
+
+            // Both findings band to `nit`. The rated one is left out, which is what a tier is
+            // for; the unrated one is not, because its tier is the output of a rating that did
+            // not happen. Without the notice it would be in the list with nothing saying why.
+            expect(noticesFor(coverage)).toContain("unrated");
+            expect(body).toContain("could not be rated");
+            expect(body).toContain("No risk at all");
+            expect(body).not.toContain("scored.ts");
+            expect(warned).toBe(true);
+        });
+
         test("bounds what the fetch could not read, which the body is charged for before any finding", () => {
             const body = review({}, { unread: ["e".repeat(9000)] });
 

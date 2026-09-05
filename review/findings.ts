@@ -9,7 +9,7 @@
  */
 
 import type { Located, Survey } from "./existing.ts";
-import { meetsThreshold, score, tierOf as bandOf, tierRank } from "./risk.ts";
+import { meetsThreshold, score, tierOf as bandOf, tierRank, unratedAxes } from "./risk.ts";
 import type { Risk, Tier } from "./risk.ts";
 
 export type { Tier } from "./risk.ts";
@@ -92,7 +92,22 @@ export function lineOf(f: Finding): number | undefined {
  * another.
  */
 export function isListed(f: Finding, threshold: Tier): boolean {
-    return meetsThreshold(tierOf(f), threshold);
+    return isUnrated(f) || meetsThreshold(tierOf(f), threshold);
+}
+
+/**
+ * Whether this finding's rating failed, rather than came out low.
+ *
+ * A tier is only a reason to leave a finding out where the tier means something. `unratedAxes`
+ * has what goes wrong when it does not.
+ */
+export function isUnrated(f: Finding): boolean {
+    return unratedAxes(f.risk).length > 0;
+}
+
+/** The findings whose rating failed, which the body says so about rather than hiding. */
+export function unratedFindings(findings: Finding[]): Finding[] {
+    return findings.filter(isUnrated);
 }
 
 /** The lenses that did not report normally, which is the count the body leads with. */

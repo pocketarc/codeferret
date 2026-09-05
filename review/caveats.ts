@@ -12,8 +12,8 @@
  * cut to fit is in `review-body.ts`.
  */
 
-import { brokenLenses, lensLabel, silentLenses } from "./findings.ts";
-import type { LensHealth, Merged, Reopening, Vetted } from "./findings.ts";
+import { brokenLenses, lensLabel, silentLenses, unratedFindings } from "./findings.ts";
+import type { Finding, LensHealth, Merged, Reopening, Vetted } from "./findings.ts";
 import { clampTo } from "./markdown.ts";
 import { STANDING_DETAIL } from "./standing-detail.ts";
 import { lenses, plural } from "./words.ts";
@@ -97,6 +97,8 @@ export interface Coverage {
     unread: string[];
     /** The build files the session changed under the run. */
     sessionChanged: string[];
+    /** The findings whose risk answers could not be scored, so their tier means nothing. */
+    unrated: Finding[];
 }
 
 /** What a run knows about itself that is not in its findings. */
@@ -123,6 +125,7 @@ export function coverageOf(merged: Merged, facts: RunFacts): Coverage {
 
     return {
         health,
+        unrated: unratedFindings(merged.findings),
         broken: brokenLenses(health),
         silent: silentLenses(
             health.map((h) => h.lens),
@@ -205,7 +208,7 @@ export interface Notice<T> {
  * raise a warning, `warned` could decide the review was worth posting on the strength of it,
  * and the body it posted said nothing about why.
  */
-const COVERAGE_ORDER = ["unread", "changed", "unaccounted", "silent", "broken", "limited"] as const;
+const COVERAGE_ORDER = ["unread", "changed", "unrated", "unaccounted", "silent", "broken", "limited"] as const;
 
 export type CoverageAlert = (typeof COVERAGE_ORDER)[number];
 
@@ -224,6 +227,20 @@ export const COVERAGE_NOTICES: Record<CoverageAlert, Notice<Coverage>> = {
                 ` there is raised again: ${escape(kept)}${marker === "" ? "" : " (cut for length)"}`
             );
         },
+    },
+
+    // Beside the counts rather than among the lens notices, because it is about findings the
+    // reader is looking at: an unrated finding is in the list in front of them, printed on a
+    // tier nothing computed. Without this it would be there with nothing to say why.
+    unrated: {
+        level: "warning",
+        raised: (c) => c.unrated.length > 0,
+        say: (c, escape) =>
+            `${plural(c.unrated.length, "finding")} could not be rated, so ` +
+            `${c.unrated.length === 1 ? "it is" : "they are"} printed here whatever ` +
+            `${c.unrated.length === 1 ? "its" : "their"} tier would have been: ` +
+            `${escape(c.unrated.map((f) => f.file).join(", "))}. ` +
+            "`risk` in `findings.json` has what each one answered.",
     },
 
     // Above the coverage notices, because it is what decides how much they are worth: the lens
