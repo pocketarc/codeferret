@@ -1,28 +1,36 @@
 /**
  * What scrub-credentials.sh decides, as a table of cases.
  *
- * The script's correctness turns on something shellcheck cannot see: the read-back at the
- * end reads `git config --get-regexp`'s exit code as "a key is still set", the inverse of
- * how the same command is used as a loop source above it. Inverted, the step passes while
- * leaving the token in the tree every lens reads. So each case below plants a key and
- * asserts it is gone, rather than asserting the script ran.
+ * The fixture is the whole of it. An earlier version of this file planted
+ * `http.<server>.extraheader` in `.git/config` by hand and read it back with `--local`, and
+ * passed every case while the script it tested was a no-op against a real checkout:
+ * `actions/checkout` writes the header into a file under `$RUNNER_TEMP` and links it with
+ * `includeIf.gitdir`, and `git config --local` does not expand an include. So each case here
+ * builds the config the way checkout builds it, and `reachable` reads it back the way a lens
+ * would.
  */
 import { describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const SCRIPT = join(import.meta.dir, "scrub-credentials.sh");
-const KEY = "http.https://github.com/.extraheader";
+const HEADER = "http.https://github.com/.extraheader";
 const VALUE = "AUTHORIZATION: basic eC1hY2Nlc3MtdG9rZW46bm90LWEtcmVhbC10b2tlbg==";
 
 function git(cwd: string, ...args: string[]): string {
     return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 }
 
+/**
+ * `realpathSync` because `includeIf gitdir:` matches the resolved path, and on macOS
+ * `mkdtemp` hands back `/var/folders/...`, a symlink to `/private/var/folders/...`. An
+ * include written against the unresolved form never applies, and the case then passes
+ * whatever the script does.
+ */
 function repo(): string {
-    const dir = mkdtempSync(join(tmpdir(), "scrub-"));
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "scrub-")));
 
     git(dir, "init", "-q", ".");
     git(dir, "config", "user.email", "t@example.invalid");
@@ -45,115 +53,190 @@ function withSubmodule(): string {
     return outer;
 }
 
+/** The credential as `actions/checkout@v6` leaves it. */
+function plantIncludeIf(dir: string): string {
+    const cred = join(realpathSync(mkdtempSync(join(tmpdir(), "runner-temp-"))), "git-credentials-abc123.config");
+
+    // In a submodule `<dir>/.git` is a gitfile and the git directory is
+    // `<superproject>/.git/modules/<name>`, so a condition written against the working tree
+    // never matches and the case tests nothing.
+    const gitdir = git(dir, "rev-parse", "--absolute-git-dir");
+
+    git(dir, "config", "--file", cred, HEADER, VALUE);
+    git(dir, "config", "--local", `includeIf.gitdir:${gitdir}.path`, cred);
+
+    return cred;
+}
+
+/** The header as an older checkout leaves it, in the repository's own config. */
+function plantHeader(dir: string, key = HEADER): void {
+    git(dir, "config", "--local", key, VALUE);
+}
+
 function scrub(workspace: string): { code: number; out: string; err: string } {
     const proc = Bun.spawnSync(["bash", SCRIPT, workspace], { stdout: "pipe", stderr: "pipe" });
 
-    return {
-        code: proc.exitCode,
-        out: proc.stdout.toString(),
-        err: proc.stderr.toString(),
-    };
+    return { code: proc.exitCode, out: proc.stdout.toString(), err: proc.stderr.toString() };
 }
 
-function headers(cwd: string): string {
+/** What a lens with `Bash` would get: no `--local`, so an include is expanded. */
+function reachable(cwd: string): string {
     try {
-        return git(cwd, "config", "--local", "--get-regexp", "^http\\..*\\.extraheader$");
+        return git(cwd, "config", "--get-regexp", "^http\\..*\\.extraheader$");
     } catch {
         return "";
     }
 }
 
 describe("scrub-credentials.sh", () => {
-    test("removes the key actions/checkout leaves behind", () => {
-        const dir = repo();
+    describe("the mechanism actions/checkout@v6 uses", () => {
+        test("removes a credential reachable only through includeIf", () => {
+            const dir = repo();
 
-        git(dir, "config", "--local", KEY, VALUE);
+            plantIncludeIf(dir);
 
-        expect(scrub(dir).code).toBe(0);
-        expect(headers(dir)).toBe("");
+            expect(reachable(dir)).toContain("extraheader");
+
+            expect(scrub(dir).code).toBe(0);
+            expect(reachable(dir)).toBe("");
+        });
+
+        test("deletes the credentials file rather than only dereferencing it", () => {
+            const dir = repo();
+            const cred = plantIncludeIf(dir);
+
+            expect(existsSync(cred)).toBe(true);
+
+            scrub(dir);
+
+            expect(existsSync(cred)).toBe(false);
+        });
+
+        test("removes the includeIf key as well as the file", () => {
+            const dir = repo();
+
+            plantIncludeIf(dir);
+            scrub(dir);
+
+            expect(() => git(dir, "config", "--local", "--name-only", "--get-regexp", "^includeif\\..*\\.path$")).toThrow();
+        });
+
+        test("says what it did, so silence cannot pass for success", () => {
+            const dir = repo();
+
+            plantIncludeIf(dir);
+
+            expect(scrub(dir).out).toContain("took the checkout's credential");
+        });
+
+        test("tolerates an includeIf whose file is not there", () => {
+            const dir = repo();
+
+            git(dir, "config", "--local", `includeIf.gitdir:${join(dir, ".git")}.path`, "/nonexistent/creds.config");
+
+            expect(scrub(dir).code).toBe(0);
+        });
     });
 
-    test("removes a key for a server that is not github.com", () => {
-        const dir = repo();
+    describe("the mechanism an older checkout uses", () => {
+        test("removes a header in the repository's own config", () => {
+            const dir = repo();
 
-        git(dir, "config", "--local", "http.https://ghe.example.com/.extraheader", VALUE);
+            plantHeader(dir);
 
-        expect(scrub(dir).code).toBe(0);
-        expect(headers(dir)).toBe("");
+            expect(scrub(dir).code).toBe(0);
+            expect(reachable(dir)).toBe("");
+        });
+
+        test("removes a header for a server that is not github.com", () => {
+            const dir = repo();
+
+            plantHeader(dir, "http.https://ghe.example.com/.extraheader");
+
+            expect(scrub(dir).code).toBe(0);
+            expect(reachable(dir)).toBe("");
+        });
+
+        test("removes every value of a multi-valued key", () => {
+            const dir = repo();
+
+            plantHeader(dir);
+            git(dir, "config", "--local", "--add", HEADER, `${VALUE}2`);
+
+            expect(scrub(dir).code).toBe(0);
+            expect(reachable(dir)).toBe("");
+        });
+
+        test("removes both mechanisms when both are present", () => {
+            const dir = repo();
+
+            plantHeader(dir);
+            const cred = plantIncludeIf(dir);
+
+            expect(scrub(dir).code).toBe(0);
+            expect(reachable(dir)).toBe("");
+            expect(existsSync(cred)).toBe(false);
+        });
     });
 
-    test("removes every value of a multi-valued key", () => {
-        const dir = repo();
+    describe("submodules", () => {
+        test("removes a header from a submodule's own config", () => {
+            const dir = withSubmodule();
 
-        git(dir, "config", "--local", KEY, VALUE);
-        git(dir, "config", "--local", "--add", KEY, `${VALUE}2`);
+            plantHeader(dir);
+            plantHeader(join(dir, "vendor"));
 
-        expect(scrub(dir).code).toBe(0);
-        expect(headers(dir)).toBe("");
+            expect(scrub(dir).code).toBe(0);
+            expect(reachable(dir)).toBe("");
+            expect(reachable(join(dir, "vendor"))).toBe("");
+        });
+
+        test("removes an includeIf credential from a submodule", () => {
+            const dir = withSubmodule();
+            const cred = plantIncludeIf(join(dir, "vendor"));
+
+            expect(reachable(join(dir, "vendor"))).toContain("extraheader");
+
+            expect(scrub(dir).code).toBe(0);
+            expect(reachable(join(dir, "vendor"))).toBe("");
+            expect(existsSync(cred)).toBe(false);
+        });
     });
 
-    // The gap this file was written for. actions/checkout with `submodules` writes the same
-    // key into each submodule's own config under .git/modules/<name>/config, which
-    // `git config --local` in the superproject does not see. The step this replaced reported
-    // success and left it there for any lens with Bash to read.
-    test("removes the key from a submodule's own config", () => {
-        const dir = withSubmodule();
+    describe("what it refuses", () => {
+        test("leaves unrelated http configuration alone", () => {
+            const dir = repo();
 
-        git(dir, "config", "--local", KEY, VALUE);
-        git(join(dir, "vendor"), "config", "--local", KEY, VALUE);
+            plantHeader(dir);
+            git(dir, "config", "--local", "http.sslVerify", "true");
 
-        expect(scrub(dir).code).toBe(0);
-        expect(headers(dir)).toBe("");
-        expect(headers(join(dir, "vendor"))).toBe("");
-    });
+            expect(scrub(dir).code).toBe(0);
+            expect(git(dir, "config", "--local", "http.sslVerify")).toBe("true");
+        });
 
-    test("removes a submodule's key when the superproject has none", () => {
-        const dir = withSubmodule();
+        test("says so and succeeds when there is no repository yet", () => {
+            const r = scrub(realpathSync(mkdtempSync(join(tmpdir(), "scrub-bare-"))));
 
-        git(join(dir, "vendor"), "config", "--local", KEY, VALUE);
+            expect(r.code).toBe(0);
+            expect(r.err).toContain("nothing holds a credential yet");
+        });
 
-        expect(scrub(dir).code).toBe(0);
-        expect(headers(join(dir, "vendor"))).toBe("");
-    });
+        test("fails rather than skipping when the workspace is not there", () => {
+            expect(scrub(join(tmpdir(), "scrub-does-not-exist")).code).toBe(1);
+        });
 
-    test("leaves unrelated http configuration alone", () => {
-        const dir = repo();
+        test("fails when given no workspace at all", () => {
+            const proc = Bun.spawnSync(["bash", SCRIPT], { stdout: "pipe", stderr: "pipe" });
 
-        git(dir, "config", "--local", KEY, VALUE);
-        git(dir, "config", "--local", "http.sslVerify", "true");
+            expect(proc.exitCode).toBe(1);
+            expect(proc.stderr.toString()).toContain("usage:");
+        });
 
-        expect(scrub(dir).code).toBe(0);
-        expect(git(dir, "config", "--local", "http.sslVerify")).toBe("true");
-    });
+        test("reports a clean checkout rather than saying nothing", () => {
+            const r = scrub(repo());
 
-    test("is quiet and successful on a second run", () => {
-        const dir = repo();
-
-        git(dir, "config", "--local", KEY, VALUE);
-        scrub(dir);
-
-        const again = scrub(dir);
-
-        expect(again.code).toBe(0);
-        expect(again.out.trim()).toBe("");
-    });
-
-    test("says so and succeeds when there is no repository yet", () => {
-        const dir = mkdtempSync(join(tmpdir(), "scrub-bare-"));
-        const r = scrub(dir);
-
-        expect(r.code).toBe(0);
-        expect(r.err).toContain("nothing holds a credential yet");
-    });
-
-    test("fails rather than skipping when the workspace is not there", () => {
-        expect(scrub(join(tmpdir(), "scrub-does-not-exist"))).toMatchObject({ code: 1 });
-    });
-
-    test("fails when given no workspace at all", () => {
-        const proc = Bun.spawnSync(["bash", SCRIPT], { stdout: "pipe", stderr: "pipe" });
-
-        expect(proc.exitCode).toBe(1);
-        expect(proc.stderr.toString()).toContain("usage:");
+            expect(r.code).toBe(0);
+            expect(r.out).toContain("no git credential was reachable");
+        });
     });
 });

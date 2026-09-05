@@ -1,42 +1,84 @@
 #!/usr/bin/env bash
 # Take the checkout's credential back out of the workspace, before a lens can read it.
 #
-# `actions/checkout` defaults `persist-credentials` to true, so the token it cloned with
-# stays in the workspace's git config as an `http.<server>.extraheader` holding
-# `x-access-token:<token>` in base64. `run.sh` starts the orchestrator inside that workspace
-# and every lens has `Bash`, so a lens running `git config --get-regexp extraheader` reads
-# out the same token the token-staging step goes to lengths to keep out of an environment
-# block. Five lenses found it.
+# `run.sh` starts the orchestrator inside the workspace and every lens has `Bash`, so a
+# credential reachable from the checkout is a credential a lens reads. review/DECISIONS.md,
+# under "The GitHub token never enters the step that runs the agent", has the argument.
 #
-# The step that calls this runs after the last fetch that needs the credential and before
-# the review session starts, which is the whole of the ordering constraint.
+# `actions/checkout` stores it two different ways, and both have to go.
 #
-# Unsetting here rather than setting `persist-credentials: false` on the checkout covers the
-# caller who checks out for themselves: the probe step then skips this action's own
-# checkout, so a flag there would sit on a step that never runs while the caller's config
-# still holds the token.
+#   1. `http.<server>.extraheader` in the repository's own config. Older versions, and
+#      anyone cloning by hand with a token in the url.
+#   2. An `includeIf.gitdir:<workspace>/.git.path` in the repository's config, pointing at a
+#      credentials file under `$RUNNER_TEMP` with the header inside it. This is what v6.0.2
+#      does. The file is removed rather than dereferenced, because a lens reads it directly
+#      whether or not any git config still points at it.
 #
-# Submodules are a config of their own. `actions/checkout` with `submodules` writes the same
-# key into each one, via `git submodule foreach --recursive git config --local
-# http.<server>.extraheader ...`, and it lands in `.git/modules/<name>/config`, which
-# `git config --local` in the superproject does not see. `action.yml`'s `checkout` input and
-# review/README.md both name submodules as the reason to check out yourself, so that shape
-# is the documented one rather than an exotic case.
+# `git config --local` does not expand `includeIf`, and a plain read does. Both were measured,
+# and so was what the difference costs: the version of this script that went looking for the
+# second shape with `--local` matched no key, read back no key, and exited 0 over a live
+# credential for a whole review. So a scrub that reports nothing is not evidence that there
+# was nothing to scrub.
 #
-# A script rather than a `run:` block, for the reason review/refuse-fork.sh gives: shell
-# inside a YAML string has shellcheck for its only reader, and shellcheck reads syntax. The
-# correctness of this one turns on something syntax cannot see, which is that the read-back
-# at the end reads `git config --get-regexp`'s exit code as "a key is still set" — the
-# inverse of how the same command is used as a loop source above it. Get that polarity wrong
-# and the step passes while leaving the token in place, which is the failure it exists to
-# prevent, reported as success. So what it decides is a table of cases in
-# review/scrub-credentials.test.ts, which runs this script.
+# A script rather than a `run:` block, for the reason review/refuse-fork.sh gives. Whether this
+# removes anything is not visible in its syntax, so what it decides is a table of cases in
+# review/scrub-credentials.test.ts, which runs this script against a config built the way
+# checkout builds one.
 #
 # Usage: scrub-credentials.sh <workspace>
+#        scrub-credentials.sh --one <dir>   (one repository, no recursion; used by foreach)
 #
-# Exit: 0 the workspace holds no such key any more (or holds no repository at all),
-#       1 a key survived, or the workspace is not there.
+# Exit: 0 nothing is reachable any more, or there is no repository at all,
+#       1 something survived, or the workspace is not there.
 set -uo pipefail
+
+SELF=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")
+
+HEADER='^http\..*\.extraheader$'
+INCLUDES='^includeif\..*\.path$'
+
+removed=0
+
+# `--local` on every read here: this is the file being edited, and a read that expanded an
+# include would report a key `--unset-all` cannot remove.
+scrub_repo() {
+    local key path
+
+    while IFS= read -r key; do
+        [ -n "$key" ] || continue
+        removed=1
+        git config --local --unset-all "$key" || true
+    done < <(git config --local --name-only --get-regexp "$HEADER" || true)
+
+    while IFS= read -r key; do
+        [ -n "$key" ] || continue
+
+        path=$(git config --local --get "$key" || true)
+
+        # A checkout writes one set of these for the runner's paths and another for the
+        # container's, so a path that is not there is the ordinary case rather than a fault.
+        if [ -n "$path" ] && [ -f "$path" ]; then
+            rm -f "$path" || true
+            removed=1
+        fi
+
+        git config --local --unset-all "$key" || true
+    done < <(git config --local --name-only --get-regexp "$INCLUDES" || true)
+}
+
+# What is still reachable here, read the way a lens would read it: no `--local`, so includes
+# are expanded and the global and system files are in scope too. The origin is printed because
+# a value in a file this script cannot edit still has to be named.
+reachable() {
+    git config --show-origin --name-only --get-regexp "$HEADER" 2>/dev/null || true
+}
+
+if [ "${1:-}" = "--one" ]; then
+    cd "${2:-.}" || exit 1
+    scrub_repo
+    [ "$removed" = 1 ] && echo "scrubbed $(pwd)"
+    exit 0
+fi
 
 WORKSPACE=${1:-}
 
@@ -57,57 +99,27 @@ if ! git rev-parse --git-dir >/dev/null 2>&1; then
     exit 0
 fi
 
-# The pattern matches every server rather than github.com, because the key carries the
-# server URL and that is the Enterprise host on an Enterprise runner.
-KEYS='^http\..*\.extraheader$'
-
-found=0
-
-# Process substitution rather than a pipe, so `found` is set in this shell rather than in
-# one that ends with the loop.
-while IFS= read -r key; do
-    found=1
-    git config --local --unset-all "$key" || true
-done < <(git config --local --name-only --get-regexp "$KEYS" || true)
-
-# `foreach` runs in each submodule's working tree with that submodule's config as `--local`,
-# and `--recursive` reaches a submodule of a submodule. Guarded on `.gitmodules` so an
-# ordinary repository does not pay for a shell per submodule that is not there.
-if [ -f .gitmodules ]; then
-    submodule_output=$(git submodule foreach --recursive --quiet \
-        'git config --local --name-only --get-regexp "^http\..*\.extraheader$" |
-             while IFS= read -r key; do
-                 printf "%s\n" "$key"
-                 git config --local --unset-all "$key" || true
-             done' 2>/dev/null || true)
-
-    if [ -n "$submodule_output" ]; then
-        found=1
-    fi
-fi
-
-# Read back rather than trusting the unsets above, which are all `|| true`. A key that
-# survives leaves the credential in the tree the review reads.
-left=""
-
-if git config --local --name-only --get-regexp "$KEYS" >/dev/null 2>&1; then
-    left="the checkout"
-fi
+scrub_repo
 
 if [ -f .gitmodules ]; then
-    surviving=$(git submodule foreach --recursive --quiet \
-        'git config --local --name-only --get-regexp "^http\..*\.extraheader$" || true' 2>/dev/null || true)
-
-    if [ -n "$surviving" ]; then
-        left="${left:+$left and }a submodule"
-    fi
+    git submodule foreach --recursive --quiet "bash '$SELF' --one \"\$PWD\"" 2>/dev/null || true
 fi
 
-if [ -n "$left" ]; then
-    echo "the credential is still in $left's git config, and a lens reads that tree" >&2
+left=$(reachable)
+
+if [ -f .gitmodules ]; then
+    left="$left$(git submodule foreach --recursive --quiet \
+        'git config --show-origin --name-only --get-regexp "^http\..*\.extraheader$" 2>/dev/null || true' 2>/dev/null || true)"
+fi
+
+if [ -n "${left//[[:space:]]/}" ]; then
+    echo "a git credential is still reachable from $WORKSPACE, and a lens reads that tree:" >&2
+    printf '%s\n' "$left" >&2
     exit 1
 fi
 
-if [ "$found" = 1 ]; then
-    echo "took the checkout's credential out of the workspace's git config"
+if [ "$removed" = 1 ]; then
+    echo "took the checkout's credential out of the workspace"
+else
+    echo "no git credential was reachable from $WORKSPACE"
 fi

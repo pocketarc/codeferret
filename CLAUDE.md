@@ -216,18 +216,29 @@ is in `review/DECISIONS.md`.
   agent. "The GitHub token never enters the step that runs the agent" in review/DECISIONS.md has
   the measurement and what is left over.
 - Keeping the token out of the environment kept it in the checkout. `actions/checkout`
-  defaults `persist-credentials` to true, so it leaves the token it cloned with in the
-  workspace's own git config as an `http.<server>.extraheader`; `run.sh` then starts the
-  session inside that workspace, and every lens has `Bash`, so a lens running
-  `git config --get-regexp extraheader` read out the same token the staging step above
-  exists to hide. Five lenses found it. "Take the token back out of the checkout" unsets
-  those keys and reads them back to check. It unsets rather than setting
-  `persist-credentials: false`, because a caller who checks out for themselves makes the
-  probe step skip this action's own checkout, and a flag there would then cover neither
+  defaults `persist-credentials` to true, so it leaves the token it cloned with reachable from
+  the workspace's own git config; `run.sh` then starts the session inside that workspace,
+  and every lens has `Bash`, so a lens running `git config --get-regexp extraheader` read out
+  the same token the staging step above exists to hide. Five lenses found it.
+  `review/scrub-credentials.sh` removes it and reads back to check. It removes rather than
+  setting `persist-credentials: false`, because a caller who checks out for themselves makes
+  the probe step skip this action's own checkout, and a flag there would then cover neither
   their config nor this one. So the two fetches in "Resolve the review target" are the last
-  thing in the run that can reach GitHub over git, and they sit before the unset for that
+  thing in the run that can reach GitHub over git, and they sit before the scrub for that
   reason. A `git fetch` added after it fails on a private repository and passes on a public
   one, and nothing here tests for that difference.
+- A scrub that reports nothing is not evidence that there was nothing to scrub. The first
+  version of that script looked for `http.<server>.extraheader` in the repository's own
+  config, which is where checkout used to put the token and is not where it puts it now:
+  v6.0.2 writes the header into a file under `$RUNNER_TEMP` and links it with an
+  `includeIf.gitdir` in `.git/config`. `git config --local` does not expand an include, so the
+  scrub matched nothing, the read-back matched nothing either, and the step exited 0 having
+  done nothing at all over a live credential for a whole review. A lens reads it because a
+  plain `git config --get-regexp` without `--local` does expand it. Both were measured. Two
+  things follow. Verify a credential control against the config a real run produces rather than
+  one planted by hand, because ten cases passed against a config no run has ever written.
+  And the file matters more than the key pointing at it: it sits in `$RUNNER_TEMP`, readable
+  whether or not any config still references it, so it is deleted rather than dereferenced.
 - A tool an agent asks for is not necessarily a tool it gets, and nothing says so.
   `Grep`, `Glob`, and `TodoWrite` were all in the lens tool list and none reached a
   dispatched lens. Reading the list will not tell you, so check it against a real dispatch
