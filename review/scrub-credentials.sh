@@ -54,9 +54,28 @@ set -uo pipefail
 
 SELF=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")
 
-HEADER='^http\..*\.extraheader$'
+# What removal knows how to act on. Each names one storage shape and drives one branch of
+# `scrub_repo`. `extraheader` allows the bare `http.extraheader`, which is legal and which the
+# earlier `^http\..*\.extraheader$` needed a middle segment to match.
+HEADER='^http\.(.*\.)?extraheader$'
 INCLUDES='^includeif\..*\.path$'
 URLS='^(remote|submodule)\..*\.url$'
+REWRITES='^url\..*\.insteadof$'
+
+# What proof of removal looks for, and it is deliberately not the list above.
+#
+# Three reviews found this script reporting a clean workspace over a live token, each time a
+# shape the patterns did not name: the wrong storage mechanism entirely, then a token in a
+# remote's url, then the bare `http.extraheader` key and a credential sitting in the *key* of a
+# `url.<base>.insteadOf` rewrite. Every fix was right and every one left another hole, because a
+# read-back that asks "do these key names appear" can only find shapes somebody thought of.
+#
+# So proof asks the other question: is there anything token-shaped anywhere in this config. It
+# reads whole `key=value` lines, which is what catches a credential in a key, and it matches on
+# what a credential looks like rather than on where one is kept. A shape nobody has thought of
+# still fails the step, and fails it loudly, which is the direction to be wrong in: removal can
+# lag detection, and a run that cannot clean what it found stops rather than certifying it.
+CREDENTIAL='(AUTHORIZATION:|://[^/[:space:]]*:[^/[:space:]]*@|gh[psour]_|github_pat_)'
 
 # The authority alone, so a `@` anywhere in the path does not count. Only `http` and `https`, so
 # the `git@` of an ssh remote is left alone: it is a username with no secret behind it, and
@@ -210,6 +229,16 @@ scrub_repo() {
         git config --local --unset-all "$key" || true
         echo "removed $key from $(pwd)"
     done < <(git config --local --name-only --get-regexp "$INCLUDES" || true)
+
+    # A rewrite rule keeps the credential in its own key, so there is no value to clean and the
+    # key goes. `url.https://x-access-token:$TOKEN@github.com/.insteadOf = https://github.com/`
+    # is the documented recipe for cloning a private submodule, which is the same `checkout:
+    # skip` case action.yml sends a caller to.
+    while IFS= read -r key; do
+        [ -n "$key" ] || continue
+        git config --local --unset-all "$key" || true
+        echo "removed a rewrite rule carrying a credential from $(pwd)"
+    done < <(git config --local --name-only --get-regexp "$REWRITES" || true)
 }
 
 # What is still reachable here, read the way a lens would read it: no `--local`, so includes
@@ -221,20 +250,25 @@ scrub_repo() {
 # key is named only where its value carries userinfo, since most of them are ordinary remotes,
 # and the value itself is dropped: the caller prints this to a job log.
 reachable() {
-    local line origin key value
+    local line origin rest
 
-    git config --show-origin --name-only --get-regexp "$HEADER" 2>/dev/null || true
-
+    # `--show-origin --list`, so every line is `origin<TAB>key=value` and the whole of it is
+    # tested. Testing the key alone is what let a credential sitting in the key of a rewrite
+    # rule through; testing named keys alone is what let three other shapes through.
+    #
+    # No `--local`. A lens reads the config git resolves, which expands `includeIf` and takes
+    # in the global and system files, and a value this script cannot edit still has to be
+    # named rather than passed over. The origin is printed for that reason.
     while IFS= read -r line; do
         origin=${line%%$'\t'*}
-        key=${line#*$'\t'}
-        value=${key#* }
-        key=${key%% *}
+        rest=${line#*$'\t'}
 
-        if has_userinfo "$value"; then
-            printf '%s\t%s\n' "$origin" "$key"
+        if printf '%s' "$rest" | grep -Eqi "$CREDENTIAL"; then
+            # The key alone. Everything this prints goes into a job log anyone who can read the
+            # repository can read, and a value is the thing being hidden.
+            printf '%s\t%s\n' "$origin" "${rest%%=*}"
         fi
-    done < <(git config --show-origin --get-regexp "$URLS" 2>/dev/null || true)
+    done < <(git config --show-origin --list 2>/dev/null || true)
 }
 
 case "${1:-}" in
@@ -273,13 +307,46 @@ fi
 # and a superproject are scrubbed and checked by the same code, and the two regexes above stay
 # the only spelling of what a credential looks like. `foreach` over a repository with no
 # submodules costs one process and exits 0.
+# Every repository in the workspace, not the checkout and its submodules alone. A second
+# `actions/checkout` with `path:` puts a whole repository beside this one, which is an ordinary
+# way to arrange the `checkout: skip` case action.yml sends a caller to, and it keeps its own
+# config. Neither the sweep nor the read-back visited it: `reachable` runs from the workspace
+# root and reads that repository's config, the global and the system, and nothing one directory
+# down. The step printed a clean workspace over it.
+#
+# `.git` matches a directory in an ordinary clone and a file in a submodule, and git resolves
+# either, so one walk covers both. The submodule pass stays beside it because `foreach` reaches
+# a submodule whose working tree is not checked out, which has no `.git` to find.
+#
+# `node_modules` and `.git` itself are pruned. A package manager writes thousands of
+# directories and a git directory holds no nested repository, and walking either costs the run
+# for nothing.
+repositories() {
+    # `-print` before `-prune`, so a match is reported and then not descended into. With the
+    # prune first the test consumes the match and the walk prints nothing at all, which reads
+    # exactly like a workspace holding one repository.
+    find "$WORKSPACE" -name node_modules -prune -o -name .git -print -prune 2>/dev/null |
+        while IFS= read -r found; do dirname "$found"; done
+}
+
+each_repository() {
+    local dir
+
+    while IFS= read -r dir; do
+        [ -n "$dir" ] || continue
+        bash "$SELF" "$1" "$dir" 2>/dev/null || true
+    done < <(repositories)
+}
+
 removed=$(
     scrub_repo
+    each_repository --one
     git submodule foreach --recursive --quiet "bash '$SELF' --one \"\$PWD\"" 2>/dev/null || true
 )
 
 left=$(
     reachable
+    each_repository --check-one
     git submodule foreach --recursive --quiet "bash '$SELF' --check-one \"\$PWD\"" 2>/dev/null || true
 )
 

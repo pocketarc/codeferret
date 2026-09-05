@@ -239,6 +239,18 @@ is in `review/DECISIONS.md`.
   thing in the run that can reach GitHub over git, and they sit before the scrub for that
   reason. A `git fetch` added after it fails on a private repository and passes on a public
   one, and nothing here tests for that difference.
+- Prove a credential is gone by looking for a credential, not for the places one is kept.
+  Three reviews found `scrub-credentials.sh` certifying a clean workspace over a live token, and
+  every time the fix was right and the next shape was missed: the wrong storage mechanism
+  entirely, then a token in a remote's url, then the bare `http.extraheader` key (the pattern
+  wanted a middle segment) and a credential in the *key* of a `url.<base>.insteadOf` rewrite,
+  then a second repository checked out beside the first that neither the sweep nor the read-back
+  walked. A read-back keyed on names can only find what somebody thought of, so the one there
+  now reads whole `key=value` lines out of `git config --list` and matches what a credential
+  looks like. Removal still knows shapes and always will; what changed is that a shape it does
+  not know now fails the step and names the key rather than passing. Keep those two apart, and
+  keep the test's own check off the script's patterns: the first version of that shared them and
+  went green on the shapes it was written to catch.
 - A scrub that reports nothing is not evidence that there was nothing to scrub. The first
   version of that script looked for `http.<server>.extraheader` in the repository's own
   config, which is where checkout used to put the token and is not where it puts it now:

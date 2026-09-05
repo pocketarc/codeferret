@@ -11,7 +11,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -108,9 +108,22 @@ function scrub(workspace: string): { code: number; out: string; err: string } {
 }
 
 /** What a lens with `Bash` would get: no `--local`, so an include is expanded. */
+/**
+ * What a lens with `Bash` would find, tested the way the script tests it rather than by the
+ * key names it knows.
+ *
+ * The first version of this asked `--get-regexp` for `^http\..*\.extraheader$`, the same
+ * pattern the script used, so it was blind to exactly the shapes the script was blind to: a
+ * case could plant a bare `http.extraheader`, watch the script walk past it, and pass.
+ */
 function reachable(cwd: string): string {
+    const CREDENTIAL = /AUTHORIZATION:|:\/\/[^/\s]*:[^/\s]*@|gh[psour]_|github_pat_/i;
+
     try {
-        return git(cwd, "config", "--get-regexp", "^http\\..*\\.extraheader$");
+        return git(cwd, "config", "--list")
+            .split("\n")
+            .filter((line) => CREDENTIAL.test(line))
+            .join("\n");
     } catch {
         return "";
     }
@@ -348,6 +361,63 @@ describe("scrub-credentials.sh", () => {
 
     // Each of these was a real defect in the first version of the script, found by reading it
     // rather than by any case above going red.
+    // Proof stopped depending on somebody naming the shape. Three reviews found this script
+    // certifying a clean workspace over a live token, each time a key pattern nobody had
+    // thought of, so the read-back now tests whole `key=value` lines for what a credential
+    // looks like rather than for where one is kept.
+    describe("shapes the patterns did not name", () => {
+        test("removes the bare http.extraheader, which needs no middle segment", () => {
+            const dir = repo();
+
+            git(dir, "config", "--local", "http.extraheader", VALUE);
+
+            expect(scrub(dir).code).toBe(0);
+            expect(reachable(dir)).toBe("");
+        });
+
+        test("removes a rewrite rule carrying the credential in its key", () => {
+            const dir = repo();
+
+            git(dir, "config", "--local", `url.https://x-access-token:${"ghs_notreal000"}@github.com/.insteadOf`, "https://github.com/");
+
+            expect(scrub(dir).code).toBe(0);
+            expect(reachable(dir)).toBe("");
+        });
+
+        // The property the value scan buys, and the reason it is worth more than another
+        // pattern: a mechanism removal has never heard of stops the run rather than passing.
+        test("fails on a credential it cannot remove rather than certifying the workspace", () => {
+            const dir = repo();
+
+            git(dir, "config", "--local", "codeferret.somefuturemechanism", VALUE);
+
+            const r = scrub(dir);
+
+            expect(r.code).toBe(1);
+            expect(r.err).toContain("codeferret.somefuturemechanism");
+        });
+
+        test("names the key and never the value, because the log is published", () => {
+            const dir = repo();
+
+            git(dir, "config", "--local", "codeferret.somefuturemechanism", VALUE);
+
+            expect(scrub(dir).err).not.toContain(VALUE);
+        });
+
+        test("scrubs a second repository checked out beside the first", () => {
+            const outer = repo();
+            const inner = join(outer, "vendor", "other-repo");
+
+            mkdirSync(inner, { recursive: true });
+            git(inner, "init", "-q", ".");
+            git(inner, "config", "--local", HEADER, VALUE);
+
+            expect(scrub(outer).code).toBe(0);
+            expect(reachable(inner)).toBe("");
+        });
+    });
+
     describe("what it reports", () => {
         test("does not claim nothing was reachable when a submodule held a credential", () => {
             const dir = withSubmodule();
