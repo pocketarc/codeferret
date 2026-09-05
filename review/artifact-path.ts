@@ -4,10 +4,10 @@
  *
  * One input, two answers, and both about the same value: the paths `upload-artifact` is
  * given, and whether what goes up carries the findings file. The second decides how the
- * review body is written. With the findings one download away it prints the critical and high
- * ones and names the artifact for the rest; with nothing behind it every finding goes in the
- * comment. So an input answered one way for the upload and another way for the body gives a
- * consumer a review that leaves most of its findings out and links a file nobody kept.
+ * review body is written. With the findings one download away it prints what cleared
+ * `print-threshold` and names the artifact for the rest; with nothing behind it every finding
+ * goes in the comment. So an input answered one way for the upload and another way for the body
+ * gives a consumer a review that leaves most of its findings out and links a file nobody kept.
  *
  * Here rather than in action.yml, where this was three `case` statements inside a YAML string
  * that nothing but shellcheck could reach, and shellcheck reads syntax. The syntax was never

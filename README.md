@@ -36,8 +36,9 @@ steps:
 
 That is the whole job. The action keeps its own `codeferret-run` artifact holding
 `findings.json`, so there is no upload step to write and no name to get right. The comment
-prints the critical and high findings in full and points at that file for the rest. That
-file is also what the next run reads to know what was said before.
+prints in full every finding rated at `print-threshold` or above, which is `medium` unless you
+set it otherwise, and points at that file for the rest. That file is also what the next run
+reads to know what was said before.
 
 Weigh all three together, because the agent and the tokens share a runner. A composite
 action has steps rather than jobs, so the step that reviews and the step that posts run side

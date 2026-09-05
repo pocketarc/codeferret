@@ -316,11 +316,11 @@ export function vetSuppression(
             // that file is declined for as long as the pull request lives.
             //
             // A finding the body prints in full is held to the association instead, matching
-            // the `already-reported` branch below. That set moves with the threshold, which is
-            // the point: raising the threshold narrows what a closed thread alone can settle. `orchestrator.md` carves out a
-            // security defect from any reply, and that carve-out is prompt text sitting in
-            // the same context as the comments it judges, so this branch is where refusing
-            // costs an attacker anything.
+            // the `already-reported` branch below. That set is whatever `isListed` answers, so
+            // it is the body's set by construction rather than by agreement.
+            // `orchestrator.md` carves out a security defect from any reply, and that
+            // carve-out is prompt text sitting in the same context as the comments it judges,
+            // so this branch is where refusing costs an attacker anything.
             const closed = cited?.onClosedThread === true && !isListed(f, threshold);
 
             if (!cited || !(entitled(cited) || closed)) return reopen(f, "untraceable");
@@ -340,20 +340,15 @@ export function vetSuppression(
             // collapsed block, so demoting one is the difference between a reader seeing the
             // defect and seeing its title.
             //
-            // `isListed` and not `LISTED`, because those are two different sets and the
-            // argument above is about the first. A severity nothing recognises is printed in
-            // full as well, for the reason `isListed` carries: a label nobody chose is no
-            // ground for dropping a defect out of a comment. Testing `LISTED` here held such a
-            // finding to the low bar while the body gave it the whole page, and a review that
-            // repairs `Critical` but not `blocker` treats the two differently for no reason a
-            // reader could find.
+            // `isListed` rather than a test spelled out here: when each side named its own
+            // set, a finding graded `blocker` took the whole page and the low bar at once.
             //
             // The decline branch above takes a comment on a thread somebody closed, and the
             // two branches agree about a critical: closure is standing enough for a finding
             // printed as one line, and not for one taking a reader off the page.
             // Whoever replied under the thread needed no more than the ability to comment,
             // and whoever closed it needed repository write or authorship of the pull
-            // request. Widening either branch to take a closed thread at any severity is the
+            // request. Widening either branch to take a closed thread at any tier is the
             // edit to refuse.
             //
             // Citing nothing is not the weaker case, it is the emptier one. Gated on a url
@@ -394,12 +389,7 @@ export function isMerged(value: unknown): value is Merged {
     return typeof value === "object" && value !== null && Array.isArray((value as Merged).findings);
 }
 
-/**
- * Every finding in severity order, and the three subsets the review is rendered from.
- *
- * `suppressed` and `declined` come back rather than being filtered away, because the review
- * body prints both counts: a matcher that starts dropping findings shows up as a number.
- */
+/** Every finding, worst first, and the three subsets the review is rendered from. */
 export function partition(findings: Finding[]): Partitioned {
     const all = [...findings].sort((a, b) => findingRank(a) - findingRank(b));
 

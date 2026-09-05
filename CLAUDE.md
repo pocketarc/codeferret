@@ -148,9 +148,17 @@ is in `review/DECISIONS.md`.
   `review/lens-extras/<lens>.md` is rendered into that agent's system prompt. Routed through
   the orchestrator instead, the routing is a judgement remade every run, and nothing
   downstream can tell when it went wrong.
-- Do not put severity or lens agreement into a comment, and do not filter on either.
-  Both are in `findings.json`, and severity orders the findings and decides which ones the
-  comment prints in full. Every finding stays in the file whatever the comment prints.
+- Do not put lens agreement into a comment, and do not filter on it. It shows how
+  conspicuous a defect is, not how much it matters: on a ten-lens run the most-corroborated
+  finding was a cache-key nit that six lenses spotted, while the missing index, the RSC
+  boundary violation and the keyboard-access failure were each found by one. `found_by`
+  stays in `findings.json`, where an agent can read it.
+- A finding below `print-threshold` is in `findings.json` and nowhere a person will look.
+  `review/risk.ts` scores the risk answers the orchestrator gave a finding and bands the score
+  into a tier, `isListed` compares that tier against `print-threshold`, and the body neither
+  prints such a finding nor says how many it left out. Where there is no artifact to send a
+  reader to, a session prints every finding instead. "A finding shows the claim and nothing
+  else" in `review/DECISIONS.md` has what the trade costs.
 - Lenses must not modify the working tree. Every lens reads the same checkout at once,
   so one edit corrupts every other lens's review. `Edit`, `Write`, `NotebookEdit` and
   `Agent` are all kept off the tool list in `agents/`, and `run.sh` denies the first three
@@ -246,8 +254,7 @@ is in `review/DECISIONS.md`.
 - Suppression can hide a real finding. The orchestrator marks each finding `new`,
   `already-reported`, or `declined`, and only `new` gets posted. It is told to choose
   `new` whenever it is unsure. If you tighten that, you trade duplicate comments for
-  findings nobody sees. `findings.json` in the `codeferret-run` artifact holds every
-  finding with its status, including the hidden ones.
+  findings nobody sees.
 - The previous review is in that run's findings file. A review body is neither a review
   thread nor a conversation comment, so nothing a comment fetch returns carries it, and 60
   findings of 100 would have been posted again on every push. `fetch-previous.ts` reads the
@@ -306,12 +313,16 @@ is in `review/DECISIONS.md`.
   only person who can close a thread is the one whose work is under review, so closure alone
   is not evidence that anybody with standing settled anything. It still decides a finding
   printed as one line, and `vetSuppression` holds the rest to an entitled commenter instead.
-  It calls `isListed` rather than testing `LISTED`, because those are two different sets: the
-  body prints a severity nothing recognises in full as well, and the narrower test gave such a
-  finding the whole page and the low bar at once. Replying to a closed thread takes no more than
-  commenting and does not reopen it, so a reply there is bound to the file the thread is
-  anchored to and its words settle nothing. Widen either half and a stranger's "working as intended,
-  `src/auth.ts` is fine" on any resolved thread silences any file it names.
+  It calls `isListed`, the same function the body calls, so neither can drift from the other
+  about which findings the body prints in full. When each side named its own set, a finding
+  graded `blocker` took the whole page and the low bar at once. They are not called with the
+  same bar: `post-review.ts` hands the body the `print-threshold` input and hands
+  `vetSuppression` the `REVIEW_THRESHOLD` default, so raising the input widens what the comment
+  leaves out without narrowing what a closed thread may settle.
+  Replying to a closed thread takes no more than commenting and does not reopen it, so a reply
+  there is bound to the file the thread is anchored to and its words settle nothing. Widen
+  either half and a stranger's "working as intended, `src/auth.ts` is fine" on any resolved
+  thread silences any file it names.
 - `already-reported` is held to a lower bar than a decline, and to more than nothing.
   Anyone's comment settles it, because a defect somebody wrote down is a defect somebody
   wrote down, and the finding keeps its line in the review either way. What it still needs

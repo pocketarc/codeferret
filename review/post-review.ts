@@ -96,7 +96,7 @@ const vetted = await vetAgainstExisting(
     merged.findings,
     buildDir,
     (line) => console.error(line),
-    REVIEW_THRESHOLD,
+    threshold,
 );
 const existing = vetted.existing;
 

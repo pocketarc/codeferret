@@ -51,10 +51,19 @@ write, and for whoever opened the pull request, so closure is not on its own the
 somebody with standing: on a branch from an outside contributor, the only person who can close
 a thread is the person under review. The findings that take a reader off the page are held to
 the author association instead, and `isListed` decides which those are, on the same test the
-body applies: critical, high, and any severity nothing recognises. When the test was the two
-names the schema carries, a finding graded `blocker` was printed in full and settled by a
-stranger. Replying to a closed thread takes no more than commenting and does not reopen it,
-so a reply there settles the file its thread is anchored to and no other.
+body applies: the finding's tier, against a threshold. The same function decides both, so
+neither can drift from the other about which findings the comment prints in full. When each
+side named its own set, back when those sets were severities written out by hand, a finding
+graded `blocker` was printed in full and settled by a stranger.
+
+The bar is not the same value on both sides. `post-review.ts` hands the body the
+`print-threshold` input and hands `vetSuppression` the `REVIEW_THRESHOLD` default, so a
+consumer who raises the input gets a shorter comment and the same suppression bar. That is
+unfinished rather than intended, and it is the failure `resolve-threads` and `artifact-path`
+each had before it: an input that reaches one reader of it and not another.
+
+Replying to a closed thread takes no more than commenting and does not reopen it, so a reply
+there settles the file its thread is anchored to and no other.
 
 An `already-reported` finding is held to less, because it stays a finding in the file and
 loses only its paragraph. Anyone's comment settles it. What it still needs is that the
@@ -132,7 +141,7 @@ Leaving `previous.json` off that list opened a hole.
 `vetSuppression` reads it through `filesRaisedBefore`, and the set that comes back is the
 whole of what settles an `already-reported` finding citing no comment, which `orchestrator.md`
 makes the ordinary case. A session writing `{"findings": [{"file": "..."}]}` into the build
-copy settled every non-critical, non-high finding in the files it named, and `markPosted`
+copy settled every finding below the threshold in the files it named, and `markPosted`
 writes the vetted status into the artifact, so that suppression carried into every later run
 for as long as the pull request lived.
 
@@ -168,11 +177,9 @@ Two things a reply cannot do, both in `orchestrator.md`: it cannot make a securi
 safe by asserting the code is intentional, and it cannot settle a finding it does not
 address.
 
-Two rules keep that safe. The orchestrator marks a finding `new` whenever it is unsure,
-because a repeated comment costs the author seconds while a suppressed finding is one
-nobody ever sees. And suppression is visible: the review body prints the count and the
-run artifact holds every finding with its status, so a matcher that starts eating
-findings shows up as a number.
+What keeps that safe is where the orchestrator is told to err. It marks a finding `new`
+whenever it is unsure, because a repeated comment costs the author seconds while a suppressed
+finding is one nobody ever sees.
 
 An outdated comment does not count as covering anything. GitHub collapses a comment when
 the line it referred to changes, so a defect that survived an edit still needs saying.
@@ -314,28 +321,52 @@ dispatch already names.
 
 ## A finding shows the claim and nothing else
 
-No severity, no lens attribution, no count of how many lenses agreed. All three stay in
-`findings.json`, and severity still orders the findings, but none of it is printed beside
-a finding.
+No tier, no lens attribution, no count of how many lenses agreed. `findings.json` carries all
+of it, and the tier orders the findings and decides which ones the comment prints in full, but
+none of it is printed beside a finding.
 
-Severity is withheld because a lens assigns it without the context that decides it. A
-missing index is critical on a large table and irrelevant on a small one, and the lens
-cannot tell which. Displaying the guess turns the lens's ignorance into the reader's
-permission to skip. The same argument rules out filtering by severity: a label too
-unreliable to show is far too unreliable to hide findings with.
+A single word chosen by a model was the first attempt at this, and it could not be trusted.
+`severity` was an enum of six values with no `description` in `merged-schema.json` while every
+sibling field had one, and what a lens read about it amounted to "severity has a field of its
+own". So each lens graded against whatever those words meant to it, on a question the lens is
+in no position to answer anyway: a missing index is critical on a large table and irrelevant
+on a small one, and nothing in the diff says which. Printing that guess would have turned one
+lens's ignorance into the reader's permission to skip, and filtering on it would have been
+worse. A label too unreliable to show is far too unreliable to hide a finding with.
 
-Which findings the body prints in full is a different question, and `isListed` answers that
-one from severity where there is a run behind the review. The critical and high findings go
-in the comment; everything else is one download away in the artifact's `findings.json`. A
-severity nothing recognises goes in the comment too, and the heading then reads "Findings
-worth stopping for" rather than naming two severities when one of the findings is neither.
-Nothing is hidden by that, which is what made it acceptable: the reader who acts on a review
-is an agent reading the file, and the comment is where a person decides whether to stop and
-look. Hiding a low finding from the file would be the filtering the paragraph above rules
-out.
+What replaced it is a different question. The orchestrator grades nothing. It answers `risk`,
+a set of bounded questions about the defect in front of it, and `scripts/build-risk-schema.ts`
+writes each question and the meaning of each of its answers into `merged-schema.json` from the
+`AXES` table, so the definition a model reads is the definition the scorer holds. Whether the
+data at risk is reportable, whether the damage can be undone, what someone must already hold to
+trigger it: a reader of a diff can answer those from the diff. `review/risk.ts` then weighs the
+answers into a score and bands it into a tier, as a pure function over an object that
+`risk.test.ts` pins. So the judgement moved out of the model's vocabulary and into a table
+anyone can read, argue with, and correct for every finding at once. It has already been
+corrected twice on evidence: an unanswered axis used to share its weight among the axes that did
+answer, which gave a stale comment answering two axes the same weight as a missing index
+answering six, and the two reach axes used to multiply unfloored, which took a hardcoded
+credential from a base of 0.82 to a score of 20. Neither mistake is one an adjective could have
+exposed.
+
+The `print-threshold` input then decides which findings the comment prints in full, and
+`isListed` compares each finding's tier against it. The heading names the bar rather than the
+tiers that cleared it, because `bullet` prints no tier and the heading is the reader's only
+account of what was left out; a heading built from the findings present would rename the
+section every run, and a reader could take it as a promise that nothing lower was found. Where
+the band edges belong is still open. They are a starting point nothing has been scored against,
+and so is the `medium` default, which is why the docstring on `REVIEW_THRESHOLD` says so.
+
+Nobody overlooked the cost. A finding below the threshold is in `findings.json` and nowhere a
+person will look, and nothing in the body says how many there were, so a reader of the comment
+cannot tell a run that found four things from one that found four and left thirty in the file.
+The trade rests on who reads what: whoever fixes a review is an agent reading the file, which is
+complete, and the comment is where a person decides whether to stop and look, which a list of
+every nit makes harder. A count of what was left out would cost one line and is worth adding the
+first time someone is misled by its absence.
 
 A review posted from a session has no artifact, and its findings file is a path under
-`.git/` on one person's machine. Nothing branches on severity there: the body prints every
+`.git/` on one person's machine. Nothing branches on the tier there: the body prints every
 finding, and `assemble` cuts from the end and says how many did not fit. Splitting the
 review between a comment and a file only works where both are reachable.
 
@@ -370,9 +401,9 @@ proves nothing about who wrote a comment, in a test whose whole job is to be nar
 went.
 
 A resolved thread settles a finding only where the body prints no more than one line for it:
-`vetSuppression` reopens `resolved: true` at critical, high, or a severity nothing
-recognises, and holds those to the same author-association bar as a reply. Closing a thread
-takes repository write or authorship of the pull request, and `resolveReviewThread` grants
+`vetSuppression` reopens `resolved: true` on anything `isListed` puts in the comment in full,
+and holds those to the same author-association bar as a reply. Closing a thread takes
+repository write or authorship of the pull request, and `resolveReviewThread` grants
 neither: on a branch from an outside contributor, the only account that can close a thread
 is the one whose work is under review, which is not the standing that commenting takes. What
 closure settles is bound to the file the thread is anchored to, and no other.
@@ -389,9 +420,9 @@ recognises, gets a run that asks the orchestrator for nothing it could then act 
 It used to be up to forty inline comments plus a body. That existed because a comment was
 the only way to deliver a finding, and it made a forty-comment pull request out of a review
 nobody had read yet. What acts on a review here is usually an agent, and what it reads is
-`findings.json` in the run's artifact, which is complete: every finding with its body, its
-severity and the lenses that found it, the suppressed ones included. So the comment is for
-the person deciding whether to stop, and the file is for whoever fixes it.
+`findings.json` in the run's artifact, which is complete: every finding with its body, the
+answers it was rated on and the lenses that found it, the suppressed ones included. So the
+comment is for the person deciding whether to stop, and the file is for whoever fixes it.
 
 That leaves a body holding the summary, the counts, `lens_health`, and the findings the
 paragraph above says belong in it. `review-body.ts` bounds it: the short

@@ -60,7 +60,7 @@ const NA = (meaning: string): Level => ({ value: NOT_APPLICABLE, meaning, score:
 export const AXES = {
     impact: {
         kind: "weighted",
-        weight: 0.28,
+        weight: 0.24,
         question: "The worst outcome that could realistically follow if this defect is left in.",
         levels: [
             { value: "catastrophic", meaning: "Arbitrary code execution, total data loss, or funds moved wrongly.", score: 1 },
@@ -73,7 +73,7 @@ export const AXES = {
 
     data_exposure: {
         kind: "weighted",
-        weight: 0.18,
+        weight: 0.16,
         question: "What data this puts at risk, and whether losing it would be reportable.",
         levels: [
             { value: "regulated", meaning: "Health, payment card, or personal data whose breach is reportable under GDPR, PCI DSS or HIPAA.", score: 1 },
@@ -86,7 +86,7 @@ export const AXES = {
 
     blast_radius: {
         kind: "weighted",
-        weight: 0.16,
+        weight: 0.14,
         question: "How much is affected when this goes wrong, rather than how badly.",
         levels: [
             { value: "system", meaning: "The whole deployment, or data belonging to every tenant.", score: 1 },
@@ -99,7 +99,7 @@ export const AXES = {
 
     reversibility: {
         kind: "weighted",
-        weight: 0.13,
+        weight: 0.11,
         question: "Whether the damage can be undone once it has happened.",
         levels: [
             { value: "irreversible", meaning: "Deleted data with no backup, a leaked secret, or a settled payment.", score: 1 },
@@ -111,7 +111,7 @@ export const AXES = {
 
     detectability: {
         kind: "weighted",
-        weight: 0.09,
+        weight: 0.08,
         question: "Whether anyone would find out this had happened.",
         levels: [
             { value: "silent", meaning: "No error, no log, no alert. Wrong numbers or missing records that look correct.", score: 1 },
@@ -123,7 +123,7 @@ export const AXES = {
 
     availability: {
         kind: "weighted",
-        weight: 0.08,
+        weight: 0.07,
         question: "What this costs in liveness or resources.",
         levels: [
             { value: "outage", meaning: "Can take the service down: unbounded query, exhaustion, deadlock, no timeout.", score: 1 },
@@ -135,12 +135,27 @@ export const AXES = {
 
     contract: {
         kind: "weighted",
-        weight: 0.08,
+        weight: 0.06,
         question: "Whether this breaks a rule that is written down somewhere, rather than one you are applying.",
         levels: [
             { value: "standard", meaning: "Violates a named external standard: a WCAG criterion, an RFC, a documented API contract.", score: 1 },
             { value: "house-rule", meaning: "Violates this repository's own written conventions, REVIEW.md included.", score: 0.6 },
             { value: "none", meaning: "No written rule covers it. The claim rests on your judgement.", score: 0 },
+        ],
+    },
+
+    maintenance: {
+        kind: "weighted",
+        weight: 0.14,
+        question:
+            "What this costs to live with, if nothing ever goes wrong at run time. This is the " +
+            "axis for a defect that is expensive rather than dangerous.",
+        levels: [
+            { value: "compounding", meaning: "Gets worse on its own: a rule with no check behind it, an invariant stated in prose that the next edit will break silently.", score: 1 },
+            { value: "duplicated", meaning: "The same fact or logic in more than one place, with nothing keeping the copies in step.", score: 0.7 },
+            { value: "untested", meaning: "Logic with no test, where a wrong change would pass every gate.", score: 0.55 },
+            { value: "friction", meaning: "Costs a reader or an editor time: misleading naming, a stale comment, a hard-to-follow structure.", score: 0.3 },
+            { value: "none", meaning: "No ongoing cost. Fixing it is the whole of the work.", score: 0 },
         ],
     },
 
@@ -154,6 +169,7 @@ export const AXES = {
             { value: "possible", meaning: "Needs an unusual input, a specific sequence, or deliberate effort.", score: 0.6 },
             { value: "unlikely", meaning: "Needs a race, a rare configuration, or several things to go wrong at once.", score: 0.35 },
             { value: "theoretical", meaning: "No path you can actually construct, though the shape is wrong.", score: 0.15 },
+            NA("Nothing goes wrong at run time, so there is no outcome to be likely. A maintenance cost rather than a hazard."),
         ],
     },
 

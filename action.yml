@@ -325,9 +325,9 @@ inputs:
             Set it to an empty string to upload nothing. Every finding is then raised
             again on every push.
 
-            Without `findings.json` in the list, the review body prints every finding
-            itself rather than the critical and high ones with a link to the rest. That is a
-            longer comment, and it is the only copy.
+            Without `findings.json` in the list, the review body prints every finding itself,
+            rather than printing those at `print-threshold` and above and linking the rest.
+            That is a longer comment, and it is the only copy.
         required: false
         default: findings.json
 

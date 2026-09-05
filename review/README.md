@@ -28,6 +28,25 @@ out of reach, and that file is also what the lens itself reads.
 `review-body.ts` adds a standing sentence for each lens in `STANDING_DETAIL`, so a review
 says what it did not reach even when a lens forgets to.
 
+## How a finding is rated
+
+The orchestrator answers a set of bounded questions about each merged finding, under `risk`.
+Each one is an enum, and `merged-schema.json` carries the question and the meaning of every
+answer, written there from the `AXES` table in `risk.ts` by `scripts/build-risk-schema.ts`.
+Some ask how much damage the defect does, and those answers are added; the rest ask how much
+that damage counts, and those are multiplied in. `risk.ts` does the arithmetic, which ends in a
+score from 0 to 100, and bands that into `critical`, `high`, `medium`, `low` or `nit`. Nothing
+a model writes is a tier.
+
+The `print-threshold` input is the lowest tier the posted comment prints in full. Everything
+below it is left to `findings.json` in the run's artifact, which holds every finding with the
+answers it was rated on, so a reader who disagrees with the weighting can re-score the run.
+Where there is no artifact, which means a review from a session and a run that kept none, the
+threshold decides nothing and the body prints every finding. `vetSuppression` asks the same
+`isListed` question, to decide which findings a closed thread alone may settle, but
+`post-review.ts` passes it the `REVIEW_THRESHOLD` default rather than the input, so setting
+`print-threshold` moves the comment and leaves that bar where it was.
+
 There are two ways in, and both call `run.sh`, which is the whole sequence: build the
 prompts, read what has already been said, run the orchestrator, check what comes back.
 The action calls it in a CI job. `/codeferret:review` calls it through `local-run.sh`,
@@ -167,9 +186,9 @@ run's threads need not describe the same pull request.
 
 `review-body.ts` decides what the body prints from two more variables.
 `GITHUB_SERVER_URL` and `GITHUB_RUN_ID` name the run holding the artifact, and a runner sets
-both: there the body prints the critical and high findings and links the artifact for the
-rest. By hand and under `local-post.sh` they are unset, there is no artifact anybody could
-open, and the body prints every finding instead, bounded the same way.
+both: there the body prints the findings rated at `PRINT_THRESHOLD` or above and links
+the artifact for the rest. By hand and under `local-post.sh` they are unset, there is no
+artifact anybody could open, and the body prints every finding instead, bounded the same way.
 
 Lenses run in parallel, so the bill grows with the number of lenses and the wall clock
 barely does. Three took about 15 minutes. An earlier fourteen-lens run took 20m46s for
@@ -226,6 +245,8 @@ the orchestrator's last turn alone, and undercounted one full run sixtyfold.
 | `caveats.ts` | What a run says about itself (how much it covered, what it could not reach, why a suppression was reopened), in the words a posted review and a printed one both use. |
 | `words.ts` | The inflection those sentences need, kept apart from the renderer so the two do not import each other. |
 | `print-findings.ts` | The same findings for a terminal, which is what a session shows instead of a posted review. |
+| `risk.ts` | The axes a finding is rated on, what each answer is worth, and the arithmetic from answers to a score and a tier. `risk.test.ts` beside it. |
+| `../scripts/build-risk-schema.ts` | Writes the `risk` block of `merged-schema.json` from those axes, so a model is offered the values the scorer recognises. |
 | `findings.ts` | What a run produced: the shape, how a finding ranks, which ones the body prints, and which suppressions hold. Pure, so nothing importing a rule imports a module that can read a file or end the process. `findings.test.ts` beside it. |
 | `read-run.ts` | The files a posted review and a printed one both read, so the two cannot decide differently what an unreadable one means. |
 | `existing.ts` | The shape of `existing.json` and the one walk over it, so no reader declares its own. |
@@ -311,8 +332,8 @@ have to grant, work moved out of the action and into their job) needs `v2` and a
 because `@v1` carries it to everyone the moment the tag moves.
 
 The test is whether their job still works. 1.1.0 is the case that settled it: it stops
-posting inline comments, prints only the critical and high findings in the body, and uses
-`actions: read`, which an older workflow does not grant. Every one of those degrades
+posting inline comments, prints in the body only the findings at the print threshold and above,
+and uses `actions: read`, which an older workflow does not grant. Every one of those degrades
 gracefully: the review is still posted, and a consumer who never grants the permission gets
 each finding raised again on every push, which is what the reviews looked like before. Nothing
 there needs a consumer to edit anything, so it stayed on `v1`. A change that would leave

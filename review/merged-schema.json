@@ -137,6 +137,7 @@
                             "detectability",
                             "availability",
                             "contract",
+                            "maintenance",
                             "likelihood",
                             "confidence",
                             "privileges_required",
@@ -218,6 +219,17 @@
                                 ],
                                 "description": "Whether this breaks a rule that is written down somewhere, rather than one you are applying. standard: Violates a named external standard: a WCAG criterion, an RFC, a documented API contract. house-rule: Violates this repository's own written conventions, REVIEW.md included. none: No written rule covers it. The claim rests on your judgement."
                             },
+                            "maintenance": {
+                                "type": "string",
+                                "enum": [
+                                    "compounding",
+                                    "duplicated",
+                                    "untested",
+                                    "friction",
+                                    "none"
+                                ],
+                                "description": "What this costs to live with, if nothing ever goes wrong at run time. This is the axis for a defect that is expensive rather than dangerous. compounding: Gets worse on its own: a rule with no check behind it, an invariant stated in prose that the next edit will break silently. duplicated: The same fact or logic in more than one place, with nothing keeping the copies in step. untested: Logic with no test, where a wrong change would pass every gate. friction: Costs a reader or an editor time: misleading naming, a stale comment, a hard-to-follow structure. none: No ongoing cost. Fixing it is the whole of the work."
+                            },
                             "likelihood": {
                                 "type": "string",
                                 "enum": [
@@ -225,9 +237,10 @@
                                     "likely",
                                     "possible",
                                     "unlikely",
-                                    "theoretical"
+                                    "theoretical",
+                                    "not-applicable"
                                 ],
-                                "description": "How likely the bad outcome is to be reached in practice, not how bad it would be. certain: Happens every time the code runs. likely: Happens under ordinary use, without anyone trying. possible: Needs an unusual input, a specific sequence, or deliberate effort. unlikely: Needs a race, a rare configuration, or several things to go wrong at once. theoretical: No path you can actually construct, though the shape is wrong."
+                                "description": "How likely the bad outcome is to be reached in practice, not how bad it would be. certain: Happens every time the code runs. likely: Happens under ordinary use, without anyone trying. possible: Needs an unusual input, a specific sequence, or deliberate effort. unlikely: Needs a race, a rare configuration, or several things to go wrong at once. theoretical: No path you can actually construct, though the shape is wrong. not-applicable: Nothing goes wrong at run time, so there is no outcome to be likely. A maintenance cost rather than a hazard."
                             },
                             "confidence": {
                                 "type": "string",
