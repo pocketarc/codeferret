@@ -83,7 +83,8 @@ const TOKEN_URL = "https://x-access-token:not-a-real-token@github.com/owner/repo
 const CLEAN_URL = "https://github.com/owner/repo.git";
 
 /**
- * The credential as a hand clone leaves it, which is what `checkout: skip` invites.
+ * The credential as a hand clone leaves it, which is what a caller running `checkout: skip` has
+ * to do for themselves.
  *
  * `git remote add` rather than a `git config` of the key, because that is the spelling
  * `git clone` uses and the one whose result has to be scrubbed.
@@ -92,7 +93,6 @@ function plantUrlCredential(dir: string): void {
     git(dir, "remote", "add", "origin", TOKEN_URL);
 }
 
-/** The url a lens gets back, which is the whole of what the rewrite has to change. */
 function url(dir: string, remote = "origin"): string {
     return git(dir, "remote", "get-url", remote);
 }
@@ -258,7 +258,7 @@ describe("scrub-credentials.sh", () => {
             const dir = repo();
 
             // What `git submodule init` writes: the url a submodule is cloned from, copied
-            // out of `.gitmodules` into the config git actually reads.
+            // out of `.gitmodules` into the config git reads.
             git(dir, "config", "--local", "submodule.vendor.url", TOKEN_URL);
 
             expect(scrub(dir).code).toBe(0);
@@ -285,10 +285,6 @@ describe("scrub-credentials.sh", () => {
             expect(url(dir, "upstream")).toBe(CLEAN_URL);
         });
 
-        // A rewritten url is not the only copy git took. `git clone` writes the url it was
-        // given into the reflog message and `git fetch` writes it into FETCH_HEAD, both as
-        // plain text a lens reads with `cat`, so a scrub that stopped at the config would
-        // report a clean workspace over a token still on disk.
         test("empties the reflog, which records the url a clone was given", () => {
             const dir = repo();
 

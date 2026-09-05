@@ -25,6 +25,17 @@ const STARTS_THE_AGENT = "review/run.sh";
 const CREDENTIAL = /github-token|GITHUB_TOKEN|claude-code-oauth-token/;
 
 /**
+ * What takes the runner's own copy of the inputs out of the step's shell.
+ *
+ * A step's `env:` is not the only way a credential reaches it. Where the runner passes a
+ * composite action's inputs down as `INPUT_<NAME>`, both tokens arrive under names that are not
+ * in the `env:` block, and this step's shell lives for the whole review with them in
+ * /proc/<pid>/environ. Only an `exec` replaces that, and only in the shell that holds them:
+ * calling it one level down, inside run.sh, leaves the parent exactly as it was.
+ */
+const SCRUBS_THE_INPUTS = "scrub_inputs";
+
+/**
  * The one value the step may name, because it is a path rather than a credential.
  *
  * `run.sh` reads the file it names and deletes it before the session starts. The agent's own
@@ -47,6 +58,15 @@ export async function checkAgentToken(): Promise<Failures> {
 
     for (const step of steps) {
         const named = step.env ?? {};
+
+        if (!(step.run ?? "").includes(SCRUBS_THE_INPUTS)) {
+            fail(
+                list,
+                "action.yml",
+                `step '${step.name ?? "unnamed"}' starts the agent without calling ${SCRUBS_THE_INPUTS}, ` +
+                    "so the runner's own copy of every input stays in this shell's environment for the whole review.",
+            );
+        }
 
         for (const [key, value] of Object.entries(named)) {
             if (ALLOWED.has(key)) continue;

@@ -18,7 +18,7 @@
 import { dirname, join } from "node:path";
 import type { LensHealth } from "./findings.ts";
 import { number, record, string } from "./json.ts";
-import { RUN_FILES } from "./run-files.ts";
+import { type Reported, RUN_FILES, UNREPORTED } from "./run-files.ts";
 import { failureReason, lastResult, messagesOf, totalCost } from "./run-log.ts";
 
 /**
@@ -45,9 +45,6 @@ if (unparsed > 0) {
 const last = lastResult(messages);
 const dir = dirname(outPath);
 
-/** Every run file this script owns. `findingsChecked` is run.sh's and is not written here. */
-type Reported = Exclude<(typeof RUN_FILES)[keyof typeof RUN_FILES], typeof RUN_FILES.findingsChecked>;
-
 /**
  * The numbers a run reports, written together.
  *
@@ -67,13 +64,7 @@ if (!last) {
 
     // A killed session is exactly the run whose numbers somebody wants, so each is written
     // with what is known rather than left out to read as none.
-    await writeRunFiles({
-        [RUN_FILES.findingsCount]: "none reported",
-        [RUN_FILES.cost]: "unknown",
-        [RUN_FILES.outputTokens]: "unknown",
-        [RUN_FILES.durationMs]: "unknown",
-        [RUN_FILES.permissionDenials]: "unknown",
-    });
+    await writeRunFiles(UNREPORTED);
 
     process.exit(1);
 }

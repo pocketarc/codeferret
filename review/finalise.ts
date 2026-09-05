@@ -21,28 +21,7 @@
 
 import { lstatSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { RUN_FILES, RUN_MARKER } from "./run-files.ts";
-
-/** Every run file extract-findings.ts writes. `findingsChecked` belongs to settle and is not one. */
-type Reported = Exclude<(typeof RUN_FILES)[keyof typeof RUN_FILES], typeof RUN_FILES.findingsChecked>;
-
-/**
- * What each of those files says about a run that never reported a number.
- *
- * The same values extract-findings.ts writes for a session with no result message in its log,
- * written here before it runs rather than only by it. They used to be written on that path
- * alone, so a run whose log the guard below removed left whatever was already on disk: the job
- * summary, the action's `cost-usd` and `findings-count` outputs and the artifact then carried
- * numbers with nothing behind them, and `permission-denials` is the file CLAUDE.md's lapse
- * condition for running the orchestrator under `bypassPermissions` is measured from.
- */
-export const UNREPORTED: Record<Reported, string> = {
-    [RUN_FILES.findingsCount]: "none reported",
-    [RUN_FILES.cost]: "unknown",
-    [RUN_FILES.outputTokens]: "unknown",
-    [RUN_FILES.durationMs]: "unknown",
-    [RUN_FILES.permissionDenials]: "unknown",
-};
+import { RUN_FILES, RUN_MARKER, UNREPORTED } from "./run-files.ts";
 
 /**
  * Everything directly under the build directory that is not a plain file, removed.
@@ -61,21 +40,21 @@ export const UNREPORTED: Record<Reported, string> = {
  * happens to it.
  *
  * Removed rather than trusted. A missing run file reads as a run that reported no number, which
- * is what the values above are for, and a missing `lens-list.txt` costs a maintainer one file of
- * a review that still posts.
+ * is what `UNREPORTED` in run-files.ts is for, and a missing `lens-list.txt` costs a maintainer
+ * one file of a review that still posts.
  *
- * The container is held to the same reasoning as the entries, and was not: `readdirSync`
- * follows a symbolic link at `dir` itself, so a session that replaced the build directory with
- * a link to a home directory had every subdirectory of it deleted here, as the user the job
- * runs as. So this refuses rather than sweeps unless `dir` is a real directory carrying the
- * marker build-prompts.sh wrote. Failing is the safe direction: `settle` already ends a run
- * with no extraction unpostable, where a sweep of the wrong tree cannot be undone.
+ * The directory itself is held to the same reasoning as the entries in it: a session that
+ * replaced the build directory with a symbolic link had every subdirectory of the link's target
+ * deleted here, as the user the job runs as. So nothing is swept unless `dir` is a real
+ * directory carrying the marker build-prompts.sh wrote. Failing is the safe direction: a run
+ * that stops
+ * here posts nothing and ends red, which is what `settle` already does with a run that had no
+ * extraction, and a sweep of the wrong tree cannot be undone.
  */
 export function guardBuildDir(dir: string): string[] {
     const removed: string[] = [];
     const container = lstatSync(dir, { throwIfNoEntry: false });
 
-    // `lstatSync`, so a link to a directory answers no here rather than being followed.
     if (container?.isDirectory() !== true) {
         throw new Error(`${dir} is not a directory this run can sweep, so nothing was removed from it.`);
     }
@@ -167,8 +146,6 @@ if (import.meta.main) {
     if (command === "prepare") {
         let swept: string[];
 
-        // The refusal is a sentence, not a stack trace: the reader is whoever opens the step
-        // log of a run that stopped, and what they need is the path and the reason.
         try {
             swept = guardBuildDir(dir);
         } catch (error) {

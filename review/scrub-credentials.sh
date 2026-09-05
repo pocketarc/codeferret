@@ -5,7 +5,7 @@
 # credential reachable from the checkout is a credential a lens reads. review/DECISIONS.md,
 # under "The GitHub token never enters the step that runs the agent", has the argument.
 #
-# A checkout stores it three different ways, and all three have to go.
+# A checkout stores it in several places, and every one of them has to go.
 #
 #   1. `http.<server>.extraheader` in the repository's own config. What older versions of
 #      `actions/checkout` write.
@@ -15,17 +15,15 @@
 #      whether or not any git config still points at it.
 #   3. Userinfo in the url itself, as `remote.<name>.url` or `submodule.<name>.url`. This is
 #      what `git clone https://x-access-token:$TOKEN@github.com/...` leaves, which is an
-#      ordinary way to satisfy `checkout: skip`. The url is rewritten to its credential-free
-#      form rather than deleted, so the remote still resolves.
+#      ordinary way to check a repository out by hand under `checkout: skip`. The url is
+#      rewritten to its credential-free form rather than deleted, so the remote still resolves.
 #
 # `git config --local` does not expand `includeIf`, and a plain read does. Both were measured,
 # and so was what the difference costs: the version of this script that went looking for the
 # second shape with `--local` matched no key, read back no key, and exited 0 over a live
 # credential for a whole review. So a scrub that reports nothing is not evidence that there
-# was nothing to scrub. The third shape cost the same way and was found by reading rather than
-# by any case going red: the header above listed "anyone cloning by hand with a token in the
-# url" under case 1, and a token in a url is not an `extraheader`, so both the removal and the
-# read-back walked past it and the script reported a clean workspace over a live token.
+# was nothing to scrub. The third shape cost the same way, and no case had gone red over it: a
+# token in a url is not an `extraheader`, so neither the removal nor the read-back covered it.
 #
 # Rewriting a url does not reach every copy git took of it. `git clone` writes the url it was
 # given into the reflog message, and `git fetch` writes it into `FETCH_HEAD`, both as plain
@@ -60,9 +58,7 @@ HEADER='^http\..*\.extraheader$'
 INCLUDES='^includeif\..*\.path$'
 URLS='^(remote|submodule)\..*\.url$'
 
-# Whether a url carries userinfo, which is where a token in a url sits.
-#
-# The authority alone, so a `@` anywhere in the path answers no. Only `http` and `https`, so
+# The authority alone, so a `@` anywhere in the path does not count. Only `http` and `https`, so
 # the `git@` of an ssh remote is left alone: it is a username with no secret behind it, and
 # stripping it would leave a remote that no longer resolves.
 has_userinfo() {
@@ -82,7 +78,7 @@ has_userinfo() {
     esac
 }
 
-# The same url with its userinfo gone. Only ever called behind `has_userinfo`.
+# Only ever called behind `has_userinfo`.
 strip_userinfo() {
     local rest=${1#*://}
 
@@ -114,7 +110,7 @@ resolve_include() {
 # `cat`. Nothing a review does reads either: the diff is taken from refs, and a fetch writes
 # `FETCH_HEAD` afresh.
 #
-# Only reached where a url actually carried userinfo, so an ordinary run keeps its reflogs.
+# Only reached where a url carried userinfo, so an ordinary run keeps its reflogs.
 purge_url_traces() {
     local gitdir log
 
@@ -129,7 +125,8 @@ purge_url_traces() {
     fi
 
     echo "emptied FETCH_HEAD and the reflogs in $gitdir, which hold the url a clone or a fetch used"
-    echo "a credential the branch committed into its own tree stays where it is: that is part of the diff, and a finding for a lens rather than this script's to remove"
+    echo "a credential the branch committed into its own tree stays where it is:" \
+        "that is part of the diff, and a finding for a lens rather than this script's to remove"
 }
 
 # A url key is rewritten rather than removed, and every value of it: `remote.<name>.url` takes

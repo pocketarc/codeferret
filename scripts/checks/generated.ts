@@ -5,10 +5,10 @@
  * risk block of `review/merged-schema.json` are generated, and re-running the generator is the
  * only way to catch a hand edit to a file it owns.
  *
- * A generator with no runner is a generator that checks nothing. `build-risk-schema.ts` was
- * written with a `--check` mode and left out of this list, so the enum offered to the model and
- * the enum `levelScore` recognises could part company in silence: every answer then scores
- * nothing, every finding bands to `nit`, and the posted comment goes empty with nothing red.
+ * `build-risk-schema.ts` was written with a `--check` mode and left out of this list, so the
+ * enum offered to the model and the enum `levelScore` recognises could part company in silence:
+ * every answer then scores nothing, every finding bands to `nit`, and the posted comment goes
+ * empty with nothing red.
  *
  * A spawn rather than an import, unlike `finding-rules`. These are scripts with top-level
  * side effects rather than exported functions, and the failure they report is already a

@@ -44,7 +44,7 @@ export type Reported = Exclude<(typeof RUN_FILES)[keyof typeof RUN_FILES], typeo
  *
  * Here rather than in either of them, because both write the same thing and the two used to
  * hold a copy each with nothing comparing them. To every reader an absent file is
- * indistinguishable from a zero and `unknown` is what a killed session writes, so one path
+ * indistinguishable from a zero, and `unknown` is what a killed session writes, so one path
  * saying `unknown` where the other says `not measured` is two answers to the same question with
  * every gate green.
  */
@@ -60,9 +60,9 @@ export const UNREPORTED: Record<Reported, string> = {
  * What build-prompts.sh drops in the build directory to say it built it.
  *
  * That script refuses to delete a plugin directory that does not carry this file, because
- * /codeferret:review has a model paste the path in by hand. `guardBuildDir` asks the same
- * question for the same reason one step later: it deletes recursively through the directory it
- * is handed, and by then a session has had a whole review to leave a symbolic link where the
+ * /codeferret:review has a model paste the path in by hand. `guardBuildDir` makes the same
+ * check one step later, for the same reason: it deletes recursively through the directory it is
+ * handed, and by then a session has had a whole review to leave a symbolic link where the
  * directory was.
  */
 export const RUN_MARKER = ".codeferret-run";

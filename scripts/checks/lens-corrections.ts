@@ -121,6 +121,15 @@ const CORRECTIONS: Correction[] = [
             "### Images",
             "### Motion",
             "## Priority Matrix",
+            // The touch-target line, which gives 2.5.5's AAA figure where the extras names
+            // 2.5.8's AA one. Carried to the line below: a qualification appended upstream
+            // would leave the line itself matching.
+            "- [ ] Touch targets are 44x44px or larger\n- [ ] Text is readable size",
+            // The head of the mobile list, where the extras puts the viewport meta tag the
+            // section itself never mentions. The correction is an absence, and this binds
+            // only a bullet added at the top of the list; one added lower down leaves it
+            // unbound.
+            "### Mobile (~640px)\n\n- [ ] Content fits within screen width",
         ],
     },
     {
@@ -142,7 +151,7 @@ const CORRECTIONS: Correction[] = [
             "6. Missing ARIA landmarks",
             "## WCAG 2.1 AA Quick Reference",
             "- **2.5.5** Touch target",
-            // The extras rests on this table naming 3.2.1 and no 3.2.2, and a 3.2.2 row added
+            // The extras rests on this list naming 3.2.1 and no 3.2.2, and a 3.2.2 item added
             // beside it would leave that claim wrong with the fragment still matching.
             "- **3.2.1** Predictable on focus",
         ],

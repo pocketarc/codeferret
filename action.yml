@@ -584,6 +584,11 @@ runs:
               # shellcheck source=review/lib.sh
               . "$GITHUB_ACTION_PATH/review/lib.sh"
 
+              # In this shell rather than only inside run.sh: this one lives for the whole review,
+              # and a lens walks the ancestor chain to /proc/<pid>/environ. `checkAgentToken` in
+              # scripts/checks/agent-token.ts fails a step that starts the agent without it.
+              scrub_inputs "$0" "$@"
+
               run_dirs "$(runner_run_dir)"
               out="$BUILD_DIR"
 

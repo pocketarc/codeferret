@@ -3,9 +3,10 @@ standing-detail: >-
   No page was rendered, so element overflow and overlap, alignment and computed spacing, the
   mobile, tablet, desktop and wide viewport sweep, whether the resulting keyboard tab order
   is logical, whether text visibly clips or its ellipsis renders, focus-indicator
-  visibility, hover and active states, and layout shift on load were not evaluated. A
-  contrast ratio or a target size is reported only where the diff, or a file read alongside
-  it, settles the colour pair or the box outright; neither was reached otherwise.
+  visibility, whether a declared hover or active state is visually distinct enough, and
+  layout shift on load were not evaluated. A contrast ratio or a target size is reported only
+  where the diff, or a file read alongside it, settles the colour pair or the box outright;
+  neither was reached otherwise.
 ---
 
 The skill you are about to load assumes a running site and a browser it can drive. This
@@ -19,18 +20,25 @@ Its workflow does not.
   `tailwind.config.*`, `styled.` and `@emotion/` to where the styles live, is how a review
   with no browser finds anything to read at all.
 - Skip Step 2's visual inspection, Step 4's re-verification and the viewport sweep. Read
-  `references/visual-checklist.md`, which the skill links from nowhere and which holds the
-  checks Step 2.2 only summarises. Apply the sections the source settles without a rendered
-  page: Fonts and the declared half of Text Handling under Typography (whether a block that
-  holds unbreakable text declares `overflow-wrap` or `text-overflow`, not whether it visibly
-  clips or an ellipsis renders), Color Consistency, the markup halves of Buttons, Links and
-  Form Elements, the source half of Keyboard Navigation (whether an interactive element is
+  `references/visual-checklist.md` under the skill's own directory, which the skill links
+  from nowhere and which holds the checks Step 2.2 only summarises. Apply the sections the
+  source settles without a rendered page: Fonts and the declared half of Text Handling
+  under Typography (whether a block that holds unbreakable text declares `overflow-wrap` or
+  `text-overflow`, not whether it visibly clips or an ellipsis renders), Color Consistency,
+  the markup halves of Buttons, Links and Form Elements,
+  the source half of Keyboard Navigation (whether an interactive element is
   reachable at all, whether a modal declares a trap, whether a skip link exists, not
   whether the resulting tab order is logical), alt text under Images, and
   `prefers-reduced-motion` under Motion. Anything else readable from the source is in scope
   whether or not it is named there: a declared fixed width on a fluid container, whether a
   focus state is declared at all, and a font or a colour that matches no other in the
-  change.
+  change. Responsive Verification goes with the sweep except for the part the document head
+  settles. A page with no `<meta name="viewport">` is laid out on a phone at a fallback width
+  near 980 CSS pixels and then scaled down, which settles the checklist's "Content fits
+  within screen width" and "No horizontal scrolling occurs" from the head alone; and a
+  viewport tag carrying `user-scalable=no`, or a `maximum-scale` below 2, caps zoom below
+  200%, which fails 1.4.4 Resize Text (Level AA). Report those. Whether a layout survives at
+  375px is the rendered half and stays out.
 - Report a contrast ratio only where the source settles both the text colour and everything
   painting behind it, in this diff or in a file you can read alongside it, and never where a
   theme layer, an opacity or an inherited background leaves the backdrop open. A ratio is a
@@ -40,10 +48,20 @@ Its workflow does not.
   and fails it on the second. The test is whether the source settles the pair, not where the
   two were written: a colour the diff changes on an element whose background comes from an
   untouched rule is the ordinary case, and the source settles it. Report a target size only
-  where one rule fixes the box and its padding, which is the same bar reached a different way,
-  because a hit area is a computed box rather than a declared width. Reporting either where the source
-  does not settle it produces a WCAG failure nobody measured, which teaches the author that
-  this review's accessibility claims are guesses.
+  where the source fixes the whole border box: `width`, `height`, `padding`, `border-width`
+  and the `box-sizing` in force, whether one rule settles them or several you can read
+  together. A hit area is a computed box rather than a declared width, and the declarations
+  around the width change what it computes to: `width: 24px; padding: 4px` is a 32px target
+  under `content-box` and a 24px target under `border-box`. Where nothing you can read
+  settles the `box-sizing` in force, the box is unsettled and there is nothing to report.
+  The bar is 24 by 24 CSS pixels, which is 2.5.8 Target Size (Minimum), Level AA, added in
+  WCAG 2.2. The checklist's 44 by 44 is 2.5.5 Target Size (Enhanced), Level AAA, so a box
+  between the two fails 2.5.5 and passes 2.5.8: name the criterion and its level, or a
+  reader takes an AAA shortfall for an AA failure. 2.5.8 has exceptions for a target inline
+  in a sentence and for one whose size the user agent sets and the page does not, so leave
+  those. Reporting
+  either where the source does not settle it produces a WCAG failure nobody measured, which
+  teaches the author that this review's accessibility claims are guesses.
 - Do not enter Step 3.3. It is the fixing loop, and every other lens is reading this same
   checkout while you run. Report each fix as a finding and change nothing. Steps 3.1 and 3.2
   stay, and neither writes anything: 3.1 is a priority matrix, and 3.2's selector and

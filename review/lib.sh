@@ -16,6 +16,57 @@ trim_lines() {
     sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | grep -v '^$' || true
 }
 
+# ---- The runner's own copy of the inputs ---------------------------------------------
+
+# Replace this process with one that was never started with the composite action's inputs.
+#
+# Whether a composite action's inputs reach its `run:` steps as INPUT_<NAME> is undocumented
+# and has changed before. Where they do, both tokens are in scope a second time, under names
+# that are not in the denylist in run.sh, and a lens holds Bash.
+#
+# `unset` cannot take them out. The runner uppercases an input name and replaces its spaces
+# with underscores, leaving the dashes, so the token inputs arrive as `INPUT_GITHUB-TOKEN` and
+# `INPUT_CLAUDE-CODE-OAUTH-TOKEN`, and neither is a valid shell identifier. Measured under
+# bash 3.2, which is what a Mac runs: `compgen -e` lists both, `unset -v 'INPUT_GITHUB-TOKEN'`
+# answers "not a valid identifier", and `set -e` ends the review on that line. Under a bash
+# that leaves them out of `compgen -e` the same loop passes and removes nothing. `env -u` names
+# a variable a shell cannot, so the caller re-execs through it once.
+#
+# Every process the agent descends from has to call this, not just the one that starts it. A
+# re-exec inside run.sh clears its own environment and every child's, while the composite step's
+# shell that called it stays alive for the whole review with both inputs in /proc/<pid>/environ.
+# That is the ancestor channel "The GitHub token never enters the step that runs the agent" in
+# review/DECISIONS.md is written against.
+#
+# The list comes from `env` rather than being written out here, so an input added later is
+# covered without anyone remembering this function; a line that is only some value's embedded
+# newline costs a `-u` for a name that does not exist.
+#
+# Usage: scrub_inputs "$0" "$@"   as early in the script as it can be called.
+scrub_inputs() {
+    local script=$1 name
+    local scrub=()
+
+    shift
+
+    [ -z "${CODEFERRET_INPUTS_SCRUBBED:-}" ] || return 0
+
+    while IFS='=' read -r name _; do
+        case $name in
+        INPUT_*) scrub+=(-u "$name") ;;
+        esac
+    done < <(env)
+
+    # Every `-u` ahead of the assignment: `env` reads the first `name=value` as the end of its
+    # own options, and a `-u` after it is the command to run. `env: -u: No such file or
+    # directory` is what that looks like, and it costs the whole review.
+    #
+    # `-e -o pipefail` because that is what the runner starts a step's shell with and what the
+    # script being replaced was written against. run.sh sets its own options either way.
+    exec env "${scrub[@]+"${scrub[@]}"}" CODEFERRET_INPUTS_SCRUBBED=1 \
+        bash -e -o pipefail "$script" ${1+"$@"}
+}
+
 # ---- GitHub Actions step outputs ----------------------------------------------------
 
 # One GitHub Actions step output, for action.yml's `run:` steps.

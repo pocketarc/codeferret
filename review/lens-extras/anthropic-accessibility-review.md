@@ -71,13 +71,21 @@ Report the half you can see, and say plainly what you could not judge:
 - 3.2.2, change of context on input (Level A). The same for `onChange`, and for a form
   submitted when a value changes. Do not file an `onFocus` handler here: focus and input are
   separate criteria, and the skill's own quick reference names only 3.2.1.
-- 2.2.2, moving content. A CSS `animation` whose declared `animation-duration` multiplied by
-  its `animation-iteration-count` runs past five seconds starts on its own and needs a
-  mechanism to pause, stop or hide it under 2.2.2 Pause, Stop, Hide (Level A). `infinite` is
-  the case where that product is unbounded, and a finite `animation: slide 20s ease-in-out 1`
-  fails the same way. A `transition` has no iteration count and cannot be set to `infinite`,
-  so it is outside this bullet. Whether the source carries a pause mechanism anywhere is a
-  source fact.
+- 2.2.2, moving content. Three conditions have to hold together before 2.2.2 Pause, Stop,
+  Hide (Level A) applies and a mechanism to pause, stop or hide is needed: the motion starts
+  automatically, it lasts more than five seconds, and it is presented in parallel with other
+  content. A declared duration settles the second of them and nothing else.
+  Duration: a CSS `animation` whose `animation-duration` multiplied by its
+  `animation-iteration-count` runs past five seconds clears it, `infinite` being the case
+  where that product is unbounded, and a finite `animation: slide 20s ease-in-out 1` clearing
+  it too. Automatic start: the source has to show the animation applied with no interaction
+  in the way, on a selector no interaction state narrows or through a class the initial
+  markup already carries. One reached only through `:hover`, `:focus`, `:active`, a class a
+  handler toggles, a scroll position or a view transition is outside 2.2.2 however long it
+  runs, and belongs to 2.3.3 below. In parallel: a loader that fills the viewport with
+  nothing beside it is not, and the markup usually shows whether anything sits beside it.
+  A `transition` has no iteration count and cannot be set to `infinite`, so it is outside
+  this bullet. Whether the source carries a pause mechanism anywhere is a source fact.
 - 2.3.3, motion from interactions. A `@media (prefers-reduced-motion: reduce)` block is
   technique C39, which is sufficient for this criterion under WCAG and not for 2.2.2. 2.3.3 is
   Level AAA. Name the level if you name the criterion.
@@ -110,7 +118,7 @@ spends its budget hunting for a page to run it against.
 Its "Common Issues" list is a different case and stays in scope. Items 5 and 6, focus traps
 in modals and missing ARIA landmarks, are both decidable from source.
 
-One correction to the skill's quick reference: its table is headed "WCAG 2.1 AA" and lists
+One correction to the skill's quick reference: its list is headed "WCAG 2.1 AA" and lists
 2.5.5 Target Size under it. 2.5.5 is Level AAA. The AA criterion is 2.5.8 Target Size
 (Minimum), added in WCAG 2.2, at 24 by 24 CSS pixels. Neither is decidable without a
 rendered page, so this matters only if you are about to name a level.

@@ -36,42 +36,20 @@
 #   INCLUDE_WORKING_TREE  1 to review uncommitted work as well.
 set -euo pipefail
 
-# Whether a composite action's inputs reach its `run:` steps as INPUT_<NAME> is undocumented
-# and has changed before. Where they do, both tokens are in scope a second time, under names
-# the denylist further down does not mention, and a lens holds Bash. Nothing in this script
-# reads one: every value it needs arrives as an argument or under its own name.
-#
-# `unset` cannot take them out. The runner uppercases an input name and replaces its spaces
-# with underscores, leaving the dashes, so the token inputs arrive as `INPUT_GITHUB-TOKEN` and
-# `INPUT_CLAUDE-CODE-OAUTH-TOKEN`, and neither is a valid shell identifier. Measured under
-# bash 3.2, which is what a Mac runs: `compgen -e` lists both, `unset -v 'INPUT_GITHUB-TOKEN'`
-# answers "not a valid identifier", and `set -e` ends the review on that line. Under a bash
-# that leaves them out of `compgen -e` the same loop passes and removes nothing.
-#
-# `env -u` names a variable a shell cannot, so the script re-execs through it once, before it
-# has read the caller's token file or written anything. The list comes from `env` rather than
-# being written out here, so an input added later is covered without anyone remembering this
-# block; a line that is only some value's embedded newline costs a `-u` for a name that does
-# not exist.
-if [ -z "${CODEFERRET_INPUTS_SCRUBBED:-}" ]; then
-    scrub=()
-
-    while IFS='=' read -r name _; do
-        case $name in
-        INPUT_*) scrub+=(-u "$name") ;;
-        esac
-    done < <(env)
-
-    # Every `-u` ahead of the assignment: `env` reads the first `name=value` as the end of its
-    # own options, and a `-u` after it is the command to run. `env: -u: No such file or
-    # directory` is what that looks like, and it costs the whole review.
-    exec env "${scrub[@]+"${scrub[@]}"}" CODEFERRET_INPUTS_SCRUBBED=1 bash "$0" "$@"
-fi
-
 BASE=${1:?usage: run.sh BASE_REF ACTION_PATH OUT_DIR WORKSPACE}
 ACTION=${2:?missing action path}
 OUT=${3:?missing output dir}
 WORKSPACE=${4:?missing workspace}
+
+# shellcheck source=review/lib.sh
+. "$ACTION/review/lib.sh"
+
+# Nothing in this script reads a composite action's input: every value it needs arrives as an
+# argument or under its own name. It still must not run with them in its environment, because a
+# lens reads this process's environment out of /proc, so the process is replaced before it has
+# read the caller's token file or written anything. `scrub_inputs` in lib.sh has why `unset`
+# cannot do it, and why the step that calls this script re-execs first.
+scrub_inputs "$0" "$@"
 
 PREFIX=${PREFIX:-}
 
@@ -81,9 +59,6 @@ MODEL=${MODEL:-opus}
 
 EFFORT=${EFFORT:-}
 PERMISSION_MODE=${PERMISSION_MODE:-bypassPermissions}
-
-# shellcheck source=review/lib.sh
-. "$ACTION/review/lib.sh"
 
 run_dirs "$OUT"
 BUILD=$BUILD_DIR
@@ -153,8 +128,8 @@ unset -v GITHUB_TOKEN GH_TOKEN GITHUB_TOKEN_FILE \
     NPM_TOKEN NODE_AUTH_TOKEN \
     GITHUB_ENV GITHUB_PATH GITHUB_OUTPUT GITHUB_STATE GITHUB_STEP_SUMMARY
 
-# The `INPUT_*` names are already gone: the block at the top of this script re-execs through
-# `env -u`, because `unset` cannot name a variable with a dash in it.
+# The `INPUT_*` names are already gone: `scrub_inputs` re-execs through `env -u`, because
+# `unset` cannot name a variable with a dash in it.
 
 # Which lenses this run dispatches, decided in review/select-lenses.ts, which has why the
 # subtraction exists and why an exclusion that matches nothing is a line on stderr rather than
@@ -409,7 +384,8 @@ empty_previous "$BUILD/previous.json"
 
 # What the build directory has to be before anything reads it again: nothing but plain files,
 # and every number a run that reported none still writes down. `guardBuildDir` in
-# review/finalise.ts does the sweep and `UNREPORTED` beside it holds the numbers.
+# review/finalise.ts does the sweep, and `UNREPORTED` in review/run-files.ts holds the numbers,
+# beside the names they are written under.
 $PREFIX bun --config=/dev/null "$ACTION/review/finalise.ts" prepare "$BUILD"
 
 # Written down rather than only said, and the review still goes out. `readSessionChanged` in

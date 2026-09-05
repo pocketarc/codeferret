@@ -8,14 +8,14 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { guardBuildDir, settle, UNREPORTED } from "./finalise.ts";
-import { RUN_FILES, RUN_MARKER } from "./run-files.ts";
+import { guardBuildDir, settle } from "./finalise.ts";
+import { RUN_FILES, RUN_MARKER, UNREPORTED } from "./run-files.ts";
 
 let dir = "";
 
 beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "codeferret-finalise-"));
-    // What build-prompts.sh leaves behind, and what the sweep now refuses to run without.
+    // What build-prompts.sh leaves behind, and what the sweep refuses to run without.
     writeFileSync(join(dir, RUN_MARKER), "");
 });
 
@@ -73,8 +73,6 @@ describe("guardBuildDir: what a run will still read after the session", () => {
         expect(existsSync(join(dir, "run.json"))).toBe(true);
     });
 
-    // The sweep deletes recursively, and the session has had a whole review to move what it is
-    // pointed at. Each of these is a directory the sweep must refuse rather than empty.
     test("refuses a build directory the session replaced with a link, leaving the target alone", () => {
         const elsewhere = mkdtempSync(join(tmpdir(), "codeferret-elsewhere-"));
         mkdirSync(join(elsewhere, "documents"));

@@ -95,10 +95,18 @@ u.id = o.user_id` as the fix for a per-user query loop. There is no `WHERE` and 
 so it reads every user and every order to answer a question that was about one page of users,
 and `u.*` repeats once per matching order, so each user is transferred as many times as they
 have orders. The projection is also the `SELECT *` the same skill lists as a defect of its
-own. The fix for an N+1 is one batched query over the ids
-the caller already holds, projecting named columns: `SELECT o.user_id, o.id, o.total,
-o.order_date FROM orders o WHERE o.user_id = ANY($1)`, grouped in the application. Recommend
-that shape, and raise the skill's own example if it appears in a diff.
+own. The fix for an N+1 is one batched query over the ids the caller already holds,
+projecting named columns and grouped in the application. On PostgreSQL that is
+`SELECT o.user_id, o.id, o.total, o.order_date FROM orders o WHERE o.user_id = ANY($1)`,
+with the whole id list bound to the one placeholder. Recommend that
+spelling only there: `= ANY` in MySQL, SQL Server and Oracle is a quantified comparison over
+a subquery rather than an array comparison, none of the three binds a list to a single
+placeholder, and `$1` is PostgreSQL's placeholder besides. Elsewhere the same query is
+`WHERE o.user_id IN (?, ?, ...)` over a placeholder list the client generates per id, or a
+table-valued parameter on SQL Server and a bound collection through `TABLE()` on Oracle; a
+temporary table holding the ids is the shape to reach for once the list is long enough to
+bloat the plan cache. Recommend whichever the diff's own client can bind, and raise the
+skill's own example if it appears in a diff.
 
 Its "SECURE" examples are wrong twice over, and neither half is what an application author
 needs. The projection is `SELECT *` from `users`, which is the table the same skill uses to

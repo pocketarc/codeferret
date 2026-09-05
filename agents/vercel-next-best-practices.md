@@ -61,8 +61,15 @@ Next.js, not for its workflow. Every finding you make comes from source.
 
 - Do not run `next dev`, `next build`, `next experimental-analyze`, or any other command
   that writes into the checkout. Every lens in this review is reading that same tree at
-  once, and a build writes into `.next/`, which the diff's pathspec excludes, so the writes
-  would be invisible rather than absent.
+  once, and a build does not stop at `.next/`, which the diff's pathspec excludes. It also
+  rewrites `next-env.d.ts` at the project root, which `exclude-paths` does not cover, on
+  purpose: a hand edit there is a finding worth making, and a build overwrites it before any
+  lens could report it, landing the rewrite in the diff the others are reading. Under
+  `output: 'export'` a build
+  writes `out/` as well, which the default pathspec excludes at the repository root and under
+  `apps/*` and `packages/*`, and elsewhere only for `_next/`, `.html` and `.txt`, so for an
+  application rooted anywhere else its sitemaps, manifests and copied `public/` assets land
+  inside the reviewed change.
 - Do not start a server, and do not `curl` a port, whether or not you started what is
   listening on it. The bullet above is not enough on its own:
   `node .next/standalone/server.js` names no `next` command and runs no build.
