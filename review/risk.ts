@@ -152,9 +152,10 @@ export const AXES = {
     contract: {
         kind: "weighted",
         weight: 0.08,
-        question: "Whether this breaks a rule that is written down somewhere, rather than one you are applying.",
+        question: "Whether this breaks a rule that is written down somewhere, rather than one you are applying. A change that does not do what it was asked to do is the strongest form of this short of an external standard.",
         levels: [
             { value: "standard", meaning: "Violates a named external standard: a WCAG criterion, an RFC, a documented API contract.", score: 1 },
+            { value: "requirement", meaning: "Does not do what this change was asked to do. The issue or the spec states it and the code does otherwise.", score: 0.8 },
             { value: "house-rule", meaning: "Violates this repository's own written conventions, REVIEW.md included.", score: 0.6 },
             { value: "none", meaning: "No written rule covers it. The claim rests on your judgement.", score: 0 },
         ],
@@ -218,9 +219,10 @@ export const AXES = {
     attack_vector: {
         kind: "scaling",
         weight: 0,
-        question: "Where this can be reached from.",
+        question: "Where this can be reached from. Not every defect is attacked; one an ordinary user walks into has its own answer.",
         levels: [
             { value: "network", meaning: "Over the internet, by anyone who can reach the service.", score: 1 },
+            { value: "ordinary-use", meaning: "By any user going about normal use, with nobody attacking. An accessibility or correctness defect everyone hits.", score: 0.9 },
             { value: "local", meaning: "Only from the machine, or from inside the network boundary.", score: 0.5 },
             { value: "ci", meaning: "Only through the build or deployment pipeline.", score: 0.4 },
             { value: "push-access", meaning: "Only by someone who can already commit to this repository.", score: 0.25 },

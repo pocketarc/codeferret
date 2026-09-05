@@ -214,10 +214,11 @@
                                 "type": "string",
                                 "enum": [
                                     "standard",
+                                    "requirement",
                                     "house-rule",
                                     "none"
                                 ],
-                                "description": "Whether this breaks a rule that is written down somewhere, rather than one you are applying. standard: Violates a named external standard: a WCAG criterion, an RFC, a documented API contract. house-rule: Violates this repository's own written conventions, REVIEW.md included. none: No written rule covers it. The claim rests on your judgement."
+                                "description": "Whether this breaks a rule that is written down somewhere, rather than one you are applying. A change that does not do what it was asked to do is the strongest form of this short of an external standard. standard: Violates a named external standard: a WCAG criterion, an RFC, a documented API contract. requirement: Does not do what this change was asked to do. The issue or the spec states it and the code does otherwise. house-rule: Violates this repository's own written conventions, REVIEW.md included. none: No written rule covers it. The claim rests on your judgement."
                             },
                             "maintenance": {
                                 "type": "string",
@@ -268,12 +269,13 @@
                                 "type": "string",
                                 "enum": [
                                     "network",
+                                    "ordinary-use",
                                     "local",
                                     "ci",
                                     "push-access",
                                     "not-applicable"
                                 ],
-                                "description": "Where this can be reached from. network: Over the internet, by anyone who can reach the service. local: Only from the machine, or from inside the network boundary. ci: Only through the build or deployment pipeline. push-access: Only by someone who can already commit to this repository. not-applicable: Not reachable by anybody. A correctness or clarity defect."
+                                "description": "Where this can be reached from. Not every defect is attacked; one an ordinary user walks into has its own answer. network: Over the internet, by anyone who can reach the service. ordinary-use: By any user going about normal use, with nobody attacking. An accessibility or correctness defect everyone hits. local: Only from the machine, or from inside the network boundary. ci: Only through the build or deployment pipeline. push-access: Only by someone who can already commit to this repository. not-applicable: Not reachable by anybody. A correctness or clarity defect."
                             },
                             "timing": {
                                 "type": "string",

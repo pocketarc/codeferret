@@ -30,6 +30,12 @@ export type Report = (line: string) => void;
  * So `high` is the wrong default: it would drop a path traversal and money held in a float.
  * `low` prints everything the fixture produced and decides nothing.
  *
+ * Two values were added to the axes after that run, `ordinary-use` on `attack_vector` and
+ * `requirement` on `contract`, because the rater had no honest answer for a defect an ordinary
+ * user walks into or for code that does not do what it was asked. Neither rescores an existing
+ * answer, so the numbers above still stand, but a rating made since can reach for them and land
+ * a shade higher than one made before.
+ *
  * What this is not measured against is a repository unlike that one. A run over this tool's own
  * code, which holds no user data and reaches nothing over a network, put its whole set between 3
  * and 48, and a threshold read off that corpus would have been a threshold tuned to the half of
