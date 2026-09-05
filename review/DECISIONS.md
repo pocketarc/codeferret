@@ -106,8 +106,8 @@ prompt names. Everything below is what stands in place of a boundary there.
 The broadest of them is a sweep. Once the session has exited, `guardBuildDir` in
 `finalise.ts` removes everything directly under `build/` that is not a plain file, and
 `finalise.ts` then fills every file a run's numbers live in with the values `UNREPORTED`
-beside it holds, which are the ones `extract-findings.ts` writes for a session that reported
-none. The sweep covers the directory rather than a list of names, because the list it
+holds, which sits in `run-files.ts` with the names it is keyed by, and which are the ones
+`extract-findings.ts` writes for a session that reported none. The sweep covers the directory rather than a list of names, because the list it
 replaced named `run.json` and `lens-list.txt` and left `cost-usd`, `output-tokens`,
 `duration-ms`, `findings-count` and `permission-denials` unguarded. A symbolic link at any
 of those is followed by whatever reads it next: `emit_output_file` cats it into

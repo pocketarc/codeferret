@@ -59,7 +59,12 @@ export async function checkAgentToken(): Promise<Failures> {
     for (const step of steps) {
         const named = step.env ?? {};
 
-        if (!(step.run ?? "").includes(SCRUBS_THE_INPUTS)) {
+        // A call, not a mention. As a substring test this passed on a step whose `run:` only
+        // named the function in a comment, which is the shape a reader most likely leaves
+        // behind while moving the call somewhere it does not work.
+        const calls = new RegExp(`^\\s*${SCRUBS_THE_INPUTS}\\s`, "m");
+
+        if (!calls.test(step.run ?? "")) {
             fail(
                 list,
                 "action.yml",
