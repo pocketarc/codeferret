@@ -178,7 +178,7 @@
                                     "single-user",
                                     "none"
                                 ],
-                                "description": "How much is affected when this goes wrong, rather than how badly. system: The whole deployment, or data belonging to every tenant. all-users: Every user of one tenant or one installation. tenant: One organisation's data, where others are unaffected. single-user: Only the person who triggers it, their own data included. none: Nothing is affected at run time."
+                                "description": "How much is affected when this goes wrong, rather than how badly. system: Everything: every account's data, or the machine the service runs on. all-users: Every user's data, where the service itself keeps running. tenant: One organisation's data where others are untouched. Only where the application separates them; an application with no such separation has no answer between this and every user's data. single-user: Only the person who triggers it, their own data included. none: Nothing is affected at run time."
                             },
                             "reversibility": {
                                 "type": "string",

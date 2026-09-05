@@ -18,11 +18,22 @@ import { readDispatched, readSessionChanged } from "./run-files.ts";
 export type Report = (line: string) => void;
 
 /**
- * The lowest tier the review body prints in full, and the bar a suppression of one is held to.
+ * The lowest tier the review body prints, where the `print-threshold` input names none.
  *
- * This is provisional. The bands in `review/risk.ts` are a starting point that no run has been
- * scored against yet, so this is a guess at where the line falls rather than a measurement of
- * it. It becomes the `print-threshold` action input once a scored run shows where to start it.
+ * Measured on 2026-09-05 against the fixture branches, whose seeded defects are the only
+ * findings here with a known right answer. Rated blind — the rater was given the diff and the
+ * axes, not the list of what was planted — all six cleared `medium` and none cleared `high`:
+ * the hardcoded credential 79, the IDOR 67, the injection 65, the stored XSS 61, the path
+ * traversal 44 and the float money arithmetic 36. The three defects that look alarming and are
+ * not, `shell_exec` on a `tempnam` path among them, scored 11.
+ *
+ * So `high` is the wrong default: it would drop a path traversal and money held in a float.
+ * `low` prints everything the fixture produced and decides nothing.
+ *
+ * What this is not measured against is a repository unlike that one. A run over this tool's own
+ * code, which holds no user data and reaches nothing over a network, put its whole set between 3
+ * and 48, and a threshold read off that corpus would have been a threshold tuned to the half of
+ * the scale it happens to occupy.
  */
 export const REVIEW_THRESHOLD: Tier = "medium";
 

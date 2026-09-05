@@ -105,9 +105,9 @@ export const AXES = {
         weight: 0.16,
         question: "How much is affected when this goes wrong, rather than how badly.",
         levels: [
-            { value: "system", meaning: "The whole deployment, or data belonging to every tenant.", score: 1 },
-            { value: "all-users", meaning: "Every user of one tenant or one installation.", score: 0.75 },
-            { value: "tenant", meaning: "One organisation's data, where others are unaffected.", score: 0.5 },
+            { value: "system", meaning: "Everything: every account's data, or the machine the service runs on.", score: 1 },
+            { value: "all-users", meaning: "Every user's data, where the service itself keeps running.", score: 0.75 },
+            { value: "tenant", meaning: "One organisation's data where others are untouched. Only where the application separates them; an application with no such separation has no answer between this and every user's data.", score: 0.5 },
             { value: "single-user", meaning: "Only the person who triggers it, their own data included.", score: 0.2 },
             { value: "none", meaning: "Nothing is affected at run time.", score: 0 },
         ],
