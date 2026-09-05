@@ -257,14 +257,26 @@ export function score(risk: Partial<Risk>): number {
     // Floored, so being hard to reach demotes a finding without deleting it. Unfloored, a
     // hardcoded credential rated `push-access` on both reach axes went from a base of 0.82 to
     // a score of 20, and that rating is the one a model reaches for about anything sitting in
-    // source. Confidence and likelihood are deliberately not floored: a defect that is not
-    // real, or that nothing can ever reach, is worth what it says it is worth.
+    // source.
     const reach = Math.max(mean(["privileges_required", "attack_vector"], risk), REACH_FLOOR);
     const timing = levelScore("timing", risk.timing ?? NOT_APPLICABLE) ?? 1;
     const likelihood = levelScore("likelihood", risk.likelihood ?? NOT_APPLICABLE) ?? 1;
+
+    // The three reachability answers combine as a geometric mean rather than a product.
+    // Multiplied, they compound at a rate nothing justifies: measured over a real review, a
+    // finding letting a lens dictate the whole posted comment had a base of 0.53 and two
+    // middling answers, `likelihood: possible` and `attack_vector: ci`, and the two alone cut
+    // it to 19 — below a wrong sentence in an input description. They are three readings of
+    // one question, how exposed this is, so the mean of them is the answer and the product is
+    // three separate discounts for it.
+    const exposure = (likelihood * reach * timing) ** (1 / 3);
+
+    // Confidence stays a direct multiplier, outside that mean. It is not a reading of how
+    // exposed the defect is; it is whether there is a defect. A finding nobody has confirmed
+    // should be damped by the whole of that doubt rather than a third of it.
     const confidence = levelScore("confidence", risk.confidence ?? NOT_APPLICABLE) ?? 1;
 
-    return Math.round(100 * base * likelihood * confidence * reach * timing);
+    return Math.round(100 * base * exposure * confidence);
 }
 
 /** The mean of the axes that answered, or 1 where none did, so silence does not damp anything. */
