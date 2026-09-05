@@ -226,9 +226,10 @@
                                     "duplicated",
                                     "untested",
                                     "friction",
-                                    "none"
+                                    "none",
+                                    "not-applicable"
                                 ],
-                                "description": "What this costs to live with, if nothing ever goes wrong at run time. This is the axis for a defect that is expensive rather than dangerous. compounding: Gets worse on its own: a rule with no check behind it, an invariant stated in prose that the next edit will break silently. duplicated: The same fact or logic in more than one place, with nothing keeping the copies in step. untested: Logic with no test, where a wrong change would pass every gate. friction: Costs a reader or an editor time: misleading naming, a stale comment, a hard-to-follow structure. none: No ongoing cost. Fixing it is the whole of the work."
+                                "description": "What this costs to live with, if nothing ever goes wrong at run time. This is the axis for a defect that is expensive rather than dangerous. compounding: Gets worse on its own: a rule with no check behind it, an invariant stated in prose that the next edit will break silently. duplicated: The same fact or logic in more than one place, with nothing keeping the copies in step. untested: Logic with no test, where a wrong change would pass every gate. friction: Costs a reader or an editor time: misleading naming, a stale comment, a hard-to-follow structure. none: No ongoing cost. Fixing it is the whole of the work. not-applicable: A hazard rather than a cost, so what it would cost to live with is not the question."
                             },
                             "likelihood": {
                                 "type": "string",

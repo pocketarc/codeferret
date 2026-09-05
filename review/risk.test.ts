@@ -218,6 +218,33 @@ describe("score", () => {
     });
 });
 
+describe("cost and hazard", () => {
+    const pureCost = { ...SILENT, maintenance: "compounding", confidence: "confirmed" };
+
+    test("a finding that is only expensive still reaches the page", () => {
+        expect(tierRank(tierOf(score(pureCost)))).toBeLessThanOrEqual(tierRank("medium"));
+    });
+
+    test("no amount of debt is worth stopping for", () => {
+        expect(tierRank(tierOf(score(pureCost)))).toBeGreaterThan(tierRank("high"));
+    });
+
+    // Summed into the weighted axes, a purely dangerous finding forfeited the cost axis's
+    // weight for answering it honestly, and over a real review that put a defect letting a
+    // lens dictate the whole posted comment below four findings about a stale check.
+    test("answering the cost axis honestly does not cost a hazard anything", () => {
+        const hazard = { ...WORST, maintenance: NOT_APPLICABLE };
+
+        expect(score(hazard)).toBe(score({ ...WORST, maintenance: "compounding" }));
+    });
+
+    test("a cost is not damped by how reachable it is", () => {
+        const unreachable = { ...pureCost, attack_vector: "push-access", privileges_required: "maintainer" };
+
+        expect(score(unreachable)).toBe(score(pureCost));
+    });
+});
+
 describe("the axis table", () => {
     test("the weighted axes sum to one, so a score is out of 100", () => {
         const total = AXIS_NAMES.filter((axis) => AXES[axis].kind === "weighted").reduce(

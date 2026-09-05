@@ -38,7 +38,7 @@ export interface Level {
 }
 
 export interface Axis {
-    readonly kind: "weighted" | "scaling";
+    readonly kind: "weighted" | "scaling" | "cost";
     /** What the model is asked. Rendered into the schema as the field's description. */
     readonly question: string;
     /** Share of the total for a weighted axis. Ignored for a scaling one. */
@@ -55,12 +55,28 @@ export const NOT_APPLICABLE = "not-applicable";
 /** The least the reach axes may multiply a score by. `score` has why. */
 const REACH_FLOOR = 0.4;
 
+/**
+ * The most a finding can score on maintenance cost alone.
+ *
+ * A judgement rather than a measurement, and the one worth arguing with: no amount of debt is
+ * a `critical`, because `critical` is what a person is asked to stop for. The worst thing a
+ * duplicated invariant does is cost the next editor an afternoon, and the worst thing an
+ * unauthenticated injection does is not that. Set here so the ceiling is one number a reader
+ * can find rather than an emergent property of seven weights.
+ *
+ * The value puts the worst answer in the middle of `medium`: high enough that a rule with no
+ * check behind it is printed, low enough that it does not outrank a hazard. At 0.42 it did:
+ * every `compounding` finding of a real review scored an identical 42 and the whole band sat
+ * above a defect letting a lens dictate the posted comment.
+ */
+const COST_CEILING = 0.35;
+
 const NA = (meaning: string): Level => ({ value: NOT_APPLICABLE, meaning, score: 0 });
 
 export const AXES = {
     impact: {
         kind: "weighted",
-        weight: 0.24,
+        weight: 0.28,
         question: "The worst outcome that could realistically follow if this defect is left in.",
         levels: [
             { value: "catastrophic", meaning: "Arbitrary code execution, total data loss, or funds moved wrongly.", score: 1 },
@@ -73,7 +89,7 @@ export const AXES = {
 
     data_exposure: {
         kind: "weighted",
-        weight: 0.16,
+        weight: 0.18,
         question: "What data this puts at risk, and whether losing it would be reportable.",
         levels: [
             { value: "regulated", meaning: "Health, payment card, or personal data whose breach is reportable under GDPR, PCI DSS or HIPAA.", score: 1 },
@@ -86,7 +102,7 @@ export const AXES = {
 
     blast_radius: {
         kind: "weighted",
-        weight: 0.14,
+        weight: 0.16,
         question: "How much is affected when this goes wrong, rather than how badly.",
         levels: [
             { value: "system", meaning: "The whole deployment, or data belonging to every tenant.", score: 1 },
@@ -99,7 +115,7 @@ export const AXES = {
 
     reversibility: {
         kind: "weighted",
-        weight: 0.11,
+        weight: 0.13,
         question: "Whether the damage can be undone once it has happened.",
         levels: [
             { value: "irreversible", meaning: "Deleted data with no backup, a leaked secret, or a settled payment.", score: 1 },
@@ -111,7 +127,7 @@ export const AXES = {
 
     detectability: {
         kind: "weighted",
-        weight: 0.08,
+        weight: 0.09,
         question: "Whether anyone would find out this had happened.",
         levels: [
             { value: "silent", meaning: "No error, no log, no alert. Wrong numbers or missing records that look correct.", score: 1 },
@@ -123,7 +139,7 @@ export const AXES = {
 
     availability: {
         kind: "weighted",
-        weight: 0.07,
+        weight: 0.08,
         question: "What this costs in liveness or resources.",
         levels: [
             { value: "outage", meaning: "Can take the service down: unbounded query, exhaustion, deadlock, no timeout.", score: 1 },
@@ -135,7 +151,7 @@ export const AXES = {
 
     contract: {
         kind: "weighted",
-        weight: 0.06,
+        weight: 0.08,
         question: "Whether this breaks a rule that is written down somewhere, rather than one you are applying.",
         levels: [
             { value: "standard", meaning: "Violates a named external standard: a WCAG criterion, an RFC, a documented API contract.", score: 1 },
@@ -145,8 +161,8 @@ export const AXES = {
     },
 
     maintenance: {
-        kind: "weighted",
-        weight: 0.14,
+        kind: "cost",
+        weight: 0,
         question:
             "What this costs to live with, if nothing ever goes wrong at run time. This is the " +
             "axis for a defect that is expensive rather than dangerous.",
@@ -156,6 +172,7 @@ export const AXES = {
             { value: "untested", meaning: "Logic with no test, where a wrong change would pass every gate.", score: 0.55 },
             { value: "friction", meaning: "Costs a reader or an editor time: misleading naming, a stale comment, a hard-to-follow structure.", score: 0.3 },
             { value: "none", meaning: "No ongoing cost. Fixing it is the whole of the work.", score: 0 },
+            NA("A hazard rather than a cost, so what it would cost to live with is not the question."),
         ],
     },
 
@@ -292,7 +309,20 @@ export function score(risk: Partial<Risk>): number {
     // should be damped by the whole of that doubt rather than a third of it.
     const confidence = levelScore("confidence", risk.confidence ?? NOT_APPLICABLE) ?? 1;
 
-    return Math.round(100 * base * exposure * confidence);
+    // What it would cost to live with, on a scale of its own rather than as one more term in
+    // the sum above. Summed, the two dimensions diluted each other: a finding that is purely
+    // dangerous can only answer the cost axis `none`, so it forfeits that axis's weight, and
+    // measured over a real review the defect letting a lens dictate the whole posted comment
+    // fell below four findings about a check that had stopped binding. A finding earns its
+    // place by being dangerous or by being expensive, so the two are compared rather than
+    // added.
+    //
+    // Cost is not multiplied by `exposure`. A duplicated invariant costs the same to live with
+    // whether or not anyone can reach it over a network. It is multiplied by `confidence`,
+    // because a cost nobody has confirmed is worth no more than a hazard nobody has confirmed.
+    const cost = (levelScore("maintenance", risk.maintenance ?? NOT_APPLICABLE) ?? 0) * COST_CEILING;
+
+    return Math.round(100 * confidence * Math.max(base * exposure, cost));
 }
 
 /** The mean of the axes that answered, or 1 where none did, so silence does not damp anything. */
