@@ -10,7 +10,7 @@
  * one of these into a step output is the shell inside action.yml.
  */
 
-import { DISPATCHED_FILE, RUN_FILE_NAMES, RUN_FILES, SESSION_CHANGED_FILE } from "../../review/run-files.ts";
+import { DISPATCHED_FILE, RUN_FILES, RUN_FILE_NAMES, RUN_MARKER, SESSION_CHANGED_FILE } from "../../review/run-files.ts";
 import { action, fail } from "./support.ts";
 import type { Failures } from "./support.ts";
 
@@ -44,6 +44,24 @@ export async function checkRunFiles(): Promise<Failures> {
         if (!(await Bun.file(script).text()).includes(RUN_FILES.findingsChecked)) {
             fail(list, script, `never names '${RUN_FILES.findingsChecked}', which is what the action posts on`);
         }
+    }
+
+    // The same fact for the marker that says a directory is this run's to sweep.
+    // `build-prompts.sh` writes it and `guardBuildDir` refuses to delete anything from a
+    // directory without it, so the two spellings have to agree or every review ends on a
+    // directory the run built and does not recognise. Failing closed does not make the drift
+    // cheap: it takes the whole review with it, one step after the money is spent.
+    // Bounded rather than a substring test. `includes` passes on a rename to
+    // `.codeferret-runx`, which is the drift most likely to happen and the one a check written
+    // this way reports as fine.
+    const marker = new RegExp(`${RUN_MARKER.replace(/[.]/g, "\\$&")}(?![\\w-])`);
+
+    if (!marker.test(await Bun.file("review/build-prompts.sh").text())) {
+        fail(
+            list,
+            "review/build-prompts.sh",
+            `never names '${RUN_MARKER}', which guardBuildDir refuses to sweep a directory without`,
+        );
     }
 
     // The same fact for the file a run's dispatched lenses are read back from. No TypeScript

@@ -11,7 +11,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -77,6 +77,24 @@ function plantIncludeIf(dir: string): string {
 /** The header as an older checkout leaves it, in the repository's own config. */
 function plantHeader(dir: string, key = HEADER): void {
     git(dir, "config", "--local", key, VALUE);
+}
+
+const TOKEN_URL = "https://x-access-token:not-a-real-token@github.com/owner/repo.git";
+const CLEAN_URL = "https://github.com/owner/repo.git";
+
+/**
+ * The credential as a hand clone leaves it, which is what `checkout: skip` invites.
+ *
+ * `git remote add` rather than a `git config` of the key, because that is the spelling
+ * `git clone` uses and the one whose result has to be scrubbed.
+ */
+function plantUrlCredential(dir: string): void {
+    git(dir, "remote", "add", "origin", TOKEN_URL);
+}
+
+/** The url a lens gets back, which is the whole of what the rewrite has to change. */
+function url(dir: string, remote = "origin"): string {
+    return git(dir, "remote", "get-url", remote);
 }
 
 function scrub(workspace: string): { code: number; out: string; err: string } {
@@ -186,6 +204,125 @@ describe("scrub-credentials.sh", () => {
             expect(scrub(dir).code).toBe(0);
             expect(reachable(dir)).toBe("");
             expect(existsSync(cred)).toBe(false);
+        });
+    });
+
+    describe("the mechanism a hand clone uses", () => {
+        test("rewrites a url carrying a token to its credential-free form", () => {
+            const dir = repo();
+
+            plantUrlCredential(dir);
+
+            expect(scrub(dir).code).toBe(0);
+            expect(url(dir)).toBe(CLEAN_URL);
+        });
+
+        test("does not report the workspace as clean over a token in a url", () => {
+            const dir = repo();
+
+            plantUrlCredential(dir);
+
+            expect(scrub(dir).out).not.toContain("no git credential was reachable");
+        });
+
+        test("names the key without printing the credential, so a job log does not publish it", () => {
+            const dir = repo();
+
+            plantUrlCredential(dir);
+
+            const proc = Bun.spawnSync(["bash", SCRIPT, "--check-one", dir], {
+                stdout: "pipe",
+                stderr: "pipe",
+                env: { ...process.env, ...ISOLATED },
+            });
+            const said = proc.stdout.toString();
+
+            expect(said).toContain("remote.origin.url");
+            expect(said).not.toContain("not-a-real-token");
+        });
+
+        test("keeps every url of a multi-valued remote, cleaning only the one that carried a token", () => {
+            const dir = repo();
+
+            plantUrlCredential(dir);
+            git(dir, "config", "--local", "--add", "remote.origin.url", "https://mirror.example.com/owner/repo.git");
+
+            expect(scrub(dir).code).toBe(0);
+            expect(git(dir, "config", "--local", "--get-all", "remote.origin.url").split("\n")).toEqual([
+                CLEAN_URL,
+                "https://mirror.example.com/owner/repo.git",
+            ]);
+        });
+
+        test("rewrites a submodule url in the superproject's config", () => {
+            const dir = repo();
+
+            // What `git submodule init` writes: the url a submodule is cloned from, copied
+            // out of `.gitmodules` into the config git actually reads.
+            git(dir, "config", "--local", "submodule.vendor.url", TOKEN_URL);
+
+            expect(scrub(dir).code).toBe(0);
+            expect(git(dir, "config", "--local", "submodule.vendor.url")).toBe(CLEAN_URL);
+        });
+
+        test("rewrites a url inside a submodule", () => {
+            const dir = withSubmodule();
+
+            git(join(dir, "vendor"), "remote", "set-url", "origin", TOKEN_URL);
+
+            expect(scrub(dir).code).toBe(0);
+            expect(url(join(dir, "vendor"))).toBe(CLEAN_URL);
+        });
+
+        test("leaves an ssh remote and a credential-free https remote alone", () => {
+            const dir = repo();
+
+            git(dir, "remote", "add", "origin", "git@github.com:owner/repo.git");
+            git(dir, "remote", "add", "upstream", CLEAN_URL);
+
+            expect(scrub(dir).code).toBe(0);
+            expect(url(dir)).toBe("git@github.com:owner/repo.git");
+            expect(url(dir, "upstream")).toBe(CLEAN_URL);
+        });
+
+        // A rewritten url is not the only copy git took. `git clone` writes the url it was
+        // given into the reflog message and `git fetch` writes it into FETCH_HEAD, both as
+        // plain text a lens reads with `cat`, so a scrub that stopped at the config would
+        // report a clean workspace over a token still on disk.
+        test("empties the reflog, which records the url a clone was given", () => {
+            const dir = repo();
+
+            plantUrlCredential(dir);
+
+            expect(readFileSync(join(dir, ".git/logs/HEAD"), "utf8")).not.toBe("");
+
+            scrub(dir);
+
+            expect(readFileSync(join(dir, ".git/logs/HEAD"), "utf8")).toBe("");
+        });
+
+        test("removes FETCH_HEAD, which records the url a fetch used", () => {
+            const dir = repo();
+            const other = repo();
+
+            plantUrlCredential(dir);
+            git(dir, "fetch", "-q", other);
+
+            expect(existsSync(join(dir, ".git/FETCH_HEAD"))).toBe(true);
+
+            scrub(dir);
+
+            expect(existsSync(join(dir, ".git/FETCH_HEAD"))).toBe(false);
+        });
+
+        test("leaves the reflog of a checkout whose urls carry no credential", () => {
+            const dir = repo();
+
+            plantHeader(dir);
+
+            scrub(dir);
+
+            expect(readFileSync(join(dir, ".git/logs/HEAD"), "utf8")).not.toBe("");
         });
     });
 

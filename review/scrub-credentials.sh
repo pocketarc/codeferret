@@ -5,20 +5,35 @@
 # credential reachable from the checkout is a credential a lens reads. review/DECISIONS.md,
 # under "The GitHub token never enters the step that runs the agent", has the argument.
 #
-# `actions/checkout` stores it two different ways, and both have to go.
+# A checkout stores it three different ways, and all three have to go.
 #
-#   1. `http.<server>.extraheader` in the repository's own config. Older versions, and
-#      anyone cloning by hand with a token in the url.
+#   1. `http.<server>.extraheader` in the repository's own config. What older versions of
+#      `actions/checkout` write.
 #   2. An `includeIf.gitdir:<workspace>/.git.path` in the repository's config, pointing at a
 #      credentials file under `$RUNNER_TEMP` with the header inside it. This is what v6.0.2
 #      does. The file is removed rather than dereferenced, because a lens reads it directly
 #      whether or not any git config still points at it.
+#   3. Userinfo in the url itself, as `remote.<name>.url` or `submodule.<name>.url`. This is
+#      what `git clone https://x-access-token:$TOKEN@github.com/...` leaves, which is an
+#      ordinary way to satisfy `checkout: skip`. The url is rewritten to its credential-free
+#      form rather than deleted, so the remote still resolves.
 #
 # `git config --local` does not expand `includeIf`, and a plain read does. Both were measured,
 # and so was what the difference costs: the version of this script that went looking for the
 # second shape with `--local` matched no key, read back no key, and exited 0 over a live
 # credential for a whole review. So a scrub that reports nothing is not evidence that there
-# was nothing to scrub.
+# was nothing to scrub. The third shape cost the same way and was found by reading rather than
+# by any case going red: the header above listed "anyone cloning by hand with a token in the
+# url" under case 1, and a token in a url is not an `extraheader`, so both the removal and the
+# read-back walked past it and the script reported a clean workspace over a live token.
+#
+# Rewriting a url does not reach every copy git took of it. `git clone` writes the url it was
+# given into the reflog message, and `git fetch` writes it into `FETCH_HEAD`, both as plain
+# text a lens reads with `cat`. So a repository whose url carried userinfo has its reflogs and
+# its `FETCH_HEAD` emptied as well; neither is read by anything a review does. What stays out
+# of reach is a credential the branch itself committed, which is part of the diff and a finding
+# for a lens rather than this script's to remove, and a `credential.helper` the caller
+# configured, whose store this script neither writes nor knows the shape of.
 #
 # Nothing here is decided by a file in the tree under review. The submodule pass ran behind a
 # `[ -f .gitmodules ]` guard until that was measured too: `git submodule foreach --recursive`
@@ -43,6 +58,36 @@ SELF=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}
 
 HEADER='^http\..*\.extraheader$'
 INCLUDES='^includeif\..*\.path$'
+URLS='^(remote|submodule)\..*\.url$'
+
+# Whether a url carries userinfo, which is where a token in a url sits.
+#
+# The authority alone, so a `@` anywhere in the path answers no. Only `http` and `https`, so
+# the `git@` of an ssh remote is left alone: it is a username with no secret behind it, and
+# stripping it would leave a remote that no longer resolves.
+has_userinfo() {
+    local authority
+
+    case "$1" in
+    http://* | https://*) ;;
+    *) return 1 ;;
+    esac
+
+    authority=${1#*://}
+    authority=${authority%%/*}
+
+    case "$authority" in
+    *@*) return 0 ;;
+    *) return 1 ;;
+    esac
+}
+
+# The same url with its userinfo gone. Only ever called behind `has_userinfo`.
+strip_userinfo() {
+    local rest=${1#*://}
+
+    printf '%s://%s\n' "${1%%://*}" "${rest#*@}"
+}
 
 # Where git would look for an include, given the path written in the config.
 #
@@ -61,6 +106,72 @@ resolve_include() {
     esac
 }
 
+# What a clone or a fetch recorded of the url it used, emptied.
+#
+# `git clone` writes "clone: from <url>" into the reflog of HEAD and of the branch it checked
+# out, and `git fetch` writes the url into `FETCH_HEAD`. Both are plain text under the git
+# directory, so a rewritten `remote.origin.url` leaves the token a lens can still read with
+# `cat`. Nothing a review does reads either: the diff is taken from refs, and a fetch writes
+# `FETCH_HEAD` afresh.
+#
+# Only reached where a url actually carried userinfo, so an ordinary run keeps its reflogs.
+purge_url_traces() {
+    local gitdir log
+
+    gitdir=$(git rev-parse --absolute-git-dir 2>/dev/null) || return 0
+
+    rm -f "$gitdir/FETCH_HEAD"
+
+    if [ -d "$gitdir/logs" ]; then
+        while IFS= read -r log; do
+            : >"$log"
+        done < <(find "$gitdir/logs" -type f)
+    fi
+
+    echo "emptied FETCH_HEAD and the reflogs in $gitdir, which hold the url a clone or a fetch used"
+    echo "a credential the branch committed into its own tree stays where it is: that is part of the diff, and a finding for a lens rather than this script's to remove"
+}
+
+# A url key is rewritten rather than removed, and every value of it: `remote.<name>.url` takes
+# more than one, and unsetting the key would leave a remote that resolves to nothing. The key
+# list is deduplicated because `--name-only` prints a multi-valued key once per value.
+#
+# The value never reaches the output. It is the credential, and everything printed here goes
+# into a job log a run publishes.
+scrub_urls() {
+    local key value seen="" cleaned dirty
+
+    while IFS= read -r key; do
+        [ -n "$key" ] || continue
+
+        case " $seen " in *" $key "*) continue ;; esac
+        seen="$seen $key"
+
+        cleaned=()
+        dirty=0
+
+        while IFS= read -r value; do
+            if has_userinfo "$value"; then
+                dirty=1
+                cleaned+=("$(strip_userinfo "$value")")
+            else
+                cleaned+=("$value")
+            fi
+        done < <(git config --local --get-all "$key" || true)
+
+        [ "$dirty" = 1 ] || continue
+
+        git config --local --unset-all "$key" || true
+
+        for value in "${cleaned[@]}"; do
+            git config --local --add "$key" "$value"
+        done
+
+        echo "rewrote $key in $(pwd) without the credential embedded in it"
+        URL_SCRUBBED=1
+    done < <(git config --local --name-only --get-regexp "$URLS" || true)
+}
+
 # `--local` on every read here: this is the file being edited, and a read that expanded an
 # include would report a key `--unset-all` cannot remove.
 #
@@ -69,6 +180,13 @@ resolve_include() {
 # printed that it had scrubbed one and that nothing had been reachable, in that order.
 scrub_repo() {
     local key path
+
+    URL_SCRUBBED=0
+    scrub_urls
+
+    if [ "$URL_SCRUBBED" = 1 ]; then
+        purge_url_traces
+    fi
 
     while IFS= read -r key; do
         [ -n "$key" ] || continue
@@ -100,8 +218,26 @@ scrub_repo() {
 # What is still reachable here, read the way a lens would read it: no `--local`, so includes
 # are expanded and the global and system files are in scope too. The origin is printed because
 # a value in a file this script cannot edit still has to be named.
+#
+# Every mechanism the scrub covers is read back, because the read-back is the whole of the
+# evidence and one it does not cover is one the script reports a clean workspace over. A url
+# key is named only where its value carries userinfo, since most of them are ordinary remotes,
+# and the value itself is dropped: the caller prints this to a job log.
 reachable() {
+    local line origin key value
+
     git config --show-origin --name-only --get-regexp "$HEADER" 2>/dev/null || true
+
+    while IFS= read -r line; do
+        origin=${line%%$'\t'*}
+        key=${line#*$'\t'}
+        value=${key#* }
+        key=${key%% *}
+
+        if has_userinfo "$value"; then
+            printf '%s\t%s\n' "$origin" "$key"
+        fi
+    done < <(git config --show-origin --get-regexp "$URLS" 2>/dev/null || true)
 }
 
 case "${1:-}" in

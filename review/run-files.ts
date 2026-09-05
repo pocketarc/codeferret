@@ -29,6 +29,44 @@ export const RUN_FILES = {
 /** Every name above, for a caller that has to see the set rather than one member. */
 export const RUN_FILE_NAMES: readonly string[] = Object.values(RUN_FILES);
 
+/** Every run file a run's numbers go in. `findingsChecked` is the marker and is not one. */
+export type Reported = Exclude<(typeof RUN_FILES)[keyof typeof RUN_FILES], typeof RUN_FILES.findingsChecked>;
+
+/**
+ * What each of those files says about a run that never reported a number.
+ *
+ * finalise.ts writes these before the extraction runs, and extract-findings.ts writes them
+ * again for a session with no result message in its log. They used to be written on the second
+ * path alone, so a run whose log the sweep removed left whatever was already on disk: the job
+ * summary, the action's `cost-usd` and `findings-count` outputs and the artifact then carried
+ * numbers with nothing behind them, and `permission-denials` is the file CLAUDE.md's lapse
+ * condition for running the orchestrator under `bypassPermissions` is measured from.
+ *
+ * Here rather than in either of them, because both write the same thing and the two used to
+ * hold a copy each with nothing comparing them. To every reader an absent file is
+ * indistinguishable from a zero and `unknown` is what a killed session writes, so one path
+ * saying `unknown` where the other says `not measured` is two answers to the same question with
+ * every gate green.
+ */
+export const UNREPORTED: Record<Reported, string> = {
+    [RUN_FILES.findingsCount]: "none reported",
+    [RUN_FILES.cost]: "unknown",
+    [RUN_FILES.outputTokens]: "unknown",
+    [RUN_FILES.durationMs]: "unknown",
+    [RUN_FILES.permissionDenials]: "unknown",
+};
+
+/**
+ * What build-prompts.sh drops in the build directory to say it built it.
+ *
+ * That script refuses to delete a plugin directory that does not carry this file, because
+ * /codeferret:review has a model paste the path in by hand. `guardBuildDir` asks the same
+ * question for the same reason one step later: it deletes recursively through the directory it
+ * is handed, and by then a session has had a whole review to leave a symbolic link where the
+ * directory was.
+ */
+export const RUN_MARKER = ".codeferret-run";
+
 /**
  * Where build-prompts.sh writes the lenses it dispatched, one `<namespace>:<lens>` per line.
  *

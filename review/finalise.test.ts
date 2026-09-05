@@ -9,12 +9,14 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { guardBuildDir, settle, UNREPORTED } from "./finalise.ts";
-import { RUN_FILES } from "./run-files.ts";
+import { RUN_FILES, RUN_MARKER } from "./run-files.ts";
 
 let dir = "";
 
 beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "codeferret-finalise-"));
+    // What build-prompts.sh leaves behind, and what the sweep now refuses to run without.
+    writeFileSync(join(dir, RUN_MARKER), "");
 });
 
 afterEach(() => {
@@ -69,6 +71,39 @@ describe("guardBuildDir: what a run will still read after the session", () => {
 
         expect(guardBuildDir(dir)).toEqual([RUN_FILES.durationMs, "lenses.txt"]);
         expect(existsSync(join(dir, "run.json"))).toBe(true);
+    });
+
+    // The sweep deletes recursively, and the session has had a whole review to move what it is
+    // pointed at. Each of these is a directory the sweep must refuse rather than empty.
+    test("refuses a build directory the session replaced with a link, leaving the target alone", () => {
+        const elsewhere = mkdtempSync(join(tmpdir(), "codeferret-elsewhere-"));
+        mkdirSync(join(elsewhere, "documents"));
+
+        const link = join(dir, "..", `${dir.split("/").pop()}-link`);
+        symlinkSync(elsewhere, link);
+
+        expect(() => guardBuildDir(link)).toThrow(link);
+        expect(existsSync(join(elsewhere, "documents"))).toBe(true);
+
+        rmSync(link, { force: true });
+        rmSync(elsewhere, { recursive: true, force: true });
+    });
+
+    test("refuses a directory carrying no marker, which is any directory this run did not build", () => {
+        rmSync(join(dir, RUN_MARKER));
+        mkdirSync(join(dir, "something"));
+
+        expect(() => guardBuildDir(dir)).toThrow(RUN_MARKER);
+        expect(existsSync(join(dir, "something"))).toBe(true);
+    });
+
+    test("refuses a marker the session replaced with a link, which it could point anywhere", () => {
+        rmSync(join(dir, RUN_MARKER));
+        symlinkSync("/etc/hosts", join(dir, RUN_MARKER));
+        mkdirSync(join(dir, "something"));
+
+        expect(() => guardBuildDir(dir)).toThrow(RUN_MARKER);
+        expect(existsSync(join(dir, "something"))).toBe(true);
     });
 });
 
