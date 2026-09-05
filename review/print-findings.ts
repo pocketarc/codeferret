@@ -8,9 +8,10 @@
  * the same modules `post-review.ts` uses.
  *
  * What differs from the posted body is what suits a terminal. Findings are grouped by file
- * rather than ordered by severity, because whoever reads this opens the files next. Nothing
- * is escaped, because nothing here goes through GitHub's renderer. Severity and lens
- * agreement stay out for the reason `review/DECISIONS.md` gives: both are in the findings file.
+ * rather than ordered by risk, because whoever reads this opens the files next. Nothing
+ * is escaped, because nothing here goes through GitHub's renderer. What a finding scored and
+ * which lenses agreed stay out for the reason `review/DECISIONS.md` gives: both are in the
+ * findings file.
  *
  * Usage: bun print-findings.ts <findings.json>
  */
@@ -18,7 +19,7 @@
 import { dirname } from "node:path";
 import { caveatOf, COVERAGE_NOTICES, coverageOf, noticesFor, reopenedReasons } from "./caveats.ts";
 import { lensLabel, lineOf, partition } from "./findings.ts";
-import { readMerged, runFacts, vetAgainstExisting } from "./read-run.ts";
+import { readMerged, REVIEW_THRESHOLD, runFacts, vetAgainstExisting } from "./read-run.ts";
 import type { Finding } from "./findings.ts";
 import { where } from "./review-body.ts";
 import { plural } from "./words.ts";
@@ -36,7 +37,12 @@ const merged = await readMerged(findingsFile, (line) => console.error(line));
 
 // A suppression the posting path would overturn has to be overturned here too, or a session
 // reports as settled a finding a posted review would raise.
-const vetted = await vetAgainstExisting(merged.findings, buildDir, (line) => console.error(line));
+const vetted = await vetAgainstExisting(
+    merged.findings,
+    buildDir,
+    (line) => console.error(line),
+    REVIEW_THRESHOLD,
+);
 const { fresh, suppressed, declined } = partition(vetted.findings);
 
 // The same sentences the posted path writes. Without them a session reopened a suppression

@@ -9,6 +9,10 @@
  */
 
 import type { Located, Survey } from "./existing.ts";
+import { meetsThreshold, score, tierOf as bandOf, tierRank } from "./risk.ts";
+import type { Risk, Tier } from "./risk.ts";
+
+export type { Tier } from "./risk.ts";
 
 export interface Finding {
     found_by?: string[];
@@ -17,12 +21,14 @@ export interface Finding {
     line?: number;
     end_line?: number;
     /**
-     * One of `SEVERITY_ORDER`, but typed as a string because check-findings.ts keeps a
-     * finding whose severity it could not repair. `isListed` and `severityRank` are where
-     * an unrecognised label is decided on.
+     * What the orchestrator answered on each risk axis. `tierOf` is the one reader.
+     *
+     * Optional and typed loosely for the reason `line` is: check-findings.ts keeps a finding
+     * whose risk it could not repair, and `score` treats a value it does not recognise as
+     * nothing rather than as the worst.
      */
-    severity: string;
-    /** Optional for the reason `line` is. `severity` above is widened instead of made optional. */
+    risk?: Partial<Risk>;
+    /** Optional for the reason `line` is. */
     category?: string;
     title: string;
     body: string;
@@ -46,26 +52,21 @@ export interface Merged {
     findings: Finding[];
 }
 
-export const SEVERITY_ORDER = ["critical", "high", "medium", "low", "nit", "question"] as const;
-
-export type Severity = (typeof SEVERITY_ORDER)[number];
-
 /**
- * The severities the body carries in full when it has a run to defer the rest to.
+ * What tier a finding sits in, computed from its risk answers every time it is asked.
  *
- * Everything else is in the findings file, which is what the agent doing the fixing reads.
- * A person reading the pull request gets the two that decide whether to stop and look.
- *
- * Declared as severities rather than as strings, so a name in this set that the schema no
- * longer has fails to compile. As strings it would silently list nothing at run time.
+ * Derived rather than stored, so there is no second copy to disagree with `review/risk.ts`
+ * and no field a session could write for itself. What the artifact carries is `risk`, the
+ * answers, which is the more useful record anyway: a reader who disagrees with the weights
+ * can re-score it, and nobody can re-derive answers from a tier.
  */
-const LISTED_SEVERITIES: readonly Severity[] = ["critical", "high"];
+export function tierOf(f: Finding): Tier {
+    return bandOf(score(f.risk ?? {}));
+}
 
-export const LISTED: ReadonlySet<string> = new Set(LISTED_SEVERITIES);
-
-export function severityRank(s: string): number {
-    const i = SEVERITY_ORDER.findIndex((known) => known === s);
-    return i === -1 ? SEVERITY_ORDER.length : i;
+/** Where a finding sorts. Lower is worse, so the worst reads first. */
+export function findingRank(f: Finding): number {
+    return tierRank(tierOf(f));
 }
 
 /**
@@ -84,15 +85,14 @@ export function lineOf(f: Finding): number | undefined {
 }
 
 /**
- * Whether the body prints this finding in full rather than counting it.
+ * Whether the body prints this finding rather than leaving it to the findings file.
  *
- * A severity the schema does not carry is listed. check-findings.ts lowercases and trims a
- * severity it can repair and keeps the finding either way, so what reaches here
- * unrecognised is a label nobody chose. Leaving a critical defect out of the comment on the
- * strength of a label nothing here recognises is the wrong way to be wrong.
+ * The threshold is the caller's, because it is an input a consumer sets and prose is not a
+ * boundary: passing it in is what stops the value being read in one place and defaulted in
+ * another.
  */
-export function isListed(f: Finding): boolean {
-    return LISTED.has(f.severity) || severityRank(f.severity) === SEVERITY_ORDER.length;
+export function isListed(f: Finding, threshold: Tier): boolean {
+    return meetsThreshold(tierOf(f), threshold);
 }
 
 /** The lenses that did not report normally, which is the count the body leads with. */
@@ -286,7 +286,12 @@ function raisedBefore(raisedFiles: ReadonlySet<string>, file: string): boolean {
  * nothing got an empty set and every uncited `already-reported` finding reopened, and the
  * signature said that was a legitimate way to call this.
  */
-export function vetSuppression(findings: Finding[], discussion: Survey, raisedFiles: ReadonlySet<string>): Vetted {
+export function vetSuppression(
+    findings: Finding[],
+    discussion: Survey,
+    raisedFiles: ReadonlySet<string>,
+    threshold: Tier,
+): Vetted {
     const { comments } = discussion;
     const counts = noReopenings();
 
@@ -310,12 +315,13 @@ export function vetSuppression(findings: Finding[], discussion: Survey, raisedFi
             // a line, have any account reply "intentional", close it, and every finding in
             // that file is declined for as long as the pull request lives.
             //
-            // The severities that carry the review are held to the association instead,
-            // matching the `already-reported` branch below. `orchestrator.md` carves out a
+            // A finding the body prints in full is held to the association instead, matching
+            // the `already-reported` branch below. That set moves with the threshold, which is
+            // the point: raising the threshold narrows what a closed thread alone can settle. `orchestrator.md` carves out a
             // security defect from any reply, and that carve-out is prompt text sitting in
             // the same context as the comments it judges, so this branch is where refusing
             // costs an attacker anything.
-            const closed = cited?.onClosedThread === true && !isListed(f);
+            const closed = cited?.onClosedThread === true && !isListed(f, threshold);
 
             if (!cited || !(entitled(cited) || closed)) return reopen(f, "untraceable");
 
@@ -353,13 +359,13 @@ export function vetSuppression(findings: Finding[], discussion: Survey, raisedFi
             // Citing nothing is not the weaker case, it is the emptier one. Gated on a url
             // being present, omitting the url skipped the bar and fell through to
             // `raisedBefore`, which asks only whether the previous review raised anything at
-            // all in that file, at any severity. A low finding in the same file would then
-            // settle a critical. So the bar is the same whether or not a comment is cited.
+            // all in that file, at any tier. A nit in the same file would then settle a
+            // critical. So the bar is the same whether or not a comment is cited.
             //
             // The cost is a critical that was genuinely reported before and never commented
             // on, printed in full again on every push. Criticals are rare and that is the
             // direction to be wrong in.
-            if (isListed(f) && !(cited && entitled(cited))) return reopen(f, "unvouched");
+            if (isListed(f, threshold) && !(cited && entitled(cited))) return reopen(f, "unvouched");
 
             if (url) {
                 if (cited && isAbout(cited, f.file)) return f;
@@ -395,7 +401,7 @@ export function isMerged(value: unknown): value is Merged {
  * body prints both counts: a matcher that starts dropping findings shows up as a number.
  */
 export function partition(findings: Finding[]): Partitioned {
-    const all = [...findings].sort((a, b) => severityRank(a.severity) - severityRank(b.severity));
+    const all = [...findings].sort((a, b) => findingRank(a) - findingRank(b));
 
     return {
         all,

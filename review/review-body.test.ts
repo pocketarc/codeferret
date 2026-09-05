@@ -15,7 +15,8 @@ import {
     mention,
 } from "./review-body.ts";
 import type { Posting } from "./review-body.ts";
-import { finding } from "./test-fixtures.ts";
+import { REVIEW_THRESHOLD } from "./read-run.ts";
+import { finding, NO_RISK, riskFor } from "./test-fixtures.ts";
 
 describe("bullet", () => {
     test("escapes a trailing backslash in a title, which would eat the closing emphasis", () => {
@@ -293,6 +294,7 @@ describe("composeReview", () => {
         resolveDenied: false,
         leftOpen: 0,
         to: { kind: "session" },
+        threshold: REVIEW_THRESHOLD,
         linkable: new Set(),
         dispatched: [],
         unread: [],
@@ -318,39 +320,39 @@ describe("composeReview", () => {
         return composeReview(merged, { ...quiet, ...posting }, partition(merged.findings)).body;
     }
 
-    test("lists the critical and high findings when a run holds the rest", () => {
-        const body = review({ findings: [finding({ severity: "high" })] }, { to: onARunner });
+    test("lists the findings at the threshold and above when a run holds the rest", () => {
+        const body = review({ findings: [finding({ risk: riskFor("high") })] }, { to: onARunner });
 
-        expect(body).toContain("### Critical and high findings");
+        expect(body).toContain(`### Findings rated ${REVIEW_THRESHOLD} and above`);
         expect(body).toContain("1 of 1 finding.");
     });
 
     test("heads no section when a run holds every finding and none is listed", () => {
-        const body = review({ findings: [finding({ severity: "low" })] }, { to: onARunner });
+        const body = review({ findings: [finding({ risk: riskFor("low") })] }, { to: onARunner });
 
         expect(body).not.toContain("### Findings");
-        expect(body).toContain("No finding is critical or high.");
+        expect(body).toContain(`Nothing rates ${REVIEW_THRESHOLD} or above.`);
     });
 
     test("carries every finding when there is no run to hold them", () => {
-        const body = review({ findings: [finding({ severity: "low", title: "A low one" })] });
+        const body = review({ findings: [finding({ risk: riskFor("low"), title: "A low one" })] });
 
         expect(body).toContain("### Findings");
         expect(body).toContain("A low one");
         expect(body).not.toContain("build directory");
     });
 
-    test("lists a severity the schema does not carry rather than leaving it out", () => {
-        const body = review({ findings: [finding({ severity: "Critical", title: "Odd label" })] }, { to: onARunner });
+    test("names the threshold in the heading whatever scored above it", () => {
+        const body = review({ findings: [finding({ risk: riskFor("critical") })] }, { to: onARunner });
 
-        expect(body).toContain("Odd label");
+        expect(body).toContain(`### Findings rated ${REVIEW_THRESHOLD} and above`);
     });
 
-    test("stops promising critical and high when a label nothing recognises is in the list", () => {
-        const body = review({ findings: [finding({ severity: "sev1", title: "Odd label" })] }, { to: onARunner });
+    test("leaves out a finding whose risk scores nothing, which is a nit", () => {
+        const body = review({ findings: [finding({ risk: NO_RISK, title: "Rated nothing" })] }, { to: onARunner });
 
-        expect(body).toContain("### Findings worth stopping for");
-        expect(body).not.toContain("### Critical and high findings");
+        expect(body).not.toContain("Rated nothing");
+        expect(body).toContain(`Nothing rates ${REVIEW_THRESHOLD} or above.`);
     });
 
     test("announces a lens that did not report, above the collapsed list", () => {
@@ -549,13 +551,16 @@ describe("composeReview", () => {
     });
 
     test("links the run for the findings the body does not print", () => {
-        const body = review({ findings: [finding({ severity: "high" })] }, { to: onARunner });
+        const body = review({ findings: [finding({ risk: riskFor("high") })] }, { to: onARunner });
 
         expect(body).toContain("[this run](https://github.com/pocketarc/codeferret/actions/runs/7)");
     });
 
     test("carries every finding when the run kept no artifact to defer to", () => {
-        const body = review({ findings: [finding({ severity: "low", title: "A low one" })] }, { to: withNoArtifact });
+        const body = review(
+            { findings: [finding({ risk: riskFor("low"), title: "A low one" })] },
+            { to: withNoArtifact },
+        );
 
         expect(body).toContain("A low one");
         expect(body).not.toContain("codeferret-run");
@@ -563,7 +568,7 @@ describe("composeReview", () => {
 
     test("reports what composed the body, so a log beside it cannot disagree", () => {
         const merged: Merged = {
-            findings: [finding({ severity: "high" }), finding({ severity: "low" })],
+            findings: [finding({ risk: riskFor("high") }), finding({ risk: riskFor("low") })],
             lens_health: [{ lens: "codeferret:caveman-review", findings_returned: 2, ok: true }],
         };
         const composed = composeReview(

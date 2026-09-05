@@ -1,6 +1,8 @@
 {
     "type": "object",
-    "required": ["findings"],
+    "required": [
+        "findings"
+    ],
     "additionalProperties": false,
     "properties": {
         "summary": {
@@ -16,10 +18,15 @@
             "description": "Threads to mark resolved. Judge each one; there is no mechanical rule behind this.",
             "items": {
                 "type": "object",
-                "required": ["thread_id", "reason"],
+                "required": [
+                    "thread_id",
+                    "reason"
+                ],
                 "additionalProperties": false,
                 "properties": {
-                    "thread_id": { "type": "string" },
+                    "thread_id": {
+                        "type": "string"
+                    },
                     "reason": {
                         "type": "string",
                         "description": "One line on why this thread is finished, shown in the review so a wrong call is visible."
@@ -32,11 +39,20 @@
             "description": "One entry per lens you dispatched, including any that failed or returned nothing.",
             "items": {
                 "type": "object",
-                "required": ["lens", "findings_returned", "ok"],
+                "required": [
+                    "lens",
+                    "findings_returned",
+                    "ok"
+                ],
                 "additionalProperties": false,
                 "properties": {
-                    "lens": { "type": "string" },
-                    "findings_returned": { "type": "integer", "minimum": 0 },
+                    "lens": {
+                        "type": "string"
+                    },
+                    "findings_returned": {
+                        "type": "integer",
+                        "minimum": 0
+                    },
                     "ok": {
                         "type": "boolean",
                         "description": "False when the lens errored, could not load its skill, or returned an unusable response."
@@ -52,12 +68,25 @@
             "type": "array",
             "items": {
                 "type": "object",
-                "required": ["found_by", "file", "line", "severity", "category", "title", "body", "status"],
+                "required": [
+                    "found_by",
+                    "file",
+                    "line",
+                    "category",
+                    "title",
+                    "body",
+                    "status",
+                    "risk"
+                ],
                 "additionalProperties": false,
                 "properties": {
                     "status": {
                         "type": "string",
-                        "enum": ["new", "already-reported", "declined"],
+                        "enum": [
+                            "new",
+                            "already-reported",
+                            "declined"
+                        ],
                         "description": "'already-reported' when a comment on this pull request already describes the defect, whoever wrote it. 'declined' when a reply rejected it or chose not to act. Only 'new' findings get posted. When in doubt say 'new': a repeated comment is a small cost, a suppressed finding is one nobody sees."
                     },
                     "existing_comment_url": {
@@ -66,7 +95,9 @@
                     },
                     "found_by": {
                         "type": "array",
-                        "items": { "type": "string" },
+                        "items": {
+                            "type": "string"
+                        },
                         "description": "Every lens that independently reported this defect. More than one entry means it was deduplicated, which is corroboration worth surfacing."
                     },
                     "file": {
@@ -85,11 +116,9 @@
                         "type": "boolean",
                         "description": "False when this line is not part of the reviewed diff. Report it either way: the review is a comment on the pull request rather than on a line, so nothing is dropped for sitting outside the diff."
                     },
-                    "severity": {
-                        "type": "string",
-                        "enum": ["critical", "high", "medium", "low", "nit", "question"]
+                    "category": {
+                        "type": "string"
                     },
-                    "category": { "type": "string" },
                     "title": {
                         "type": "string",
                         "description": "One line, no hedging."
@@ -97,6 +126,151 @@
                     "body": {
                         "type": "string",
                         "description": "The problem and the fix. When several lenses described it, keep what each added rather than flattening to the shortest version."
+                    },
+                    "risk": {
+                        "type": "object",
+                        "required": [
+                            "impact",
+                            "data_exposure",
+                            "blast_radius",
+                            "reversibility",
+                            "detectability",
+                            "availability",
+                            "contract",
+                            "likelihood",
+                            "confidence",
+                            "privileges_required",
+                            "attack_vector",
+                            "timing"
+                        ],
+                        "additionalProperties": false,
+                        "description": "How much this finding matters, as answers a diff can support rather than one overall word. Every axis is required; answer `not-applicable` where the question does not apply to this kind of defect rather than guessing, because a guess is scored and a stated non-answer is not. review/risk.ts turns these into a number and a tier; nothing here is a tier.",
+                        "properties": {
+                            "impact": {
+                                "type": "string",
+                                "enum": [
+                                    "catastrophic",
+                                    "serious",
+                                    "moderate",
+                                    "minor",
+                                    "none"
+                                ],
+                                "description": "The worst outcome that could realistically follow if this defect is left in. catastrophic: Arbitrary code execution, total data loss, or funds moved wrongly. serious: Data disclosed or corrupted, authentication bypassed, or a feature broken for everyone. moderate: A feature works incorrectly in a way a user would notice and report. minor: Cosmetic, or wrong only in an edge case nobody depends on. none: Nothing goes wrong. A style or clarity point."
+                            },
+                            "data_exposure": {
+                                "type": "string",
+                                "enum": [
+                                    "regulated",
+                                    "credentials",
+                                    "personal",
+                                    "internal",
+                                    "none"
+                                ],
+                                "description": "What data this puts at risk, and whether losing it would be reportable. regulated: Health, payment card, or personal data whose breach is reportable under GDPR, PCI DSS or HIPAA. credentials: Tokens, keys, passwords or session material. personal: Data identifying a person, without a specific reporting duty attached. internal: Business data that is not public and not about a person. none: No data is exposed."
+                            },
+                            "blast_radius": {
+                                "type": "string",
+                                "enum": [
+                                    "system",
+                                    "all-users",
+                                    "tenant",
+                                    "single-user",
+                                    "none"
+                                ],
+                                "description": "How much is affected when this goes wrong, rather than how badly. system: The whole deployment, or data belonging to every tenant. all-users: Every user of one tenant or one installation. tenant: One organisation's data, where others are unaffected. single-user: Only the person who triggers it, their own data included. none: Nothing is affected at run time."
+                            },
+                            "reversibility": {
+                                "type": "string",
+                                "enum": [
+                                    "irreversible",
+                                    "costly",
+                                    "reversible",
+                                    "not-applicable"
+                                ],
+                                "description": "Whether the damage can be undone once it has happened. irreversible: Deleted data with no backup, a leaked secret, or a settled payment. costly: Recoverable, but only by hand, from backups, or with a migration. reversible: Undone by fixing the code and re-running. not-applicable: Nothing happens that would need undoing."
+                            },
+                            "detectability": {
+                                "type": "string",
+                                "enum": [
+                                    "silent",
+                                    "delayed",
+                                    "obvious",
+                                    "not-applicable"
+                                ],
+                                "description": "Whether anyone would find out this had happened. silent: No error, no log, no alert. Wrong numbers or missing records that look correct. delayed: Discovered eventually, by reconciliation, a report, or a user complaint. obvious: Fails loudly: an exception, a failed request, a broken page. not-applicable: Nothing happens at run time to detect."
+                            },
+                            "availability": {
+                                "type": "string",
+                                "enum": [
+                                    "outage",
+                                    "degradation",
+                                    "none",
+                                    "not-applicable"
+                                ],
+                                "description": "What this costs in liveness or resources. outage: Can take the service down: unbounded query, exhaustion, deadlock, no timeout. degradation: Measurably slower or heavier under ordinary load. none: No effect on liveness. not-applicable: Not code that runs under load."
+                            },
+                            "contract": {
+                                "type": "string",
+                                "enum": [
+                                    "standard",
+                                    "house-rule",
+                                    "none"
+                                ],
+                                "description": "Whether this breaks a rule that is written down somewhere, rather than one you are applying. standard: Violates a named external standard: a WCAG criterion, an RFC, a documented API contract. house-rule: Violates this repository's own written conventions, REVIEW.md included. none: No written rule covers it. The claim rests on your judgement."
+                            },
+                            "likelihood": {
+                                "type": "string",
+                                "enum": [
+                                    "certain",
+                                    "likely",
+                                    "possible",
+                                    "unlikely",
+                                    "theoretical"
+                                ],
+                                "description": "How likely the bad outcome is to be reached in practice, not how bad it would be. certain: Happens every time the code runs. likely: Happens under ordinary use, without anyone trying. possible: Needs an unusual input, a specific sequence, or deliberate effort. unlikely: Needs a race, a rare configuration, or several things to go wrong at once. theoretical: No path you can actually construct, though the shape is wrong."
+                            },
+                            "confidence": {
+                                "type": "string",
+                                "enum": [
+                                    "confirmed",
+                                    "probable",
+                                    "possible",
+                                    "speculative"
+                                ],
+                                "description": "How sure you are the defect is real, having read the code rather than recognised a pattern. confirmed: Traced in the code. You can name the path from input to damage. probable: Strongly implied by what you read, without following every branch. possible: Consistent with the code, but it depends on something you could not see. speculative: A recognised shape. You have not confirmed it does what you suspect."
+                            },
+                            "privileges_required": {
+                                "type": "string",
+                                "enum": [
+                                    "none",
+                                    "user",
+                                    "elevated",
+                                    "maintainer",
+                                    "not-applicable"
+                                ],
+                                "description": "What someone must already have in order to trigger this. none: Anonymous. No account, no session. user: Any ordinary authenticated account. elevated: An administrator, or a role granted deliberately. maintainer: Someone who can already deploy or push code, so could do the damage anyway. not-applicable: Not something anyone triggers."
+                            },
+                            "attack_vector": {
+                                "type": "string",
+                                "enum": [
+                                    "network",
+                                    "local",
+                                    "ci",
+                                    "push-access",
+                                    "not-applicable"
+                                ],
+                                "description": "Where this can be reached from. network: Over the internet, by anyone who can reach the service. local: Only from the machine, or from inside the network boundary. ci: Only through the build or deployment pipeline. push-access: Only by someone who can already commit to this repository. not-applicable: Not reachable by anybody. A correctness or clarity defect."
+                            },
+                            "timing": {
+                                "type": "string",
+                                "enum": [
+                                    "live",
+                                    "latent",
+                                    "not-applicable"
+                                ],
+                                "description": "Whether this is exploitable now or only under conditions that do not hold yet. live: Exploitable against the code as it stands. latent: Needs a future caller, a config change, or more data than exists today. not-applicable: Not a question of timing."
+                            }
+                        }
                     }
                 }
             }

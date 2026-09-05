@@ -3,7 +3,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { applyRules, readSchema, selfCheck } from "./finding-rules.ts";
-import { rawFinding as finding } from "./test-fixtures.ts";
+import { rawFinding as finding, riskFor } from "./test-fixtures.ts";
 
 const schema = await readSchema();
 
@@ -19,8 +19,12 @@ describe("selfCheck", () => {
         expect(rules.rules).toBeGreaterThan(0);
     });
 
-    test("a schema with no severity enum leaves that repair unable to run", () => {
-        expect(selfCheck({ type: "object", properties: {} }).enumsLost).toEqual(["status", "severity"]);
+    test("a schema with no status enum turns the status repair off", () => {
+        expect(selfCheck({ type: "object", properties: {} }).enumsLost).toEqual(["status"]);
+    });
+
+    test("ruleFor answers every axis under risk with the entry on risk itself", () => {
+        expect(selfCheck(schema).unruled).toEqual([]);
     });
 });
 
@@ -41,6 +45,21 @@ describe("applyRules", () => {
 
         expect(out.kept).toBe(1);
         expect(out.dropped[0]?.label).toContain("Nothing to render");
+    });
+
+    test("a finding whose risk names a value the schema does not is kept and noted", () => {
+        const out = check({ findings: [finding({ risk: { ...riskFor("high"), impact: "apocalyptic" } })] });
+
+        expect(out.kept).toBe(1);
+        expect(out.dropped).toEqual([]);
+        expect(out.warnings[0]?.message).toContain("apocalyptic");
+    });
+
+    test("a finding with no risk at all is kept, and scores as a nit", () => {
+        const bare = finding();
+        delete bare.risk;
+
+        expect(check({ findings: [bare] }).kept).toBe(1);
     });
 
     test("a lens claiming health as a string reads as needing attention", () => {

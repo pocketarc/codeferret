@@ -3,7 +3,17 @@ import { asExisting, survey } from "./existing.ts";
 import { isListed, lineOf, partition, vetSuppression } from "./findings.ts";
 import type { Finding } from "./findings.ts";
 import { filesRaisedBefore } from "./previous.ts";
-import { finding } from "./test-fixtures.ts";
+import { REVIEW_THRESHOLD } from "./read-run.ts";
+import { meetsThreshold, TIER_NAMES } from "./risk.ts";
+import { finding, NO_RISK, riskFor } from "./test-fixtures.ts";
+
+const LISTED_TIERS = TIER_NAMES.filter((tier) => meetsThreshold(tier, REVIEW_THRESHOLD));
+const UNLISTED_TIERS = TIER_NAMES.filter((tier) => !meetsThreshold(tier, REVIEW_THRESHOLD));
+
+test("both sides of the threshold have a tier, so no loop below runs over nothing", () => {
+    expect(LISTED_TIERS.length).toBeGreaterThan(0);
+    expect(UNLISTED_TIERS.length).toBeGreaterThan(0);
+});
 
 /**
  * `vetSuppression` against a case written as the file on disk.
@@ -14,14 +24,14 @@ import { finding } from "./test-fixtures.ts";
  * this boundary instead.
  */
 const vet = (findings: Finding[], existing: unknown, previous?: unknown): ReturnType<typeof vetSuppression> =>
-    vetSuppression(findings, survey(asExisting(existing)), filesRaisedBefore(previous));
+    vetSuppression(findings, survey(asExisting(existing)), filesRaisedBefore(previous), REVIEW_THRESHOLD);
 
 describe("partition", () => {
-    test("splits on status and orders by severity", () => {
+    test("splits on status and orders by risk", () => {
         const { all, fresh, suppressed, declined } = partition([
-            finding({ title: "low", severity: "low" }),
+            finding({ title: "low", risk: riskFor("low") }),
             finding({ title: "seen", status: "already-reported" }),
-            finding({ title: "crit", severity: "critical" }),
+            finding({ title: "crit", risk: riskFor("critical") }),
             finding({ title: "no", status: "declined" }),
         ]);
 
@@ -49,14 +59,19 @@ describe("lineOf", () => {
 });
 
 describe("isListed", () => {
-    test("lists the two severities that decide whether to stop and look", () => {
-        expect(isListed(finding({ severity: "critical" }))).toBe(true);
-        expect(isListed(finding({ severity: "high" }))).toBe(true);
-        expect(isListed(finding({ severity: "medium" }))).toBe(false);
+    test("lists everything at the threshold or above", () => {
+        for (const tier of LISTED_TIERS) expect(isListed(finding({ risk: riskFor(tier) }), REVIEW_THRESHOLD)).toBe(true);
     });
 
-    test("lists a label nothing recognises rather than leaving it out", () => {
-        expect(isListed(finding({ severity: "Critical" }))).toBe(true);
+    test("leaves out everything under it", () => {
+        for (const tier of UNLISTED_TIERS) {
+            expect(isListed(finding({ risk: riskFor(tier) }), REVIEW_THRESHOLD)).toBe(false);
+        }
+    });
+
+    test("leaves out a finding whose risk scores nothing, which puts it in the bottom tier", () => {
+        expect(isListed(finding({ risk: NO_RISK }), REVIEW_THRESHOLD)).toBe(false);
+        expect(isListed(finding({ risk: undefined }), REVIEW_THRESHOLD)).toBe(false);
     });
 });
 
@@ -109,10 +124,10 @@ describe("vetSuppression: who may settle a finding", () => {
     // GitHub resolves a conversation for whoever opened the pull request as well as for
     // anyone with repository write, so a closed thread on an outside contributor's branch is
     // the word of the person under review.
-    for (const severity of ["critical", "high"]) {
-        test(`a resolved thread cannot decline a ${severity} on its own`, () => {
+    for (const tier of LISTED_TIERS) {
+        test(`a resolved thread cannot decline a ${tier} finding on its own`, () => {
             const out = vet(
-                [finding({ file: "a.ts", severity, status: "declined", existing_comment_url: replyUrl })],
+                [finding({ file: "a.ts", risk: riskFor(tier), status: "declined", existing_comment_url: replyUrl })],
                 existing("NONE", true),
             );
 
@@ -120,9 +135,9 @@ describe("vetSuppression: who may settle a finding", () => {
             expect(out.findings[0]?.status).toBe("new");
         });
 
-        test(`an owner's reply on that thread still declines a ${severity}`, () => {
+        test(`an owner's reply on that thread still declines a ${tier} finding`, () => {
             const out = vet(
-                [finding({ file: "a.ts", severity, status: "declined", existing_comment_url: replyUrl })],
+                [finding({ file: "a.ts", risk: riskFor(tier), status: "declined", existing_comment_url: replyUrl })],
                 existing("OWNER", true),
             );
 
@@ -130,15 +145,14 @@ describe("vetSuppression: who may settle a finding", () => {
         });
     }
 
-    // A severity nothing recognises is printed in full as well, so it takes the same author.
-    test("a resolved thread cannot decline a finding whose severity nothing recognises", () => {
+    test("a resolved thread declines a finding whose risk scores nothing, which is a nit", () => {
         const out = vet(
-            [finding({ file: "a.ts", severity: "blocker", status: "declined", existing_comment_url: replyUrl })],
+            [finding({ file: "a.ts", risk: NO_RISK, status: "declined", existing_comment_url: replyUrl })],
             existing("NONE", true),
         );
 
-        expect(out.untraceable).toBe(1);
-        expect(out.findings[0]?.status).toBe("new");
+        expect(out.untraceable).toBe(0);
+        expect(out.findings[0]?.status).toBe("declined");
     });
 
     test("that reply settles nothing in another file, whatever it names", () => {
@@ -333,7 +347,7 @@ describe("vetSuppression: whether the comment is about the finding", () => {
     });
 });
 
-describe("vetSuppression holds a listed severity to the decline bar", () => {
+describe("vetSuppression holds a listed finding to the decline bar", () => {
     const url = "https://github.com/o/r/pull/1#discussion_r1";
 
     const commented = (association: string) => ({
@@ -350,60 +364,56 @@ describe("vetSuppression holds a listed severity to the decline bar", () => {
         conversation: [],
     });
 
-    const reported = (severity: string): Finding =>
-        finding({ severity, status: "already-reported", existing_comment_url: url });
+    const reported = (risk: Finding["risk"]): Finding =>
+        finding({ risk, status: "already-reported", existing_comment_url: url });
 
-    for (const severity of ["critical", "high"]) {
-        test(`a stranger's comment cannot demote a ${severity} finding`, () => {
-            const out = vet([reported(severity)], commented("NONE"));
+    for (const tier of LISTED_TIERS) {
+        test(`a stranger's comment cannot demote a ${tier} finding`, () => {
+            const out = vet([reported(riskFor(tier))], commented("NONE"));
 
             expect(out.findings[0]?.status).toBe("new");
             expect(out.unvouched).toBe(1);
         });
 
-        test(`an owner's comment still settles a ${severity} finding`, () => {
-            expect(vet([reported(severity)], commented("OWNER")).findings[0]?.status).toBe("already-reported");
+        test(`an owner's comment still settles a ${tier} finding`, () => {
+            expect(vet([reported(riskFor(tier))], commented("OWNER")).findings[0]?.status).toBe("already-reported");
         });
     }
 
-    test("a stranger's comment cannot demote a finding whose severity nothing recognises", () => {
-        const out = vet([reported("blocker")], commented("NONE"));
-
-        expect(out.findings[0]?.status).toBe("new");
-        expect(out.unvouched).toBe(1);
+    test("anyone's comment settles a finding whose risk scores nothing, which is a nit", () => {
+        expect(vet([reported(NO_RISK)], commented("NONE")).findings[0]?.status).toBe("already-reported");
     });
 
-    for (const severity of ["medium", "low"]) {
-        test(`anyone's comment still settles a ${severity} finding`, () => {
-            expect(vet([reported(severity)], commented("NONE")).findings[0]?.status).toBe("already-reported");
+    for (const tier of UNLISTED_TIERS) {
+        test(`anyone's comment still settles a ${tier} finding`, () => {
+            expect(vet([reported(riskFor(tier))], commented("NONE")).findings[0]?.status).toBe("already-reported");
         });
     }
 });
 
-describe("vetSuppression: a listed severity citing no comment at all", () => {
+describe("vetSuppression: a listed finding citing no comment at all", () => {
     const raised = { findings: [{ file: "a.ts", title: "something low, worded otherwise" }] };
 
-    for (const severity of ["critical", "high"]) {
-        test(`a ${severity} is reopened, because the previous file record says nothing about severity`, () => {
-            const out = vet([finding({ severity, status: "already-reported" })], {}, raised);
+    for (const tier of LISTED_TIERS) {
+        test(`a ${tier} finding is reopened, because the previous file record carries no rating`, () => {
+            const out = vet([finding({ risk: riskFor(tier), status: "already-reported" })], {}, raised);
 
             expect(out.findings[0]?.status).toBe("new");
             expect(out.unvouched).toBe(1);
         });
     }
 
-    test("a severity nothing recognises is reopened, because the body prints it in full", () => {
-        const out = vet([finding({ severity: "blocker", status: "already-reported" })], {}, raised);
+    test("a finding whose risk scores nothing rests on that file having been raised", () => {
+        const out = vet([finding({ risk: NO_RISK, status: "already-reported" })], {}, raised);
 
-        expect(out.findings[0]?.status).toBe("new");
-        expect(out.unvouched).toBe(1);
+        expect(out.findings[0]?.status).toBe("already-reported");
     });
 
-    for (const severity of ["medium", "low"]) {
-        test(`a ${severity} still rests on the previous review having raised that file`, () => {
-            expect(vet([finding({ severity, status: "already-reported" })], {}, raised).findings[0]?.status).toBe(
-                "already-reported",
-            );
+    for (const tier of UNLISTED_TIERS) {
+        test(`a ${tier} finding still rests on the previous review having raised that file`, () => {
+            expect(
+                vet([finding({ risk: riskFor(tier), status: "already-reported" })], {}, raised).findings[0]?.status,
+            ).toBe("already-reported");
         });
     }
 });

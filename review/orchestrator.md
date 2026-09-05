@@ -22,7 +22,9 @@ STEP 2: merge. When every lens has reported:
   pick the line an author would most want the comment on.
 - List every lens that independently found it in `found_by`. Corroboration is signal,
   so do not collapse it away.
-- Where lenses disagree on severity, keep the highest and say why in the body.
+- Where lenses disagree about how much a defect matters, rate it at the worse reading and
+  say why in the body. You are answering the `risk` axes for the merged finding, not
+  averaging what the lenses said.
 - Where lenses describe the same defect differently, keep what each one added.
   Do not flatten to the shortest version.
 - Never drop a finding for having been reported only once.
@@ -151,5 +153,33 @@ Write `summary` for the author: what the change does and where its risk sits. Us
 reverse.
 
 Leave counts and tallies out of both. How many findings there are, how many lenses
-agreed on each, and the severity spread are all counted from your findings and added
-to the review automatically. Spend `summary` and `notes` on judgement instead.
+agreed on each, and how the review is split between what it prints and what it defers are
+all counted from your findings by the code that renders the review. Spend `summary` and
+`notes` on judgement instead.
+
+STEP 6: rate each finding. Fill `risk` on every one.
+
+The schema carries a question per axis and says what each answer means. Read them; they are
+the whole of the definition, and the field they replace failed for want of one.
+
+Three things about answering them.
+
+Answer about this defect in this repository, not about the class of defect. `SELECT *` in a
+migration that runs once and `SELECT *` in a request handler are the same shape and different
+answers on `blast_radius` and `likelihood`. What you have is the diff and whatever you read
+around it, so answer from that.
+
+`not-applicable` is an answer, and a better one than a guess. A missing index has no attack
+vector and a naming inconsistency has nothing to reverse. An axis answered `not-applicable`
+counts for nothing, so it neither flatters nor punishes the finding; an axis you guessed at is
+scored as though you knew. Use it wherever the question does not fit the kind of defect,
+rather than reaching for the mildest value.
+
+`confidence` is about you rather than about the defect, and it is the one axis that can move a
+finding a long way on its own. Say `confirmed` only where you followed the path in the code
+and can name it. Say `speculative` where you recognise a shape and did not confirm it does
+what you suspect. A lens that reports a pattern without tracing it is describing a
+`speculative` finding however certain its prose sounds.
+
+Nothing here is a tier or a score. The code weighs these answers, and it is the only thing
+that decides which findings the review prints.

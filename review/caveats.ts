@@ -31,12 +31,13 @@ import { lenses, plural } from "./words.ts";
 const REOPENING: Record<Reopening, (n: number) => string> = {
     untraceable: (n) =>
         `${plural(n, "decline")} cited no comment from an owner, member or collaborator,` +
-        " and no resolved thread that a finding of that severity may rest on. Reporting them as new.",
+        " and no resolved thread. A resolved thread settles only a finding this review does" +
+        " not print in full. Reporting them as new.",
     unrelated: (n) =>
         `${plural(n, "decline")} cited a comment that says nothing about the file the` +
         " finding is in. Reporting them as new.",
     unvouched: (n) =>
-        `${plural(n, "finding")} came back as already raised at a severity this review prints` +
+        `${plural(n, "finding")} came back as already raised at a rating this review prints` +
         " in full, with no owner, member or collaborator having said so. Reporting them as new.",
     unreported: (n) =>
         `${plural(n, "finding")} came back as already raised, citing a comment that is not` +

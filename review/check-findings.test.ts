@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { rawFinding as finding } from "./test-fixtures.ts";
+import { rawFinding as finding, riskFor } from "./test-fixtures.ts";
 
 const SCRIPT = join(import.meta.dir, "check-findings.ts");
 
@@ -112,10 +112,13 @@ describe("check-findings", () => {
         expect(findingsOf(written)).toHaveLength(1);
     });
 
-    test("keeps a finding whose severity is not one of ours", async () => {
-        const { code, written } = await check({ findings: [finding({ severity: "Critical" })] });
+    test("keeps a finding whose risk names a value the schema does not", async () => {
+        const { code, out, written } = await check({
+            findings: [finding({ risk: { ...riskFor("high"), impact: "Catastrophic" } })],
+        });
 
         expect(code).toBe(0);
+        expect(out).toContain("WARN");
         expect(findingsOf(written)).toHaveLength(1);
     });
 
@@ -182,14 +185,6 @@ describe("check-findings", () => {
 
         expect(code).toBe(3);
         expect((written as { lens_health?: unknown[] }).lens_health).toEqual([]);
-    });
-
-    test("keeps a severity that is only a spelling of a real one", async () => {
-        const { code, out, written } = await check({ findings: [finding({ severity: " Critical " })] });
-
-        expect(code).toBe(0);
-        expect(out).toContain("FIXED");
-        expect(findingsOf(written)[0]?.severity).toBe("critical");
     });
 
     test("drops a summary that is not prose, which post-review.ts would slice", async () => {

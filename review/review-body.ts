@@ -10,8 +10,8 @@
 
 import { caveatOf, COVERAGE_NOTICES, coverageOf, noticesFor, raisedIn } from "./caveats.ts";
 import type { Coverage, CoverageAlert, Notice, RunFacts } from "./caveats.ts";
-import { isListed, lensLabel, lineOf, LISTED } from "./findings.ts";
-import type { Finding, Merged, Partitioned } from "./findings.ts";
+import { isListed, lensLabel, lineOf } from "./findings.ts";
+import type { Finding, Merged, Partitioned, Tier } from "./findings.ts";
 import { lenses, plural } from "./words.ts";
 import {
     clamp,
@@ -135,14 +135,14 @@ export function destinationOf(env: Record<string, string | undefined>): Destinat
 /**
  * The findings the body prints in full.
  *
- * With an artifact behind it the body prints the severities a reader should stop for and
- * names that artifact for the rest, because it is one download away for everybody reading
- * the pull request. With nothing behind it (a session, whose findings file is a path under
- * `.git/` on one person's machine, or a run that kept no artifact) every finding goes in the
- * body instead, since there is nowhere else to read it.
+ * With an artifact behind it the body prints what scored at the threshold or above and names
+ * that artifact for the rest, because it is one download away for everybody reading the pull
+ * request. With nothing behind it (a session, whose findings file is a path under `.git/` on
+ * one person's machine, or a run that kept no artifact) every finding goes in the body
+ * instead, since there is nowhere else to read it, and the threshold decides nothing.
  */
-function listedIn(fresh: Finding[], to: Destination): Finding[] {
-    return to.kind === "artifact" ? fresh.filter(isListed) : fresh;
+function listedIn(fresh: Finding[], to: Destination, threshold: Tier): Finding[] {
+    return to.kind === "artifact" ? fresh.filter((f) => isListed(f, threshold)) : fresh;
 }
 
 /**
@@ -311,7 +311,7 @@ interface Listing {
  * findings rather than being cut at a character offset. An offset lands inside a
  * `<details>`, a fenced block, or a finding's own markup, and GitHub renders the wreckage.
  *
- * A finding too long for what is left costs only itself. `partition` orders by severity, so
+ * A finding too long for what is left costs only itself. `partition` orders by risk, so
  * stopping at the first one that does not fit would let a verbose critical finding at the
  * top empty the whole section.
  *
@@ -417,6 +417,8 @@ export interface Posting extends RunFacts {
     to: Destination;
     /** Every comment url the pull request carries, which is what `mention` may link. */
     linkable: ReadonlySet<string>;
+    /** The lowest tier the body prints in full, where there is somewhere else to read the rest. */
+    threshold: Tier;
 }
 
 /** A body and the two views of the run it was built from, for the caller that posts it. */
@@ -454,7 +456,7 @@ export function composeReview(merged: Merged, posting: Posting, parts: Partition
     const raised = noticesFor(coverage);
     const aboutPosting = postingNotices(posting);
 
-    const { listing, notice } = listingOf(parts.fresh, posting.to);
+    const { listing, notice } = listingOf(parts.fresh, posting.to, posting.threshold);
     const tail = tailOf(merged, parts, posting, aboutPosting);
 
     const { body, printed } = assemble(
@@ -733,14 +735,18 @@ function tailOf(merged: Merged, parts: Partitioned, posting: Posting, aboutPosti
  * not fit. `offered` is what the section leads with, so it stays the count the lead sentence
  * quotes; what came back out of `assemble` is what `Composed.listed` reports.
  */
-function listingOf(fresh: Finding[], to: Destination): { listing: Listing | null; notice: string | null } {
-    const offered = listedIn(fresh, to);
+function listingOf(
+    fresh: Finding[],
+    to: Destination,
+    threshold: Tier,
+): { listing: Listing | null; notice: string | null } {
+    const offered = listedIn(fresh, to, threshold);
     const artifact = to.kind === "artifact" ? to.url : null;
 
     if (offered.length > 0) {
         return {
             listing: {
-                heading: artifact ? listingHeading(offered) : "Findings",
+                heading: artifact ? listingHeading(threshold) : "Findings",
                 lead: artifact
                     ? `${offered.length} of ${plural(fresh.length, "finding")}.` +
                       ` \`findings.json\` in the \`codeferret-run\` artifact of [this run](${artifact}) holds every one.`
@@ -756,7 +762,7 @@ function listingOf(fresh: Finding[], to: Destination): { listing: Listing | null
         return {
             listing: null,
             notice:
-                `No finding is critical or high.` +
+                `Nothing rates ${threshold} or above.` +
                 ` \`findings.json\` in the \`codeferret-run\` artifact of [this run](${artifact}) holds every one.`,
         };
     }
@@ -786,12 +792,12 @@ function omissionFor(to: Destination): string {
 }
 
 /**
- * What to call the section, which depends on what `isListed` let through.
+ * Names the section after the bar `isListed` applied, not after the tiers that ended up in it.
  *
- * The heading has to follow the same policy as `isListed`: `bullet` prints no severity, so
- * under the narrower title a reader has no way to tell that a finding graded neither
- * critical nor high is in the list.
+ * `bullet` prints no tier, so the heading is the reader's only account of what was left out. A
+ * heading built from the findings present would rename the section every run, and a reader
+ * takes a page headed for the worst tier in it as a promise that nothing lower was found.
  */
-function listingHeading(listed: Finding[]): string {
-    return listed.every((f) => LISTED.has(f.severity)) ? "Critical and high findings" : "Findings worth stopping for";
+function listingHeading(threshold: Tier): string {
+    return `Findings rated ${threshold} and above`;
 }

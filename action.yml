@@ -51,6 +51,25 @@ inputs:
             otherwise ignored, so a lens removed upstream does not fail anybody's job.
         required: false
         default: ''
+    print-threshold:
+        description: |
+            The lowest tier a finding may be and still reach the posted comment. One of
+            'critical', 'high', 'medium', 'low' or 'nit'.
+
+            A tier is computed from the risk answers the review gives each finding, by
+            `review/risk.ts`, which is where the weighing lives and where a test can pin it.
+            Nothing a model writes is a tier.
+
+            This gates the comment and nothing else. `findings.json` in the run's artifact
+            holds every finding whatever this is set to, each with the answers it was rated
+            on, so a reader who disagrees with the weighting can re-score the run rather than
+            re-run it.
+
+            A review posted from a Claude Code session has no artifact to defer to, and its
+            findings file is a path under `.git/` on one machine. This is ignored there and
+            every finding is printed.
+        required: false
+        default: 'medium'
     exclude-paths:
         description: |
             Newline-separated globs to keep out of the review, one per line. These become
@@ -625,6 +644,7 @@ runs:
               # review may do has to reach the code that does it.
               ARTIFACT_HAS_FINDINGS: ${{ steps.artifact.outputs.keeps-findings }}
               RESOLVE_THREADS: ${{ inputs.resolve-threads == 'true' && '1' || '0' }}
+              PRINT_THRESHOLD: ${{ inputs.print-threshold }}
           run: |
               if [ -z "$PR" ] || [ -z "$HEAD" ]; then
                   echo "pr-number and head-sha are required outside a pull_request event" >&2
@@ -665,14 +685,15 @@ runs:
               # Through `run_tool`, which lib.sh has the argument for. What is named here is the
               # rest of what post-review.ts reads: without `GITHUB_RUN_ID` it takes the review
               # for one posted from somebody's own machine and inlines every finding instead of
-              # linking the artifact, and the last two are inputs that say what this review may
-              # do.
+              # linking the artifact, and the last three are inputs that say what this review
+              # may do.
               printf '%s' "$POST_TOKEN" |
                   run_tool "$GITHUB_ACTION_PATH" post-review.ts \
                       "GITHUB_SERVER_URL=$GITHUB_SERVER_URL" \
                       "GITHUB_RUN_ID=$GITHUB_RUN_ID" \
                       "ARTIFACT_HAS_FINDINGS=$ARTIFACT_HAS_FINDINGS" \
                       "RESOLVE_THREADS=$RESOLVE_THREADS" \
+                      "PRINT_THRESHOLD=$PRINT_THRESHOLD" \
                       -- "$BUILD_DIR/findings.json" "$HEAD" "$PR"
 
         # Last, and after the posting step. `post-review.ts` writes the `posted` record

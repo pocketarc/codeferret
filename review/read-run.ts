@@ -8,7 +8,7 @@ import { join } from "node:path";
 import type { RunFacts } from "./caveats.ts";
 import { readExisting, survey, unreadOf } from "./existing.ts";
 import type { Survey, Surveyed } from "./existing.ts";
-import type { Finding, Merged, Vetted } from "./findings.ts";
+import type { Finding, Merged, Tier, Vetted } from "./findings.ts";
 import { isMerged, vetSuppression } from "./findings.ts";
 import { reason } from "./json.ts";
 import { filesRaisedBefore } from "./previous.ts";
@@ -16,6 +16,15 @@ import { readDispatched, readSessionChanged } from "./run-files.ts";
 
 /** What a reader is told, so a caller decides where a line goes. */
 export type Report = (line: string) => void;
+
+/**
+ * The lowest tier the review body prints in full, and the bar a suppression of one is held to.
+ *
+ * This is provisional. The bands in `review/risk.ts` are a starting point that no run has been
+ * scored against yet, so this is a guess at where the line falls rather than a measurement of
+ * it. It becomes the `print-threshold` action input once a scored run shows where to start it.
+ */
+export const REVIEW_THRESHOLD: Tier = "medium";
 
 /**
  * A run's findings file, or the process ends naming the file and what was wrong with it.
@@ -86,12 +95,17 @@ async function readPrevious(path: string, report: Report): Promise<unknown> {
  * `existing.json`. An empty file reopens every suppression resting on it, which is the
  * direction to fail in.
  */
-export async function vetAgainstExisting(findings: Finding[], buildDir: string, report: Report): Promise<Vetting> {
+export async function vetAgainstExisting(
+    findings: Finding[],
+    buildDir: string,
+    report: Report,
+    threshold: Tier,
+): Promise<Vetting> {
     const existing = await readExisting(buildDir, report);
     const raisedBefore = filesRaisedBefore(await readPrevious(join(buildDir, "previous.json"), report));
     const walked = survey(existing);
 
-    return { existing, survey: walked, ...vetSuppression(findings, walked, raisedBefore) };
+    return { existing, survey: walked, ...vetSuppression(findings, walked, raisedBefore, threshold) };
 }
 
 /**

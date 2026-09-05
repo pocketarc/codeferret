@@ -6,8 +6,8 @@
  * that will fix the findings, and it reads `findings.json` out of the run's artifact,
  * which holds every finding whole. Forty inline comments buy that reader nothing and bury
  * the pull request for everybody else. So the body carries what decides whether a person
- * stops to look: the summary, the counts, which lenses reported, the critical and high
- * findings in full, and a link to the run holding the rest.
+ * stops to look: the summary, the counts, which lenses reported, the full text of every
+ * finding scored at the threshold or above, and a link to the run holding the rest.
  *
  * Once GitHub accepts the review, the findings file is rewritten with a `posted` record.
  * That is the only evidence anywhere that a run's findings were ever said out loud, and
@@ -24,7 +24,9 @@
 import { dirname, join } from "node:path";
 import { ownThreads, planResolution } from "./existing.ts";
 import { partition } from "./findings.ts";
-import { readMerged, runFacts, vetAgainstExisting } from "./read-run.ts";
+import { isTier, TIER_NAMES } from "./risk.ts";
+import type { Tier } from "./risk.ts";
+import { readMerged, REVIEW_THRESHOLD, runFacts, vetAgainstExisting } from "./read-run.ts";
 import { graphql, graphqlFailure, requirePullNumber, requireRepository, rest, tokenFromStdinOrEnv } from "./github.ts";
 import { reason } from "./json.ts";
 import { reopenedReasons } from "./caveats.ts";
@@ -61,6 +63,21 @@ if (dryRunInput !== "" && dryRunInput !== "0" && dryRunInput !== "1") {
 
 const dryRun = dryRunInput === "1";
 
+// The `print-threshold` input, refused here rather than defaulted. A default is how this
+// class of input has failed before: `resolve-threads` reached the orchestrator's prompt and
+// nothing else, and the upload step read `artifact-path` while post-review.ts never saw it,
+// so in both cases the run did something other than what the workflow asked for and nothing
+// said so. An empty value is the action's own default arriving through a caller who set
+// nothing, so it takes the default; a misspelling is a value somebody chose and got wrong.
+const thresholdInput = process.env.PRINT_THRESHOLD ?? "";
+
+if (thresholdInput !== "" && !isTier(thresholdInput)) {
+    console.error(`PRINT_THRESHOLD is '${thresholdInput}'. It has to be one of ${TIER_NAMES.join(", ")}.`);
+    process.exit(2);
+}
+
+const threshold: Tier = isTier(thresholdInput) ? thresholdInput : REVIEW_THRESHOLD;
+
 const findingsFile: string = findingsPath;
 const buildDir = dirname(findingsFile);
 
@@ -75,7 +92,12 @@ const merged = await readMerged(
 
 // The decision is taken again here: the orchestrator held the suppression rules and the
 // comments it judged as text in one context.
-const vetted = await vetAgainstExisting(merged.findings, buildDir, (line) => console.error(line));
+const vetted = await vetAgainstExisting(
+    merged.findings,
+    buildDir,
+    (line) => console.error(line),
+    REVIEW_THRESHOLD,
+);
 const existing = vetted.existing;
 
 for (const said of reopenedReasons(vetted)) console.error(said);
@@ -201,6 +223,7 @@ const {
         resolveDenied,
         leftOpen,
         to,
+        threshold,
         linkable: vetted.survey.linkable,
         ...(await runFacts(buildDir, existing)),
     },

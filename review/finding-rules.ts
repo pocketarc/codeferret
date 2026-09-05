@@ -66,10 +66,9 @@ interface Policy {
     renderable?: (entry: Record<string, unknown>) => boolean;
 }
 
-/** The two enums the repairs below normalise against, read out of the schema by name. */
+/** The enums the repairs below normalise against, read out of the schema by name. */
 interface Enums {
     statuses: ReadonlySet<string>;
-    severities: ReadonlySet<string>;
 }
 
 /**
@@ -77,16 +76,16 @@ interface Enums {
  * an array index written as `[]`.
  *
  * One table covering every facet, so that the answer to "what happens to
- * `findings[].severity`" is in one place, and so that `selfCheck` covers every rule at once.
+ * `findings[].status`" is in one place, and so that `selfCheck` covers every rule at once.
  *
  * `tolerated` is the wide case. A dropped finding is in neither the comment, nor the
  * findings file, nor the next run's `previous.json`, so nothing records that it existed.
  * Only the fields that leave nothing to render are fatal, and `FATAL_FIELDS` names them.
  * `found_by` and `in_diff` are never read; a finding with no usable `line` is listed under
- * its file alone; a `severity` nothing recognises is listed in full rather than left out;
- * and a missing `category` costs the italic line under the body and nothing else. A key this
- * table does not name is ignored by everything downstream, which reads the fields it needs by
- * name.
+ * its file alone; a risk nothing can score sinks to the bottom of the review rather than
+ * out of it; and a missing `category` costs the italic line under the body and nothing else.
+ * A key this table does not name is ignored by everything downstream, which reads the fields
+ * it needs by name.
  *
  * Every field of a finding needs an entry here or a place in `FATAL_FIELDS`, and `selfCheck`
  * fails on one with neither. Without that, a field added to the schema is fatal by default:
@@ -103,7 +102,7 @@ const POLICY: Record<string, Policy> = {
     "findings[].end_line": { check: positive, tolerated: true },
     "findings[].file": { repair: repoRelative },
     "findings[].status": { repair: knownStatus, tolerated: true },
-    "findings[].severity": { repair: knownSeverity, tolerated: true },
+    "findings[].risk": { tolerated: true },
     "findings[].category": { tolerated: true },
     // `mention` links this only when the pull request carries the url, so a bad one costs
     // nothing but the link. Removed rather than tolerated, because the empty string a model
@@ -185,22 +184,6 @@ function knownStatus(value: unknown, enums: Enums): Repaired | null {
     return { set: "new", note: `${JSON.stringify(value)} is not a status, so it was set to 'new'` };
 }
 
-/**
- * Where a finding sorts, and whether the posted body prints it in full, both come from its
- * severity. `LISTED` is an exact-match lookup, so `Critical` or ` high ` misses it and a
- * critical finding drops out of the comment. A case or whitespace variant has one right
- * answer; a word nothing recognises does not, and review-body.ts lists that one anyway.
- */
-function knownSeverity(value: unknown, enums: Enums): Repaired | null {
-    if (typeof value !== "string" || enums.severities.size === 0 || enums.severities.has(value)) return null;
-
-    const normalised = value.trim().toLowerCase();
-
-    if (!enums.severities.has(normalised)) return null;
-
-    return { set: normalised, note: `'${value}' is a spelling of '${normalised}'` };
-}
-
 function lensName(value: unknown): Repaired | null {
     if (typeof value === "string" && value.trim() !== "") return null;
 
@@ -242,8 +225,19 @@ function shape(path: string): string {
     return path.replace(/\[\d+\]/g, "[]");
 }
 
+/** The rule covering a path: its own, or the nearest one an ancestor carries. */
+function ruleFor(path: string): Policy | undefined {
+    for (let key = shape(path); key !== ""; key = key.slice(0, Math.max(0, key.lastIndexOf(".")))) {
+        const rule = POLICY[key];
+
+        if (rule) return rule;
+    }
+
+    return undefined;
+}
+
 function tolerated(problem: Problem): boolean {
-    if (POLICY[shape(problem.path)]?.tolerated) return true;
+    if (ruleFor(problem.path)?.tolerated) return true;
 
     // An unknown key is reported against the finding rather than against a field, so it
     // cannot be keyed above without tolerating "must be an object" with it. post-review.ts
@@ -384,10 +378,7 @@ export async function readSchema(): Promise<JsonSchema> {
 function enumsOf(schema: JsonSchema): Enums {
     const items = schema.properties?.findings?.items?.properties;
 
-    return {
-        statuses: new Set(items?.status?.enum ?? []),
-        severities: new Set(items?.severity?.enum ?? []),
-    };
+    return { statuses: new Set(items?.status?.enum ?? []) };
 }
 
 export interface SelfCheck {
@@ -416,10 +407,11 @@ export interface SelfCheck {
  * decision nobody took: it drops the whole finding for a fault in a field the body may not
  * even render.
  *
- * The two enums are read out of the schema by name, and a rename empties them without
- * emptying `POLICY`, so the key check alone cannot catch it. An empty set means the status
- * normalisation and the severity spelling repair are both silently off, and an unnormalised
- * `Critical` then misses `LISTED` and drops a critical finding out of the posted body.
+ * `enumsOf` reads the schema by name, so renaming `status` there empties the set without
+ * touching `POLICY`, and the key check alone cannot catch it. An empty set means the status
+ * normalisation is silently off. `partition` and `vetSuppression` both test for the two
+ * statuses they know and treat everything else as new, so a `Declined` the repair would have
+ * lowercased is a finding the maintainer answered, posted again.
  */
 export function selfCheck(schema: JsonSchema): SelfCheck {
     const known = new Set<string>();
@@ -432,12 +424,9 @@ export function selfCheck(schema: JsonSchema): SelfCheck {
         rules: rules.length,
         stray: rules.filter((key) => !known.has(key)),
         unruled: [...known].filter(
-            (path) => path.startsWith("findings[].") && !POLICY[path] && !FATAL_FIELDS.has(path),
+            (path) => path.startsWith("findings[].") && !ruleFor(path) && !FATAL_FIELDS.has(path),
         ),
-        enumsLost: [
-            ...(enums.statuses.size === 0 ? ["status"] : []),
-            ...(enums.severities.size === 0 ? ["severity"] : []),
-        ],
+        enumsLost: enums.statuses.size === 0 ? ["status"] : [],
     };
 }
 
