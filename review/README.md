@@ -43,9 +43,9 @@ below it is left to `findings.json` in the run's artifact, which holds every fin
 answers it was rated on, so a reader who disagrees with the weighting can re-score the run.
 Where there is no artifact, which means a review from a session and a run that kept none, the
 threshold decides nothing and the body prints every finding. `vetSuppression` asks the same
-`isListed` question, to decide which findings a closed thread alone may settle, but
-`post-review.ts` passes it the `REVIEW_THRESHOLD` default rather than the input, so setting
-`print-threshold` moves the comment and leaves that bar where it was.
+`isPrinted` question, to decide which findings a closed thread alone may settle, but
+`post-review.ts` passes it whichever of the input and the `REVIEW_THRESHOLD` default lists more
+findings, so raising `print-threshold` shortens the comment and leaves that bar where it was.
 
 There are two ways in, and both call `run.sh`, which is the whole sequence: build the
 prompts, read what has already been said, run the orchestrator, check what comes back.

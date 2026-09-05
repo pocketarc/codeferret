@@ -78,6 +78,8 @@ if (thresholdInput !== "" && !isTier(thresholdInput)) {
 
 const threshold: Tier = isTier(thresholdInput) ? thresholdInput : REVIEW_THRESHOLD;
 
+const to = destinationOf(process.env);
+
 /** The one of two thresholds that lists more findings, so neither can narrow what the other covers. */
 function protecting(a: Tier, b: Tier): Tier {
     return tierRank(a) >= tierRank(b) ? a : b;
@@ -114,12 +116,16 @@ const vetted = await vetAgainstExisting(
     //
     // Whichever of the two lists more findings, rather than the constant alone. The constant
     // alone fixed the widening and opened the other direction: at `print-threshold: low` the
-    // body prints a `low` finding whole while `isListed(f, "medium")` answers false for it, so
-    // a finding a reader is looking at could be dismissed for good by a closed thread on its
-    // own. Taking the wider of the two keeps both properties — raising the input never widens
-    // the bar, and nothing the comment prints in full is settled on less than an entitled
-    // reply.
+    // body printed a `low` finding whole while the bar answered false for it, so a finding a
+    // reader was looking at could be dismissed for good by a closed thread on its own. Taking
+    // the wider of the two keeps both properties: raising the input never widens the bar, and
+    // nothing the comment prints in full is settled on less than an entitled reply.
+    //
+    // The argument below it is the other half of the same question, and neither is enough
+    // alone. This one picks the threshold; `deferrable` decides whether a threshold means
+    // anything, because a run with nowhere to leave a finding prints all of them.
     protecting(threshold, REVIEW_THRESHOLD),
+    to.kind === "artifact",
 );
 const existing = vetted.existing;
 
@@ -232,8 +238,6 @@ if (resolveDenied) {
             ` ${plural(leftOpen, "thread")} judged finished could not be resolved.`,
     );
 }
-
-const to = destinationOf(process.env);
 
 const {
     body: reviewBody,

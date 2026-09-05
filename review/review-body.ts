@@ -10,7 +10,7 @@
 
 import { anyWarning, caveatOf, COVERAGE_NOTICES, coverageOf, noticesFor, raisedIn } from "./caveats.ts";
 import type { Coverage, CoverageAlert, Notice, RunFacts } from "./caveats.ts";
-import { isListed, lensLabel, lineOf } from "./findings.ts";
+import { isPrinted, lensLabel, lineOf } from "./findings.ts";
 import type { Finding, Merged, Partitioned, Tier } from "./findings.ts";
 import { lenses, plural } from "./words.ts";
 import {
@@ -142,7 +142,7 @@ export function destinationOf(env: Record<string, string | undefined>): Destinat
  * instead, since there is nowhere else to read it, and the threshold decides nothing.
  */
 function listedIn(fresh: Finding[], to: Destination, threshold: Tier): Finding[] {
-    return to.kind === "artifact" ? fresh.filter((f) => isListed(f, threshold)) : fresh;
+    return fresh.filter((f) => isPrinted(f, threshold, to.kind === "artifact"));
 }
 
 /**
@@ -795,7 +795,7 @@ function omissionFor(to: Destination): string {
 }
 
 /**
- * Names the section after the bar `isListed` applied, not after the tiers that ended up in it.
+ * Names the section after the bar `isPrinted` applied, not after the tiers that ended up in it.
  *
  * `bullet` prints no tier, so the heading is the reader's only account of what was left out. A
  * heading built from the findings present would rename the section every run, and a reader

@@ -284,7 +284,7 @@ export function levelScore(axis: AxisName, value: string): number | null {
  * somebody had rated as harmless, and a finding with no `risk` object at all scored 0, banded
  * to `nit`, and left the comment with no sentence anywhere saying why.
  *
- * So the failure is reported rather than folded into the number. `isListed` prints an unrated
+ * So the failure is reported rather than folded into the number. `isPrinted` prints an unrated
  * finding whatever its tier, on the same reasoning the severity this replaced carried about a
  * label nothing recognised: refusing to print a defect because the rating went wrong is the
  * wrong way to be wrong.

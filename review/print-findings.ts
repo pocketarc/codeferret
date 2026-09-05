@@ -42,6 +42,8 @@ const vetted = await vetAgainstExisting(
     buildDir,
     (line) => console.error(line),
     REVIEW_THRESHOLD,
+    // Nothing to defer to: this path prints every finding to a terminal.
+    false,
 );
 const { fresh, suppressed, declined } = partition(vetted.findings);
 

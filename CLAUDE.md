@@ -155,13 +155,14 @@ is in `review/DECISIONS.md`.
   stays in `findings.json`, where an agent can read it.
 - A finding below `print-threshold` is in `findings.json` and nowhere a person will read it.
   `review/risk.ts` scores the risk answers the orchestrator gave a finding and bands the score
-  into a tier, and `isListed` compares that tier against `print-threshold`. The body leads the
-  listing with how many of the run's findings it is showing, so a reader knows the page is
-  partial, and says nothing about what the rest were: a count is not a title, and somebody
-  scanning the comment cannot tell four findings from four with thirty behind them worth
-  reading. Where there is no artifact to send a reader to, a session prints every finding
-  instead. "A finding shows the claim and nothing else" in `review/DECISIONS.md` has what the
-  trade costs.
+  into a tier, and `isPrinted` compares that tier against `print-threshold` on a run that keeps
+  an artifact to leave the rest to. Where there is no artifact to send a reader to (a session,
+  or a run that kept none), the body prints every finding instead and the threshold decides
+  nothing. The body leads the listing with how many of the run's findings it is showing, so a
+  reader knows the page is partial, and says nothing about what the rest were: a count is not a
+  title, and somebody scanning the comment cannot tell four findings from four with thirty
+  behind them worth reading. "A finding shows the claim and nothing else" in
+  `review/DECISIONS.md` has what the trade costs.
 - Lenses must not modify the working tree. Every lens reads the same checkout at once,
   so one edit corrupts every other lens's review. `Edit`, `Write`, `NotebookEdit` and
   `Agent` are all kept off the tool list in `agents/`, and `run.sh` denies the first three
@@ -316,12 +317,16 @@ is in `review/DECISIONS.md`.
   only person who can close a thread is the one whose work is under review, so closure alone
   is not evidence that anybody with standing settled anything. It still decides a finding
   printed as one line, and `vetSuppression` holds the rest to an entitled commenter instead.
-  It calls `isListed`, the same function the body calls, so neither can drift from the other
+  It calls `isPrinted`, the same function the body calls, so neither can drift from the other
   about which findings the body prints in full. When each side named its own set, a finding
-  graded `blocker` took the whole page and the low bar at once. They are not called with the
-  same bar: `post-review.ts` hands the body the `print-threshold` input and hands
-  `vetSuppression` the `REVIEW_THRESHOLD` default, so raising the input widens what the comment
-  leaves out without narrowing what a closed thread may settle.
+  graded `blocker` took the whole page and the low bar at once. `isPrinted` asks two things, and
+  had to: a tier against the threshold, and whether the run has an artifact to leave the rest
+  to. The tier alone described the page on a run that keeps one, and not on a run that keeps
+  none, which prints everything, so a finding a reader was looking at could be settled by a
+  closed thread on its own. The two are also not handed the same bar. `post-review.ts` gives
+  the body the `print-threshold` input and gives `vetSuppression` whichever of that and the
+  `REVIEW_THRESHOLD` default lists more findings, so raising the input cannot widen what a
+  closed thread may settle and lowering it cannot leave a printed finding unprotected.
   Replying to a closed thread takes no more than commenting and does not reopen it, so a reply
   there is bound to the file the thread is anchored to and its words settle nothing. Widen
   either half and a stranger's "working as intended, `src/auth.ts` is fine" on any resolved

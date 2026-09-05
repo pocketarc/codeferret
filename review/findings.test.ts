@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { asExisting, survey } from "./existing.ts";
-import { isListed, lineOf, partition, vetSuppression } from "./findings.ts";
+import { isPrinted, lineOf, partition, vetSuppression } from "./findings.ts";
 import type { Finding } from "./findings.ts";
 import { filesRaisedBefore } from "./previous.ts";
 import { REVIEW_THRESHOLD } from "./read-run.ts";
@@ -23,8 +23,14 @@ test("both sides of the threshold have a tier, so no loop below runs over nothin
  * case here is still clearest written as the two JSON documents, so the narrowing happens at
  * this boundary instead.
  */
-const vet = (findings: Finding[], existing: unknown, previous?: unknown): ReturnType<typeof vetSuppression> =>
-    vetSuppression(findings, survey(asExisting(existing)), filesRaisedBefore(previous), REVIEW_THRESHOLD);
+const vet = (
+    findings: Finding[],
+    existing: unknown,
+    previous?: unknown,
+    /** An artifact run by default, which is where the threshold decides anything. */
+    deferrable = true,
+): ReturnType<typeof vetSuppression> =>
+    vetSuppression(findings, survey(asExisting(existing)), filesRaisedBefore(previous), REVIEW_THRESHOLD, deferrable);
 
 describe("partition", () => {
     test("splits on status and orders by risk", () => {
@@ -58,19 +64,19 @@ describe("lineOf", () => {
     });
 });
 
-describe("isListed", () => {
+describe("the tier against the threshold", () => {
     test("lists everything at the threshold or above", () => {
-        for (const tier of LISTED_TIERS) expect(isListed(finding({ risk: riskFor(tier) }), REVIEW_THRESHOLD)).toBe(true);
+        for (const tier of LISTED_TIERS) expect(isPrinted(finding({ risk: riskFor(tier) }), REVIEW_THRESHOLD, true)).toBe(true);
     });
 
     test("leaves out everything under it", () => {
         for (const tier of UNLISTED_TIERS) {
-            expect(isListed(finding({ risk: riskFor(tier) }), REVIEW_THRESHOLD)).toBe(false);
+            expect(isPrinted(finding({ risk: riskFor(tier) }), REVIEW_THRESHOLD, true)).toBe(false);
         }
     });
 
     test("leaves out a finding rated as applying to nothing, which is an answer", () => {
-        expect(isListed(finding({ risk: NO_RISK }), REVIEW_THRESHOLD)).toBe(false);
+        expect(isPrinted(finding({ risk: NO_RISK }), REVIEW_THRESHOLD, true)).toBe(false);
     });
 
     // The distinction this pins: `NO_RISK` above is a finding somebody rated, on every axis,
@@ -78,8 +84,43 @@ describe("isListed", () => {
     // band to `nit`, and the first version of this test asserted both were left out — so a
     // finding whose rating failed left the comment with nothing on the page saying so.
     test("prints a finding whose rating failed rather than hiding it on a tier it does not have", () => {
-        expect(isListed(finding({ risk: undefined }), REVIEW_THRESHOLD)).toBe(true);
-        expect(isListed(finding({ risk: { ...riskFor("nit"), impact: "catastophic" } }), REVIEW_THRESHOLD)).toBe(true);
+        expect(isPrinted(finding({ risk: undefined }), REVIEW_THRESHOLD, true)).toBe(true);
+        expect(isPrinted(finding({ risk: { ...riskFor("nit"), impact: "catastophic" } }), REVIEW_THRESHOLD, true)).toBe(true);
+    });
+});
+
+describe("what the body prints is what the bar protects", () => {
+    const lowFinding = finding({ risk: riskFor("low") });
+
+    test("a run with nothing to defer to prints every finding and protects every finding", () => {
+        expect(isPrinted(lowFinding, REVIEW_THRESHOLD, false)).toBe(true);
+    });
+
+    test("a run with an artifact leaves a low finding to it, and the bar follows", () => {
+        expect(isPrinted(lowFinding, REVIEW_THRESHOLD, true)).toBe(false);
+    });
+
+    test("a closed thread cannot settle a finding the reader is looking at", () => {
+        const onClosed = {
+            threads: [
+                {
+                    url: "https://github.com/o/r/pull/1#discussion_r1",
+                    file: "a.ts",
+                    mine: true,
+                    resolved: true,
+                    comments: [{ url: "https://github.com/o/r/pull/1#discussion_r1", body: "a.ts is fine", association: "NONE" }],
+                },
+            ],
+            conversation: [],
+        };
+
+        const declined = [
+            finding({ risk: riskFor("low"), status: "declined", existing_comment_url: "https://github.com/o/r/pull/1#discussion_r1" }),
+        ];
+
+        // Deferred to an artifact the finding is off the page; printed to a terminal it is not.
+        expect(vet(declined, onClosed, undefined, true).findings[0]?.status).toBe("declined");
+        expect(vet(declined, onClosed, undefined, false).findings[0]?.status).toBe("new");
     });
 });
 

@@ -50,17 +50,23 @@ line, a thread somebody closed. GitHub resolves a conversation for anyone with r
 write, and for whoever opened the pull request, so closure is not on its own the word of
 somebody with standing: on a branch from an outside contributor, the only person who can close
 a thread is the person under review. The findings that take a reader off the page are held to
-the author association instead, and `isListed` decides which those are, on the same test the
-body applies: the finding's tier, against a threshold. The same function decides both, so
-neither can drift from the other about which findings the comment prints in full. When each
-side named its own set, back when those sets were severities written out by hand, a finding
-graded `blocker` was printed in full and settled by a stranger.
+the author association instead, and `isPrinted` decides which those are, on the same test the
+body applies: the finding's tier against a threshold, and whether this run has an artifact to
+leave the rest to. The second half matters because a run that keeps none prints every finding,
+so a tier alone described the page only where there was an artifact. The same function decides
+both, so neither can drift from the other about which findings the comment prints in full. When
+each side named its own set, back when those sets were severities written out by hand, a
+finding graded `blocker` was printed in full and settled by a stranger.
 
 The bar is not the same value on both sides. `post-review.ts` hands the body the
-`print-threshold` input and hands `vetSuppression` the `REVIEW_THRESHOLD` default, so a
-consumer who raises the input gets a shorter comment and the same suppression bar. That is
-unfinished rather than intended, and it is the failure `resolve-threads` and `artifact-path`
-each had before it: an input that reaches one reader of it and not another.
+`print-threshold` input and hands `vetSuppression` whichever of that input and the
+`REVIEW_THRESHOLD` default lists more findings. Each on its own failed in a direction. The
+input alone let a consumer who raised it widen the suppression bar with it: at
+`print-threshold: high`, every medium finding became dismissable by the author closing their
+own thread. The default alone left a `low` finding the comment printed in full open to a closed
+thread at `print-threshold: low`. The wider of the two keeps both properties: raising the input
+shortens the comment and never widens what a closed thread may settle, and lowering it never
+leaves a finding the comment prints in full unprotected.
 
 Replying to a closed thread takes no more than commenting and does not reopen it, so a reply
 there settles the file its thread is anchored to and no other.
@@ -350,8 +356,9 @@ credential from a base of 0.82 to a score of 20. Neither mistake is one an adjec
 exposed.
 
 The `print-threshold` input then decides which findings the comment prints in full, and
-`isListed` compares each finding's tier against it. The heading names the bar rather than the
-tiers that cleared it, because `bullet` prints no tier and the heading is the reader's only
+`isPrinted` compares each finding's tier against it where the run has an artifact to leave the
+rest to. The heading names the bar rather than the tiers that cleared it, and the body carries
+it only on an artifact run, because `bullet` prints no tier and the heading is the reader's only
 account of what was left out; a heading built from the findings present would rename the
 section every run, and a reader could take it as a promise that nothing lower was found. Where
 the band edges belong is still open. The bands themselves rest on a blind rating of the fixture
@@ -404,7 +411,7 @@ proves nothing about who wrote a comment, in a test whose whole job is to be nar
 went.
 
 A resolved thread settles a finding only where the body prints no more than one line for it:
-`vetSuppression` reopens `resolved: true` on anything `isListed` puts in the comment in full,
+`vetSuppression` reopens `resolved: true` on anything `isPrinted` puts in the comment in full,
 and holds those to the same author-association bar as a reply. Closing a thread takes
 repository write or authorship of the pull request, and `resolveReviewThread` grants
 neither: on a branch from an outside contributor, the only account that can close a thread

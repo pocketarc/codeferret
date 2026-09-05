@@ -85,13 +85,29 @@ export function lineOf(f: Finding): number | undefined {
 }
 
 /**
- * Whether the body prints this finding rather than leaving it to the findings file.
+ * Whether the body prints this finding whole.
  *
- * The threshold is the caller's, because it is an input a consumer sets and prose is not a
- * boundary: passing it in is what stops the value being read in one place and defaulted in
- * another.
+ * `vetSuppression` decides who may dismiss a finding for good on this same answer, so the set
+ * it protects and the set a reader sees are one set. The tier alone was a different question:
+ * a run that keeps no artifact prints every finding whatever its tier.
+ *
+ * `deferrable` is the caller's, like the threshold. Both are facts about the run rather than
+ * about the finding, and a default is how a value comes to be read in one place and invented
+ * in another.
  */
-export function isListed(f: Finding, threshold: Tier): boolean {
+export function isPrinted(f: Finding, threshold: Tier, deferrable: boolean): boolean {
+    return !deferrable || isListed(f, threshold);
+}
+
+/**
+ * Whether this finding's tier clears the threshold.
+ *
+ * Private, and worth keeping that way. It is half of `isPrinted` and not a substitute for it:
+ * on a run with no artifact the body prints findings this answers false for, and every caller
+ * that reached for the tier alone got that wrong. Exported it would be the easier of the two
+ * to reach for and the wrong one to reach for.
+ */
+function isListed(f: Finding, threshold: Tier): boolean {
     return isUnrated(f) || meetsThreshold(tierOf(f), threshold);
 }
 
@@ -306,6 +322,8 @@ export function vetSuppression(
     discussion: Survey,
     raisedFiles: ReadonlySet<string>,
     threshold: Tier,
+    /** Whether the run has an artifact to send a reader to. */
+    deferrable: boolean,
 ): Vetted {
     const { comments } = discussion;
     const counts = noReopenings();
@@ -331,15 +349,13 @@ export function vetSuppression(
             // that file is declined for as long as the pull request lives.
             //
             // A finding the body prints in full is held to the association instead, matching
-            // the `already-reported` branch below. `isListed` is the tier alone, and the
-            // body's own set is `listedIn`: with no artifact behind the run it prints every
-            // fresh finding whole, so a `low` on such a run is settled here by a closed
-            // thread and any commenter. Closing that takes the printed set passed in from
-            // `post-review.ts`.
+            // the `already-reported` branch below. `isPrinted` is what the body itself filters
+            // on, so the set this protects and the set a reader sees are the same set.
+            //
             // `orchestrator.md` carves out a security defect from any reply, and that
             // carve-out is prompt text sitting in the same context as the comments it judges,
             // so this branch is where refusing costs an attacker anything.
-            const closed = cited?.onClosedThread === true && !isListed(f, threshold);
+            const closed = cited?.onClosedThread === true && !isPrinted(f, threshold, deferrable);
 
             if (!cited || !(entitled(cited) || closed)) return reopen(f, "untraceable");
 
@@ -358,7 +374,7 @@ export function vetSuppression(
             // collapsed block, so demoting one is the difference between a reader seeing the
             // defect and seeing its title.
             //
-            // `isListed` rather than a test spelled out here: when each side named its own
+            // `isPrinted` rather than a test spelled out here: when each side named its own
             // set, a finding graded `blocker` took the whole page and the low bar at once.
             //
             // The decline branch above takes a comment on a thread somebody closed, and the
@@ -378,7 +394,7 @@ export function vetSuppression(
             // The cost is a critical that was genuinely reported before and never commented
             // on, printed in full again on every push. Criticals are rare and that is the
             // direction to be wrong in.
-            if (isListed(f, threshold) && !(cited && entitled(cited))) return reopen(f, "unvouched");
+            if (isPrinted(f, threshold, deferrable) && !(cited && entitled(cited))) return reopen(f, "unvouched");
 
             if (url) {
                 if (cited && isAbout(cited, f.file)) return f;

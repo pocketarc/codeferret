@@ -117,12 +117,14 @@ export async function vetAgainstExisting(
     buildDir: string,
     report: Report,
     threshold: Tier,
+    /** Whether this run keeps an artifact the body can leave a finding to. */
+    deferrable: boolean,
 ): Promise<Vetting> {
     const existing = await readExisting(buildDir, report);
     const raisedBefore = filesRaisedBefore(await readPrevious(join(buildDir, "previous.json"), report));
     const walked = survey(existing);
 
-    return { existing, survey: walked, ...vetSuppression(findings, walked, raisedBefore, threshold) };
+    return { existing, survey: walked, ...vetSuppression(findings, walked, raisedBefore, threshold, deferrable) };
 }
 
 /**
