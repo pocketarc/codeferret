@@ -11,7 +11,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -19,8 +19,14 @@ const SCRIPT = join(import.meta.dir, "scrub-credentials.sh");
 const HEADER = "http.https://github.com/.extraheader";
 const VALUE = "AUTHORIZATION: basic eC1hY2Nlc3MtdG9rZW46bm90LWEtcmVhbC10b2tlbg==";
 
+/**
+ * `reachable` deliberately omits `--local`, so without these a global `http.*.extraheader` in
+ * whoever is running the suite leaks into every assertion that nothing is reachable.
+ */
+const ISOLATED = { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" };
+
 function git(cwd: string, ...args: string[]): string {
-    return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+    return execFileSync("git", args, { cwd, encoding: "utf8", env: { ...process.env, ...ISOLATED } }).trim();
 }
 
 /**
@@ -74,7 +80,11 @@ function plantHeader(dir: string, key = HEADER): void {
 }
 
 function scrub(workspace: string): { code: number; out: string; err: string } {
-    const proc = Bun.spawnSync(["bash", SCRIPT, workspace], { stdout: "pipe", stderr: "pipe" });
+    const proc = Bun.spawnSync(["bash", SCRIPT, workspace], {
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...process.env, ...ISOLATED },
+    });
 
     return { code: proc.exitCode, out: proc.stdout.toString(), err: proc.stderr.toString() };
 }
@@ -196,6 +206,66 @@ describe("scrub-credentials.sh", () => {
             const cred = plantIncludeIf(join(dir, "vendor"));
 
             expect(reachable(join(dir, "vendor"))).toContain("extraheader");
+
+            expect(scrub(dir).code).toBe(0);
+            expect(reachable(join(dir, "vendor"))).toBe("");
+            expect(existsSync(cred)).toBe(false);
+        });
+    });
+
+    // Each of these was a real defect in the first version of the script, found by reading it
+    // rather than by any case above going red.
+    describe("what it reports", () => {
+        test("does not claim nothing was reachable when a submodule held a credential", () => {
+            const dir = withSubmodule();
+
+            plantHeader(join(dir, "vendor"));
+
+            const r = scrub(dir);
+
+            // `--one` runs in a child of the shell that reports, so a counter kept in a
+            // variable stayed 0 here and the run said both that it had scrubbed a submodule
+            // and that nothing had been reachable.
+            expect(r.out).toContain("took the checkout's credential");
+            expect(r.out).not.toContain("no git credential was reachable");
+        });
+
+        test("counts an includeIf key removed with its file already gone", () => {
+            const dir = repo();
+
+            git(dir, "config", "--local", `includeIf.gitdir:${join(dir, ".git")}.path`, "/nonexistent/creds.config");
+
+            const r = scrub(dir);
+
+            expect(r.code).toBe(0);
+            expect(r.out).not.toContain("no git credential was reachable");
+        });
+
+        test("removes a credentials file named by a path relative to the config", () => {
+            const dir = repo();
+            const gitdir = git(dir, "rev-parse", "--absolute-git-dir");
+            const cred = join(gitdir, "creds.config");
+
+            git(dir, "config", "--file", cred, HEADER, VALUE);
+            // Git resolves a relative include against the directory of the config file that
+            // holds it. Testing the raw string with `[ -f ]` does not, so the key came off and
+            // the file stayed.
+            git(dir, "config", "--local", `includeIf.gitdir:${gitdir}.path`, "creds.config");
+
+            expect(reachable(dir)).toContain("extraheader");
+
+            expect(scrub(dir).code).toBe(0);
+            expect(existsSync(cred)).toBe(false);
+        });
+
+        test("scrubs a submodule whose .gitmodules has been deleted", () => {
+            const dir = withSubmodule();
+            const cred = plantIncludeIf(join(dir, "vendor"));
+
+            // `.gitmodules` is tracked in the branch under review, and `foreach --recursive`
+            // walks the index rather than that file. Guarding the submodule pass on it let a
+            // deletion take the scrub and its verification together.
+            rmSync(join(dir, ".gitmodules"));
 
             expect(scrub(dir).code).toBe(0);
             expect(reachable(join(dir, "vendor"))).toBe("");
