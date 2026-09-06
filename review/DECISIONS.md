@@ -478,6 +478,22 @@ come from the ordered list above it, so a notice has a place on the page before 
 same sentences to a terminal. `POSTING_NOTICES` in `review-body.ts` is the same shape for the
 one thing the body says about its own posting.
 
+`warned` counts any notice a run raised, whatever `level` renders it as. Filtering to warnings
+read as the tidier rule and was the same bug in a new place: `limited` is a note, so a first
+review that found no critical defect posted nothing and the reader took the unchecked criteria
+for checked.
+
+That has a consequence, weighed on 2026-09-05 and accepted. The shipped lens set always raises
+`limited` — three of its lenses have no browser and say so — so `warned` is always true and the
+branch in `post-review.ts` that posts nothing when nothing is new cannot fire. Every push to a
+pull request gets a comment. The branch stays, because a lens set excluding those three reaches
+it, and the repetition is the cost this repository takes elsewhere on the same trade: a repeated
+comment costs less than a finding nobody sees. What would buy the quiet back is saying a
+standing caveat only where no earlier review is still carrying it. Nothing here knows that
+today: a review body is neither a review thread nor a conversation comment, so the comment fetch
+does not return it, and the only record that one was posted is the `posted` marker in the
+previous run's artifact.
+
 Both halves were written out by hand once, and each lost one. `warned` restated the conditions
 as a boolean expression and left out `limited`, the lenses `caveatOf` gives a sentence for,
 which renders as a `[!NOTE]` rather than a `[!WARNING]`. That is the standing sentence

@@ -177,8 +177,8 @@ FERRET="$PWD"
 ```
 
 The subshell and the `--config` flag are what keep the reviewed tree's own `bunfig.toml`
-away from `bun`. "Bun runs whatever a `bunfig.toml` in the reviewed tree names" below has
-why every `bun` a review starts takes both.
+away from `bun`. "Bun runs whatever a `bunfig.toml` in the reviewed tree names" in
+DECISIONS.md has why every `bun` a review starts takes both.
 
 Use the findings file in the run's own `build/`. `post-review.ts` reads `existing.json`
 beside it to know which threads are the run's own, and a run's findings and a different
@@ -227,7 +227,7 @@ the orchestrator's last turn alone, and undercounted one full run sixtyfold.
 | `../scripts/checks/` | One module per check, named for the key it is listed under. `index.ts` is the registry and the one place the suite is visible; `support.ts` holds the `Failures` protocol and the parsers. |
 | `local-preflight.sh` | Works out from the checkout what the workflow event would otherwise supply. |
 | `local-run.sh`, `local-print.sh`, `local-post.sh` | What `/codeferret:review` runs, so a session pastes no paths and relays no refs. |
-| `defaults/` | The `lenses` and `exclude-paths` defaults as plain lists, for a session that cannot read a YAML default. Generated from action.yml. |
+| `defaults/` | The `lenses` and `exclude-paths` defaults as plain lists, for a session that cannot read a YAML default, and the plugin namespace, for a shell that cannot parse the manifest. Generated from action.yml and `.claude-plugin/plugin.json`. |
 | `artifact.ts` | The name and retention window the action's upload step declares, for the run that reads an artifact back. Generated from action.yml. |
 | `standing-detail.ts` | What a review says a lens could not reach, whatever that lens reported. Generated from the `standing-detail` frontmatter of `lens-extras/*.md`. |
 | `versions.sh` | The bun and Claude Code versions a review runs on, sourced by both the action and the lint workflow. |
@@ -285,8 +285,8 @@ heading to search for there.
    can push. Without either, everything else works and nothing tries to close a thread.
 
    `actions: read` is what stops every finding being posted again on every push, and the
-   template grants it. "The previous run's findings come out of its artifact" above says
-   why, and what a repository that declines it gets instead.
+   template grants it. "The previous run's findings come out of its artifact" in
+   DECISIONS.md says why, and what a repository that declines it gets instead.
 
 2. Set `CLAUDE_CODE_OAUTH_TOKEN` as a repository secret. Create the token with
    `claude setup-token`.
@@ -342,8 +342,12 @@ their job red, or leave no review posted at all, needs `v2`.
 Bump `version` in `.claude-plugin/plugin.json` to the same number in the same commit.
 Plugin users see it in `/plugin`, and it is the only version they are shown.
 `validate-repo.ts` checks every `@vX.Y.Z` in the template, the install command, the README
-and CLAUDE.md against that number. Advice naming a tag nobody cut fails the consumer's job
-at load, and that advice is the one escape hatch from the mutable tag.
+and CLAUDE.md against that number. What it cannot check is that the tag exists: both sides
+of that comparison move in the same commit, and a shallow CI checkout has no tags to look
+at. So push the tag as part of landing the bump, not later when you announce it. Until it is
+pushed, every one of those files names a version `uses:` cannot resolve, and advice naming a
+tag nobody cut fails the consumer's job at load, which is worse than the mutable tag that
+advice is the escape hatch from. `git tag -l` lists the tags that are cut.
 
 Plugin users are not on tags at all. `/plugin marketplace add pocketarc/codeferret`
 follows this repository's default branch, and `/plugin update` gives them whatever is on

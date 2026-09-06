@@ -91,10 +91,14 @@ shellcheck -e SC2016 review/*.sh scripts/*.sh
 bun test
 ```
 
-GitHub validates workflow syntax when you push, but it does not validate an action
-manifest until a run loads it. So nothing catches a broken `action.yml` until the first
-step of a real review fails. That is how an unquoted `pull-requests: write` inside an
-input description shipped once. Quote any string that contains `: `.
+GitHub validates workflow syntax when you push, but it does not validate an action manifest
+until a run loads it. `scripts/checks/action.ts` closes the half of that which is YAML:
+it parses `action.yml` through `Bun.YAML`, lefthook runs it at commit time, and an unquoted
+`Needs pull-requests: write to post it.` in an input description now fails there rather than
+at the first step of a real review, which is how one shipped once. Quote any string that
+contains `: ` regardless — the check reports a parse error rather than the line that caused
+it. What nothing here catches is a manifest that parses and is wrong: a key GitHub does not
+recognise, a step shape it refuses. Those still wait for a run.
 
 The shell inside `action.yml` runs nowhere else, so shellcheck is all that reads it before
 CI does, and shellcheck reads only syntax. A `git rev-parse --verify -- "$ref"`
@@ -193,28 +197,24 @@ is in `review/DECISIONS.md`.
   the ordinary case. So `run.sh` empties that file too and the action's posting step calls
   `fetch_previous` beside `fetch_existing`. The local paths do not, because `ownWorkflow`
   answers null where nothing names a workflow and every artifact is then refused.
-  The run having two directories rather than one does not settle any of this. `run_dirs` makes
-  `session/` for the session, which every prompt path is under, and keeps `build/` for the
-  run's own record, which no prompt names; but `--plugin-dir` is handed the directory both sit
-  under, and a lens with `Bash` runs as this user. What the split buys is a comparison: a
-  session copy that stopped matching its original means a lens rewrote the diff the others
-  read, and nothing else in a run would show that. For `diff-args` and `lenses.txt`, which
-  something reads after the session and nothing can fetch again, `run.sh` holds a `shasum`
-  digest in its own shell variables and compares against that. A digest written to a file
-  would be a file the session can rewrite alongside what it describes, and so would a second
-  copy: measured against the `cmp` this replaced, a session that wrote identical bytes to both
-  copies passed it in silence.
+  The run having two directories rather than one settles none of it: `--plugin-dir` is handed
+  the directory both sit under, and a lens with `Bash` runs as this user. What the split buys
+  is a comparison, and the digest behind it lives in `run.sh`'s own shell variables rather than
+  in a file. Measured against the `cmp` that preceded it: a session that wrote identical bytes
+  to both copies passed that check in silence. "The orchestrator also decides what has been said before"
+  in review/DECISIONS.md has the rest.
 - An input that names what a review may do has to reach the code that does it.
   `resolve-threads` reached the orchestrator's prompt and nothing else until
   `post-review.ts` was given `RESOLVE_THREADS`, and the upload step read `artifact-path`
   while `post-review.ts` never saw it, so the body went on linking an artifact nobody kept.
   Prose is not a boundary, and neither is a default.
 - The reviewed tree does not configure the session that reviews it. `run.sh` passes
-  `--setting-sources user`. Without it the branch's own `CLAUDE.md` reaches the model, and a
-  `SessionStart` hook declared in its `.claude/settings.json` runs under
-  `bypassPermissions`, as whoever pushed that branch wrote it. The flag takes the branch's
-  `.claude/skills/` with it, which is why `build-prompts.sh` copies a workspace lens's skill
-  into the run's plugin.
+  `--setting-sources user`. Measured on 2.1.220 against a real dispatch: without it the branch's
+  own `CLAUDE.md` reaches the model, and a `SessionStart` hook declared in its
+  `.claude/settings.json` runs under `bypassPermissions`, as whoever pushed that branch wrote
+  it. The flag takes the branch's `.claude/skills/` with it, which is why `build-prompts.sh`
+  copies a workspace lens's skill into the run's plugin. "The reviewed tree does not configure
+  the session" in review/DECISIONS.md has the rest.
 - No lens is handed a way to reach the network. `WebFetch` and `WebSearch` are off the
   tool list on purpose: a lens reads an untrusted diff with `CLAUDE_CODE_OAUTH_TOKEN` in
   its environment. This raises the cost of exfiltration rather than preventing it, since
