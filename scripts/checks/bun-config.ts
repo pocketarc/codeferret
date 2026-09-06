@@ -2,10 +2,10 @@
  * Checks every `bun` a review starts for the flag that stops bun reading a config out of the
  * reviewed tree.
  *
- * `--config=/dev/null` is the whole of what stops bun running a `preload` script named by the
- * reviewed branch, and it is easy to leave off in a job holding both tokens. "Bun runs
- * whatever a `bunfig.toml` in the reviewed tree names" in review/DECISIONS.md has why nothing
- * else closes that route.
+ * `--config=/dev/null` is the whole of what stops bun running a `preload` script the reviewed
+ * branch named, and it is easy to leave off in a job holding both tokens. "Bun runs whatever a
+ * `bunfig.toml` in the reviewed tree names" in review/DECISIONS.md has the rest, including the
+ * wrapper that was weighed in place of this check and why it was refused.
  *
  * A printed hint counts. Whoever pastes one is standing where the run left them.
  *
@@ -33,13 +33,6 @@
  *
  * What the pair still does not match is `bun run`, `bun test` and `bunx`, none of which a
  * review starts. Whoever writes the first one has to widen this again.
- *
- * A `cf_bun` wrapper in lib.sh, with the rule narrowed to "no shell may name `bun` outside it",
- * was weighed and refused. It moves the list above rather than deleting it, since every entry on
- * it still needs an exception, and it reaches only the shell half: the `.ts` files cannot call a
- * shell function, so `HINT` and its empty-match guard stay whatever the scripts do. What the
- * wrapper would buy is one fewer place to forget the flag, and the invocations where that
- * mattered already go through `run_tool`.
  *
  * The `.ts` files under review/ are matched by a pattern of their own, under the rule at the
  * top: a printed hint counts, and the one that broke it lived in check-findings.ts, which runs

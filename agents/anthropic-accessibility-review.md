@@ -104,19 +104,19 @@ rule above does not reach them where it does:
   colour and everything painting behind it, in the diff or in a file you can read alongside
   it, and nowhere else. A ratio is a property of a colour against whatever paints behind it
   after cascade, inheritance, opacity and any theme layer, so a declared colour on its own
-  does not say which: `#767676` is 4.54:1 on white and 4.27:1 on `#f6f8fa`, which passes
+  does not fix the ratio: `#767676` is 4.54:1 on white and 4.27:1 on `#f6f8fa`, which passes
   1.4.3 for normal text on the first and fails it on the second. Never guess one from a
   colour whose backdrop a theme layer, an opacity or an inherited background leaves open.
-  The bar is 4.5:1, or 3:1 for large text, meaning 18 point, or 14 point bold.
+  The bar is 4.5:1, or 3:1 for large text, meaning 18 point or 14 point bold.
 - 2.5.8 Target Size (Minimum), Level AA. Report a size where the source fixes the whole
   border box: `width`, `height`, `padding`, `border-width` and the `box-sizing` in force,
   whether one rule settles them or several you can read together. A hit area is a computed
   box rather than a declared width, and `width: 24px; padding: 4px` is a 32px target under
   `content-box` and a 24px one under `border-box`. Where nothing you can read settles the
-  `box-sizing`, the box is unsettled and there is nothing to report. 2.5.8 exempts a target
-  inline in a sentence, one the spacing around it makes up for, one with an equivalent
-  control elsewhere on the page, one whose size the user agent sets and the page does not,
-  and one whose size is essential, so leave any target an exception covers.
+  `box-sizing`, the box is unsettled and there is nothing to report. These are exempt under
+  2.5.8: a target inline in a sentence, one the spacing around it makes up for, one with an
+  equivalent control elsewhere on the page, one whose size the user agent sets and the page
+  does not, and one whose size is essential. Do not report any of them.
 
 Several criteria have a source-level half that is in scope and a rendered half that is not.
 Report the half you can see, and say plainly what you could not judge:
@@ -173,12 +173,12 @@ Report the half you can see, and say plainly what you could not judge:
   the rendered page, and so does whether what moves is distracting at all.
 
 Parts of the skill contradict the rules above, and the rules override them. Its Output
-template holds tables it asks you to fill a row of per element, and the source settles almost
-none of the cells: "Color Contrast Check" wants a computed ratio for each one, "Keyboard
-Navigation" a rendered tab order and what each key does at runtime, and "Screen Reader" an
-"Announced As" column. Leave those tables out entirely. A ratio the source does settle
-belongs in a finding rather than in a row beside a column of blanks. Its Tip 1 puts contrast first: start with keyboard instead, meaning the
-part of 2.1.1 the source settles and the rest of the set above.
+template holds tables with a row per element, and the source settles almost none of the
+cells: "Color Contrast Check" wants a computed ratio for each one, "Keyboard Navigation" a
+rendered tab order and what each key does at runtime, and "Screen Reader" an "Announced As"
+column. Leave those tables out entirely. A ratio the source does settle belongs in a finding
+rather than in a row beside a column of blanks. Its Tip 1 puts contrast first: start with
+keyboard instead, meaning the part of 2.1.1 the source settles and the rest of the set above.
 
 Its "Testing Approach" is a workflow for a page you can open, and four of its five steps have
 nothing to run against here. Skip steps 1, 3, 4 and 5 outright: there is no scanner, no

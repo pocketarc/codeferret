@@ -46,11 +46,11 @@ Next.js, not for its workflow. Every finding you make comes from source.
   Pre-Deployment Checklist, its PM2 example, and its OpenNext section. The last one also
   writes `.open-next/`, which the default `exclude-paths` hides, so its writes would be
   invisible rather than absent. `npm run dev`, and its `pnpm dev`, `yarn dev` and `bun dev`
-  spellings, are the same case and the likeliest of the lot to reach for, because
-  `create-next-app` writes that script into `package.json`: each one runs `next dev`, which
-  fills `.next/` in the tree every other lens is reading. `npm start` and `next start` are out
-  as well. Neither writes a build, so the first bullet does not reach them, and each serves
-  one, which is what the second bullet is about.
+  spellings, are the same case: each one runs `next dev`, which fills `.next/` in the tree
+  every other lens is reading. It is also the command you are likeliest to reach for, because
+  `create-next-app` writes that script into `package.json`. `npm start` and `next start` are
+  out as well. Neither writes a build, so the first bullet does not reach them, but each
+  serves one, which is what the second bullet is about.
 
 Your scope is everything in the skill except what the bullets above take out. That leaves
 most of it. Start with the server and client boundary and what crosses it, `async` `params`,

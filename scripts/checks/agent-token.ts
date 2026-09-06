@@ -24,6 +24,9 @@ import type { Failures } from "./support.ts";
 const STARTS_THE_AGENT = "review/run.sh";
 const CREDENTIAL = /github-token|GITHUB_TOKEN|claude-code-oauth-token/;
 
+/** Its GitHub half, which no variable in that block may carry whatever it is called. */
+const GITHUB_CREDENTIAL = /github-token|GITHUB_TOKEN/;
+
 /**
  * What takes the runner's own copy of the inputs out of the step's shell.
  *
@@ -36,13 +39,18 @@ const CREDENTIAL = /github-token|GITHUB_TOKEN|claude-code-oauth-token/;
 const SCRUBS_THE_INPUTS = "scrub_inputs";
 
 /**
- * The one value the step may name, because it is a path rather than a credential.
- *
- * `run.sh` reads the file it names and deletes it before the session starts. The agent's own
- * token has to be here — it is what the session authenticates with — and it is covered by the
- * accepted risk in CLAUDE.md rather than by this check.
+ * The accepted risk in CLAUDE.md covers this one, rather than this check. Its value is still
+ * held to `GITHUB_CREDENTIAL`, or `CLAUDE_CODE_OAUTH_TOKEN: ${{ inputs.github-token }}` reaches
+ * the same step by the same one-line edit.
  */
-const ALLOWED = new Set(["GITHUB_TOKEN_FILE", "CLAUDE_CODE_OAUTH_TOKEN"]);
+const HOLDS_A_CREDENTIAL = "CLAUDE_CODE_OAUTH_TOKEN";
+
+/**
+ * Exempt on its name and not on its value. Exempting both passes
+ * `GITHUB_TOKEN_FILE: ${{ inputs.github-token }}`, which is the one-line edit the header
+ * above is about, under the one name this check permits.
+ */
+const HOLDS_A_PATH = "GITHUB_TOKEN_FILE";
 
 export async function checkAgentToken(): Promise<Failures> {
     const list: Failures = [];
@@ -74,16 +82,22 @@ export async function checkAgentToken(): Promise<Failures> {
         }
 
         for (const [key, value] of Object.entries(named)) {
-            if (ALLOWED.has(key)) continue;
+            const exempt = key === HOLDS_A_CREDENTIAL || key === HOLDS_A_PATH;
+            const pattern = key === HOLDS_A_CREDENTIAL ? GITHUB_CREDENTIAL : CREDENTIAL;
 
-            if (CREDENTIAL.test(key) || CREDENTIAL.test(String(value))) {
-                fail(
-                    list,
-                    "action.yml",
-                    `step '${step.name ?? "unnamed"}' starts the agent and names '${key}' in its env:. ` +
-                        "A lens reads that from /proc, so the token is staged in a file instead.",
-                );
-            }
+            const namesOne = !exempt && CREDENTIAL.test(key);
+            const carriesOne = pattern.test(String(value));
+
+            if (!namesOne && !carriesOne) continue;
+
+            const how = carriesOne ? `passes a GitHub credential to '${key}'` : `names '${key}'`;
+
+            fail(
+                list,
+                "action.yml",
+                `step '${step.name ?? "unnamed"}' starts the agent and ${how} in its env:. ` +
+                    "A lens reads that from /proc, so the token is staged in a file instead.",
+            );
         }
     }
 

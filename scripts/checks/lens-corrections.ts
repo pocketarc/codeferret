@@ -96,6 +96,11 @@ const CORRECTIONS: Correction[] = [
             // The PostgreSQL array table. Spans the whole body for the same reason: a key, a
             // constraint or a REFERENCES clause has to land inside these lines.
             "    post_id INT,\n    tag_names TEXT[]\n);",
+            // The reporting shape the extras overrides outright, one fragment per section it
+            // names.
+            "### Issue Template\n````",
+            "### Summary Assessment\n- **Security Score**",
+            "### Top 3 Priority Actions\n1. **[Critical Security Fix]**",
         ],
     },
     {

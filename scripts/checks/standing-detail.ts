@@ -15,19 +15,22 @@ import { STANDING_DETAIL } from "../../review/standing-detail.ts";
 import { bundledLenses, fail } from "./support.ts";
 import type { Failures } from "./support.ts";
 
+/**
+ * The lenses whose extras rule out a capability the session does not have.
+ *
+ * `comment-review` is the fifth extras file and is deliberately absent: reading prose needs no
+ * capability, so its extras rule out nothing.
+ */
+const MUST_CAVEAT = [
+    "anthropic-accessibility-review",
+    "copilot-sql-code-review",
+    "copilot-web-design-reviewer",
+    "vercel-next-best-practices",
+];
+
 export async function checkStandingDetail(): Promise<Failures> {
     const list: Failures = [];
     const file = "review/standing-detail.ts";
-
-    // The map is generated from the `standing-detail` frontmatter of the extras files, and
-    // checkGenerated re-runs that generator, so drift between the two is already covered.
-    // What is left is the case the generator cannot see: every lens whose extras open by
-    // naming a capability the session does not have should claim a sentence, and an empty
-    // map means a review promises a caveat nobody wrote.
-    if (STANDING_DETAIL.size === 0) {
-        fail(list, file, "holds no caveat, so a review says nothing about what a lens could not reach");
-        return list;
-    }
 
     const bundled = bundledLenses();
 
@@ -37,8 +40,21 @@ export async function checkStandingDetail(): Promise<Failures> {
         }
     }
 
+    // Reported against the extras, because that is where a caveat is written and where a broken
+    // `standing-detail` block leaves no entry. A lens that no longer ships is the other way to
+    // get here, and comes off MUST_CAVEAT above.
+    for (const lens of MUST_CAVEAT) {
+        if (!STANDING_DETAIL.has(lens)) {
+            fail(
+                list,
+                `review/lens-extras/${lens}.md`,
+                `puts no standing caveat in ${file}, so a review reads as though it had reached what that lens cannot`,
+            );
+        }
+    }
+
     if (list.length === 0) {
-        console.log("OK standing-detail: every caveat names a bundled lens");
+        console.log("OK standing-detail: every caveat names a bundled lens, and every lens owed one has it");
     }
 
     return list;
