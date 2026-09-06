@@ -264,7 +264,7 @@ const {
         leftOpen,
         to,
         threshold,
-        linkable: vetted.survey.linkable,
+        linkable: new Set(vetted.survey.comments.keys()),
         ...(await runFacts(buildDir, existing)),
     },
     parts,

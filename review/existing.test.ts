@@ -133,17 +133,10 @@ describe("survey: what the pull request carries", () => {
         });
     });
 
-    test("linkable holds exactly the urls comments is keyed by", () => {
-        const { comments, linkable } = survey(EXISTING);
-
-        expect([...linkable].sort()).toEqual([...comments.keys()].sort());
-    });
-
-    test("drops a comment with no url from both views", () => {
-        const { comments, linkable } = survey(file({ conversation: [{ body: "no url" }] }));
-
-        expect(comments.size).toBe(0);
-        expect(linkable.size).toBe(0);
+    // The set of urls the body may link was held beside this map and could only ever equal its
+    // keys, because one line added to both. `post-review.ts` derives it where it needs it.
+    test("drops a comment with no url, which is the only thing that can be linked", () => {
+        expect(survey(file({ conversation: [{ body: "no url" }] })).comments.size).toBe(0);
     });
 });
 

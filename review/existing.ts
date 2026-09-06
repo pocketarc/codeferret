@@ -114,7 +114,6 @@ export interface Survey {
      * auditing `mention`'s bound looking for a difference no input a run makes could produce.
      * Widening it means giving a thread a url of its own in the fetch, and a reason to.
      */
-    linkable: Set<string>;
 }
 
 /**
@@ -124,12 +123,10 @@ export interface Survey {
  */
 export function survey(existing: Surveyed): Survey {
     const comments = new Map<string, Located>();
-    const linkable = new Set<string>();
 
     const take = (c: Commenter | undefined, file: string, onClosedThread: boolean): void => {
         if (!c?.url) return;
 
-        linkable.add(c.url);
         comments.set(c.url, {
             file,
             text: c.body ?? "",
@@ -147,7 +144,7 @@ export function survey(existing: Surveyed): Survey {
 
     for (const comment of existing.conversation) take(comment, "", false);
 
-    return { comments, linkable };
+    return { comments };
 }
 
 /**
