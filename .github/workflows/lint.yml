@@ -9,8 +9,12 @@ permissions:
 
 jobs:
     # This job runs a fork's pull request code: `bun test` executes the test files as that
-    # pull request has them. So it holds no secrets, no write permissions, and no credential
-    # left in the tree for that code to read.
+    # pull request has them. So it declares no secrets, takes no write permissions, and leaves
+    # no credential in the tree for that code to read. `ACTIONS_RUNTIME_TOKEN` is the exception
+    # nothing here can close: the runner puts it in every step, and artifacts and the Actions
+    # cache are its whole reach. `fromThisRepository` and `sameWorkflow` in review/previous.ts
+    # are what keep an artifact written from here out of the next review, and no workflow on
+    # that path reads a cache.
     #
     # Named for what it runs rather than for one of its steps. It was `manifests`, after a
     # `validate-manifests.ts` this branch deleted, so a reader who saw it go red opened

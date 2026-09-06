@@ -47,8 +47,9 @@ means setting `resolve-threads: 'true'` in the same edit.
 The template grants a second permission the user should know about rather than decide on:
 `actions: read`. Say what it is for. A run reads the previous run's `findings.json` out of
 the `codeferret-run` artifact to know what has already been said; without it every finding
-is posted again on every push. It grants read access to the repository's workflow runs and
-their artifacts, and nothing more.
+is posted again on every push. Say also what it does not settle: a finding the comment prints
+in full comes back on every push regardless, until an owner or a collaborator answers it. It
+grants read access to the repository's workflow runs and their artifacts, and nothing more.
 
 Say what the action keeps. Its last step uploads `findings.json` as an artifact and keeps
 it for 14 days, which is how long the read above has anything to find. That file holds

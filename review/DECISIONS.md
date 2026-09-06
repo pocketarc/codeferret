@@ -437,7 +437,7 @@ answers it was rated on and the lenses that found it, the suppressed ones includ
 comment is for the person deciding whether to stop, and the file is for whoever fixes it.
 
 That leaves a body holding the summary, the counts, `lens_health`, and the findings the
-paragraph above says belong in it. `review-body.ts` bounds it: the short
+paragraph above says belong in it. `body-budget.ts` bounds it: the short
 sections that make the review honest are assembled first, the listing takes what is left,
 and it drops whole findings rather than being cut at a character offset, which would land
 inside a `<details>` or a fenced block and leave GitHub rendering the wreckage.
@@ -566,6 +566,14 @@ bun main.ts` ran the `preload` the working directory's `bunfig.toml` named, and
 `bun --config=/dev/null main.ts` did not, so a variable set once for the whole run would
 replace nothing. A guard written inside the script would run too late, because the preload
 runs first.
+
+A `cf_bun` wrapper in `lib.sh`, with the rule narrowed to "no shell may name `bun` outside
+it", was weighed and refused. The live shell that names bun without running it (`command -v
+bun`, `bun@$BUN_VERSION`, an `echo` about bun already being on `PATH`) still needs an
+exception under that rule, entry by entry, so the wrapper moves that list rather than
+deleting it. It also reaches only the shell half: a `.ts` file cannot call a shell function, so
+the printed hints stay exactly as they are. What it would buy is one fewer place to forget the
+flag, and the invocations where forgetting it mattered already go through `run_tool`.
 
 The working directory still moves, because a relative path in a report or an argument
 resolves against it. Only the orchestrator starts in the workspace, in a subshell of its

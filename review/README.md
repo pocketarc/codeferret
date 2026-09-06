@@ -241,8 +241,9 @@ the orchestrator's last turn alone, and undercounted one full run sixtyfold.
 | `check-findings.ts` | The command that checks those findings before anything posts them: argv, printing, the write-back and the exit code. |
 | `finding-rules.ts` | What may be wrong with a findings file and what to do about each thing, as functions over a parsed value. `finding-rules.test.ts` beside it. |
 | `post-review.ts` | Renders the review body, posts it, and records that it landed. |
-| `review-body.ts` | The rendering behind it: the sections, the length budget and the cut. `review-body.test.ts` beside it. |
-| `caveats.ts` | What a run says about itself (how much it covered, what it could not reach, why a suppression was reopened), in the words a posted review and a printed one both use. |
+| `review-body.ts` | The rendering behind it: which sections appear, in what order, and how each one is written. `review-body.test.ts` beside it. |
+| `body-budget.ts` | Fitting that into the length GitHub accepts: which items a list has room for, and the line saying what it left out. Names no finding of its own. `body-budget.test.ts` beside it. |
+| `caveats.ts` | What a run says about itself (how much it covered, what it could not reach, why a suppression was reopened), in the words a posted review and a printed one both use. `caveats.test.ts` beside it. |
 | `words.ts` | The inflection those sentences need, kept apart from the renderer so the two do not import each other. |
 | `print-findings.ts` | The same findings for a terminal, which is what a session shows instead of a posted review. |
 | `risk.ts` | The axes a finding is rated on, what each answer is worth, and the arithmetic from answers to a score and a tier. `risk.test.ts` beside it. |
@@ -262,6 +263,7 @@ the orchestrator's last turn alone, and undercounted one full run sixtyfold.
 | `test-fixtures.ts` | The one finding the suites build their cases out of, typed and untyped. |
 | `lib.sh` | What a shell script must work out or refuse before passing a value on: the guards, the `gh` handshake, the pull request and the base ref. |
 | `refuse-fork.sh` | The action's first step: whether the commit this run would review is this repository's. `refuse-fork.test.ts` beside it. |
+| `scrub-credentials.sh` | Takes the credential `actions/checkout` left in the workspace back out before a lens can read it, then reads the config back to check that none is left. `scrub-credentials.test.ts` beside it. |
 
 ## Why it is built this way
 

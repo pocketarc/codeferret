@@ -179,9 +179,6 @@ export function runNumbers(last: Record<string, unknown>): RunNumbers {
 
     const summed = perModel.reduce((total, spend) => total + spend.costUSD, 0);
 
-    // Narrowed element by element, not just as a container. This list is read by the report at
-    // the end of a run, after the findings file is on disk, and a null or a string in it would
-    // turn a complete run into a stack trace over the one report saying what a lens was refused.
     const refused = Array.isArray(last.permission_denials) ? last.permission_denials : null;
 
     // Narrowed element by element, not just as a container. This list is read by the report at

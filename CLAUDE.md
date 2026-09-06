@@ -442,13 +442,15 @@ and every entry here was once written that way.
   workflow named `.`, which is the whole build directory, `existing.json` and `previous.json`
   with it, and those two are other people's comment text rather than this session's prose. It
   now names two classes and nothing else: the review's own output (`findings.json`, `run.json`
-  and `lens-list.txt`) and this run's numbers (`cost-usd`, `duration-ms`, `permission-denials`
-  and `findings-checked`). Both are what a maintainer reads when a review goes wrong. The
-  numbers were weighed on 2026-08-15 and add nothing anybody else wrote. The list is also not a
-  bound on what a run can publish, which is written out beside it in the workflow: the session
-  could rewrite or symlink any path it names. **Lapses** when a lens runs
-  without `Bash`, which is the day the shorter route closes and the artifact becomes the widest
-  channel left. It has to be weighed again before anything carrying somebody else's words goes
+  and `lens-list.txt`), and this run's account of itself. That second class is
+  `session-changed.txt`, which says whether any of the rest may be the session's own answer;
+  the numbers `cost-usd`, `duration-ms` and `permission-denials`; and `findings-checked`, a
+  marker written from `check-findings.ts`'s exit code rather than a measurement. Both classes
+  are what a maintainer reads when a review goes wrong. The second was weighed on 2026-08-15
+  and adds nothing anybody else wrote. The list is also not a bound on what a run can publish,
+  which is written out beside it in the workflow: the session could rewrite or symlink any path
+  it names. **Lapses** when a lens runs without `Bash`, which is the day the shorter route
+  closes and the artifact becomes the widest channel left. It has to be weighed again before anything carrying somebody else's words goes
   back into `artifact-path` here.
 - The orchestrator runs under `bypassPermissions` with `Bash`, holding comments written by
   anyone who can comment. **Weighed 2026-08-01.** `--disallowed-tools` takes `Edit`, `Write`,
@@ -476,3 +478,31 @@ and every entry here was once written that way.
   two consecutive fixture runs costs money for nothing, and comes out of the default. It
   lapses the other way too, for a lens whose capability the session gains, and then the extras
   file and the `STANDING_DETAIL` entry go rather than the lens.
+- The measurements behind the session boundary were taken on a build the run no longer
+  installs. **Weighed 2026-09-06.** `review/versions.sh` pins Claude Code 2.1.224, and every
+  claim about how the CLI behaves at that boundary was established on 2.1.220 and says so: that
+  `--setting-sources user` keeps the branch's own `CLAUDE.md` and a `SessionStart` hook in its
+  `.claude/settings.json` out of the run (`review/DECISIONS.md`, this file,
+  `review/build-prompts.sh`), that naming `Bash` in a lens's tool list withholds `Grep` and
+  `Glob` (`scripts/build-lens-agents.ts`), and that `user-invocable: false` hides a slash-menu
+  entry and nothing more (`scripts/prepare-skill.ts`, `scripts/checks/skills.ts`). What rests
+  on the first of those is the orchestrator, which runs inside the reviewed workspace under
+  `bypassPermissions` holding `CLAUDE_CODE_OAUTH_TOKEN`. If the flag's scope over project
+  memory or project settings moved between the two builds, that session reads instructions
+  from the branch under review and no part of the run would say so: nothing asserts the memory
+  file went unread, and `permission-denials` stays at zero under `bypassPermissions` by
+  construction. It stands because these are documented flags rather than an accident of one
+  build, and because a re-measurement costs a dispatch per claim against a version nobody is
+  running locally. **Lapses** at the next bump of `CLAUDE_CODE_VERSION`, which is the moment to
+  re-run the dispatch each claim names and write the pinned version beside it. What would end
+  this entry is binding the two mechanically: a check that fails when a version named beside a
+  measurement is not the pinned one. Such a check is red from the day it is written until
+  somebody takes the measurements again.
+
+  The same debt sits on the other pin and went unwritten longer. `review/versions.sh` pins bun
+  1.3.14, and both measurements behind `--config=/dev/null` in review/DECISIONS.md were taken on
+  1.3.5: that `-c` is the same flag and takes its value the same way, and that
+  `BUN_CONFIG_FILE=/dev/null` does not stand in for it because the preload runs before a guard
+  inside the script could. What rests on those is every `bun` a review starts, which is the flag
+  keeping a `bunfig.toml` in the reviewed tree from naming a preload. Same lapse: the next bump
+  of `BUN_VERSION` re-runs both.

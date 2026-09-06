@@ -14,5 +14,12 @@
 #
 # Exported rather than plain, so that shellcheck can tell an assignment read elsewhere from
 # one nothing reads.
+#
+# Bumping CLAUDE_CODE_VERSION obliges a re-measurement nothing here asks for: several claims
+# about how the CLI isolates a session, and about what it hands a dispatched lens, were each
+# established on one build, and moving this line puts them a version behind with nothing
+# failing. "The measurements behind the session boundary were taken on a build the run no longer
+# installs" in CLAUDE.md's accepted risks has which claims those are and what retaking them
+# needs.
 export BUN_VERSION=1.3.14
 export CLAUDE_CODE_VERSION=2.1.224

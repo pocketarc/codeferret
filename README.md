@@ -58,8 +58,11 @@ can write contents is a token that can push; on `read`, everything else works an
 tries to close a thread.
 
 `actions: read` costs little and the review is worse without it. It is used for one thing:
-reading the previous run's `findings.json` back out of the artifact. Drop it and every
-finding is posted again on every push.
+reading the previous run's `findings.json` back out of the artifact. Drop it and every finding
+is posted again on every push. Keeping it quiets the findings the comment leaves to that file;
+anything it prints in full comes back on every push until an owner or a collaborator answers it,
+which is deliberate — a finding somebody is looking at should not go away on the strength of the
+last run having mentioned it.
 
 The rest of that file is:
 
@@ -161,8 +164,9 @@ merged:
 Two pull requests exercise different things:
 
 - `test/fixture-defects` against `test/fixture` is the realistic case. Its diff touches
-  7 files, and some findings root-cause into files the diff does not touch, which is what
-  measures whether a lens follows a defect out of the changed lines.
+  only some of the fixture's files, and some findings root-cause into files the diff does
+  not touch, which is what measures whether a lens follows a defect out of the changed
+  lines.
 - `test/fixture-defects` against `main` puts the whole fixture in one diff, so every
   lens reads every file.
 

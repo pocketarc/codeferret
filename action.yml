@@ -321,8 +321,10 @@ inputs:
             What to keep as the `codeferret-run` artifact, relative to the run's build
             directory. One path per line. To keep several files, put each on its own line.
             The next run reads the findings file back out of it to know what this one
-            already said. On the default a finding is raised once across a branch's pushes,
-            and that read needs `actions: read`.
+            already said, and that read needs `actions: read`. What it settles is a finding the
+            body leaves to the artifact: one at or above `print-threshold` is raised again on
+            every push unless an owner or a collaborator answered it in writing, because a
+            finding a reader is looking at is held to more than the previous run's say-so.
 
             The name is not configurable. A later run looks for `codeferret-run` and
             nothing else.

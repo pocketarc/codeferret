@@ -7,7 +7,8 @@
  * exactly that reason, and was right to — a label too unreliable to show is too unreliable to
  * hide findings with. What changes here is the instrument, not the appetite for filtering: a
  * model answers bounded questions it can actually judge from a diff, and the weighing happens
- * in this file, where it is a pure function over an object and a test can pin it.
+ * in this file, where it is a pure function over an object and a test can pin it. "A finding
+ * shows the claim and nothing else" in review/DECISIONS.md has the argument.
  *
  * `AXES` is the one home for all of it: the enum a model may answer with, the prose it reads
  * to choose, and the number each answer is worth. `scripts/build-risk-schema.ts` renders the
