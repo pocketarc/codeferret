@@ -1,24 +1,24 @@
 import { describe, expect, test } from "bun:test";
-import { partition } from "./findings.ts";
+import { asExisting, survey } from "./existing.ts";
+import { partition, vetSuppression } from "./findings.ts";
 import type { Finding, Merged } from "./findings.ts";
 import { COVERAGE_NOTICES, coverageOf, noticesFor } from "./caveats.ts";
 import { closeOpenFence, escapeInline, fenceMap } from "./markdown.ts";
+import { STANDING_DETAIL } from "./standing-detail.ts";
+import { assemble, MAX_BODY } from "./body-budget.ts";
 import {
-    assemble,
-    boundedBlock,
     bullet,
     composeReview,
     destinationOf,
-    MAX_BODY,
+    listingOf,
     MAX_LENS_DETAIL,
     MAX_PATH,
     MAX_TITLE,
     mention,
 } from "./review-body.ts";
-import type { Posting } from "./review-body.ts";
+import type { Destination, Posting } from "./review-body.ts";
 import { REVIEW_THRESHOLD } from "./read-run.ts";
 import { finding, NO_RISK, riskFor } from "./test-fixtures.ts";
-import { plural } from "./words.ts";
 
 describe("bullet", () => {
     test("escapes a trailing backslash in a title, which would eat the closing emphasis", () => {
@@ -209,50 +209,24 @@ describe("destinationOf", () => {
     });
 });
 
-describe("assemble", () => {
-    function listing(items: Finding[]) {
-        return { heading: "Findings", lead: "lead", omission: "They are in the findings file.", items };
+// The listing the budget spends its length on, and the one line it prints about what it could
+// not fit. `body-budget.test.ts` covers how many items fit; these are about what the review
+// then says, which the budget cannot know: a page ordered worst-first that quietly skipped its
+// worst finding reads as a complete one.
+describe("the line about what the length cut left out", () => {
+    const session: Destination = { kind: "session" };
+
+    function bodyWith(fresh: Finding[]): string {
+        const { listing } = listingOf(fresh, session, REVIEW_THRESHOLD);
+
+        return assemble(["x".repeat(MAX_BODY - 3000)], listing, []).body;
     }
 
-    test("keeps the fixed sections and lists what fits", () => {
-        const { body } = assemble(
-            ["## CodeFerret"],
-            listing([finding(), finding({ title: "Second" })]),
-            ["### Caveats"],
-        );
-
-        expect(body).toContain("## CodeFerret");
-        expect(body).toContain("### Findings");
-        expect(body).toContain("Second");
-        expect(body).toEndWith("### Caveats");
-    });
-
-    test("leaves the listing out when there is nothing to list", () => {
-        expect(assemble(["## CodeFerret"], null, []).body).toBe("## CodeFerret");
-    });
-
-    test("drops whole findings rather than cutting one, and says how many went", () => {
-        const items = Array.from({ length: 200 }, (_, i) => finding({ title: `T${i}`, body: "x".repeat(2000) }));
-        const { body } = assemble(["## CodeFerret"], listing(items), []);
-
-        expect(body.length).toBeLessThanOrEqual(MAX_BODY);
-        expect(body).toMatch(/further findings? left out for length/);
-    });
-
-    test("a finding too long for what is left costs only itself", () => {
-        const items = [finding({ title: "Huge", body: "x".repeat(3900) }), finding({ title: "Small" })];
-        const { body } = assemble(["x".repeat(MAX_BODY - 3000)], listing(items), []);
-
-        expect(body).not.toContain("Huge");
-        expect(body).toContain("Small");
-    });
-
     test("says on the page when what it dropped rates above what it printed", () => {
-        const items = [
+        const body = bodyWith([
             finding({ title: "Huge", body: "x".repeat(3900), risk: riskFor("critical") }),
             finding({ title: "Small", risk: riskFor("low") }),
-        ];
-        const { body } = assemble(["x".repeat(MAX_BODY - 3000)], listing(items), []);
+        ]);
 
         expect(body).toContain("Small");
         expect(body).toContain("one of them rated above a finding printed here");
@@ -260,110 +234,20 @@ describe("assemble", () => {
     });
 
     test("says nothing of the sort when the findings it dropped are the lesser ones", () => {
-        const items = [
+        const body = bodyWith([
             finding({ title: "First", risk: riskFor("critical") }),
             finding({ title: "Second", body: "x".repeat(3900), risk: riskFor("low") }),
-        ];
-        const { body } = assemble(["x".repeat(MAX_BODY - 3000)], listing(items), []);
+        ]);
 
         expect(body).toContain("First");
         expect(body).toContain("left out for length");
         expect(body).not.toContain("rated above");
     });
 
-    test("reports the findings it printed, not the ones it was offered", () => {
-        const items = [finding({ title: "Huge", body: "x".repeat(3900) }), finding({ title: "Small" })];
-        const { printed } = assemble(["x".repeat(MAX_BODY - 3000)], listing(items), []);
+    test("sends the reader where this run actually kept the rest", () => {
+        const body = bodyWith(Array.from({ length: 40 }, (_, i) => finding({ title: `T${i}`, body: "x".repeat(2000) })));
 
-        expect(printed.map((f) => f.title)).toEqual(["Small"]);
-    });
-
-    test("closes a details block the last-resort cut left open, and says so outside it", () => {
-        const wide = Array.from({ length: 400 }, (_, i) => `- lens ${i}: ${"d".repeat(200)}`).join("\n");
-        const { body } = assemble(
-            ["## CodeFerret", `<details>\n<summary>lenses</summary>\n\n${wide}\n</details>`],
-            null,
-            [],
-        );
-
-        expect(body).toEndWith("</details>\n\n_(this review was cut for length)_");
-        expect((body.match(/<details/g) ?? []).length).toBe((body.match(/<\/details>/g) ?? []).length);
-    });
-
-    test("the tail survives a listing that would fill the body", () => {
-        const items = Array.from({ length: 200 }, (_, i) => finding({ title: `T${i}`, body: "x".repeat(2000) }));
-        const { body } = assemble(["## CodeFerret"], listing(items), ["### Caveats"]);
-
-        expect(body).toEndWith("### Caveats");
-    });
-
-    // The search needs `printedWith` monotone in `head`, which `cutToFit` does not give in
-    // general: it skips rather than stops, so a wider head can drop one long item and admit
-    // two short ones. These two fixtures are the same length, which is what makes it hold.
-    describe("where the cut falls", () => {
-        const first = finding({ title: "First", body: "x".repeat(500) });
-        const second = finding({ title: "Second", body: "y".repeat(500) });
-        const items = [first, second];
-
-        function printedWith(head: number): number {
-            return assemble(["x".repeat(head)], listing(items), []).printed.length;
-        }
-
-        function widestHead(count: number): number {
-            let low = 0;
-            let high = MAX_BODY;
-
-            while (low < high) {
-                const mid = Math.ceil((low + high) / 2);
-
-                if (printedWith(mid) >= count) low = mid;
-                else high = mid - 1;
-            }
-
-            return low;
-        }
-
-        test("lists a finding that exactly fits, and drops it one character later", () => {
-            expect(printedWith(widestHead(1))).toBe(1);
-            expect(printedWith(widestHead(1) + 1)).toBe(0);
-        });
-
-        test("charges a second finding its bullet and the blank line before it, and nothing else", () => {
-            expect(widestHead(2)).toBeGreaterThan(0);
-            expect(widestHead(1) - widestHead(2)).toBe(bullet(second).length + 2);
-        });
-    });
-
-    test("leaves no disclosure control the cut emptied", () => {
-        const filler = Array.from({ length: 400 }, (_, i) => `- lens ${i}: ${"d".repeat(200)}`).join("\n");
-        const { body } = assemble(
-            [
-                "## CodeFerret",
-                `<details>\n<summary>lenses</summary>\n\n${filler}\n</details>`,
-                `<details>\n<summary>2 findings raised before and declined</summary>\n\n- a\n</details>`,
-            ],
-            null,
-            [],
-        );
-
-        expect(body).not.toMatch(/<details>\n(<summary>[^\n]*<\/summary>\n)?<\/details>/);
-        expect((body.match(/<details/g) ?? []).length).toBe((body.match(/<\/details>/g) ?? []).length);
-    });
-});
-
-describe("boundedBlock", () => {
-    const furtherItems = (n: number): string => plural(n, "further item");
-
-    test("holds a block to its limit when the line about what was dropped is what would overrun it", () => {
-        const items = Array.from({ length: 5 }, (_, i) => `- item ${i} ${"x".repeat(90)}`);
-        const block = boundedBlock(items, 400, furtherItems);
-
-        expect(block).toContain("left out for length");
-        expect(block.length).toBeLessThanOrEqual(400);
-    });
-
-    test("leaves a list that fits whole, with no line about omissions", () => {
-        expect(boundedBlock(["- one", "- two"], 400, furtherItems)).toBe("- one\n- two");
+        expect(body).toContain("This review was posted from a session, so ask whoever ran it for the rest.");
     });
 });
 
@@ -510,16 +394,23 @@ describe("composeReview", () => {
     });
 
     test("says what the two render-limited lenses could not check when neither said so", () => {
+        const named = ["anthropic-accessibility-review", "copilot-web-design-reviewer"];
         const body = review({
-            lens_health: [
-                { lens: "codeferret:anthropic-accessibility-review", findings_returned: 4, ok: true },
-                { lens: "codeferret:copilot-web-design-reviewer", findings_returned: 2, ok: true },
-            ],
+            lens_health: named.map((lens) => ({ lens: `codeferret:${lens}`, findings_returned: 2, ok: true })),
         });
 
         expect(body).toContain("> 2 of 2 lenses named something they could not check.");
-        expect(body).toContain("contrast, focus order, target size, reflow");
-        expect(body).toContain("the mobile, tablet, desktop and wide viewport sweep");
+
+        // Read off the map rather than quoted here. The sentences are generated from the
+        // `standing-detail` frontmatter of each lens's extras, so a quotation pins the wording
+        // of a file this test is not about; what it is about is that both sentences reach the
+        // page when neither lens said anything for itself.
+        for (const lens of named) {
+            const standing = STANDING_DETAIL.get(lens) ?? "";
+
+            expect(standing.length).toBeGreaterThan(0);
+            expect(body).toContain(standing);
+        }
     });
 
     test("keeps the standing sentence beside the lens's own words rather than losing it", () => {
@@ -917,7 +808,7 @@ describe("composeReview", () => {
                 resolveDenied: true,
                 leftOpen: 1,
             };
-            const coverage = coverageOf(merged, posting);
+            const coverage = coverageOf(merged, posting, partition(merged.findings));
             const { body, warned } = composeReview(merged, posting, partition(merged.findings));
 
             // `unaccounted` is the one that cannot join them: it means an empty `lens_health`,
@@ -942,7 +833,7 @@ describe("composeReview", () => {
             // On a runner, so there is an artifact to defer the rest to and the tier actually
             // filters. With no artifact the body prints every finding and the case proves nothing.
             const posting: Posting = { ...quiet, to: onARunner };
-            const coverage = coverageOf(merged, posting);
+            const coverage = coverageOf(merged, posting, partition(merged.findings));
             const { body, warned } = composeReview(merged, posting, partition(merged.findings));
 
             // Both findings band to `nit`. The rated one is left out, which is what a tier is
@@ -963,7 +854,7 @@ describe("composeReview", () => {
             const posting: Posting = { ...quiet, dispatched: ["codeferret:anthropic-accessibility-review"] };
             const { body, warned } = composeReview(merged, posting, partition(merged.findings));
 
-            expect(noticesFor(coverageOf(merged, posting))).toEqual(["limited"]);
+            expect(noticesFor(coverageOf(merged, posting, partition(merged.findings)))).toEqual(["limited"]);
             expect(body).toContain("No page was rendered");
             expect(warned).toBe(true);
         });
@@ -977,7 +868,30 @@ describe("composeReview", () => {
                 ],
             };
 
-            expect(coverageOf(merged, quiet).unrated.map((f) => f.file)).toEqual(["posted.ts"]);
+            expect(coverageOf(merged, quiet, partition(merged.findings)).unrated.map((f) => f.file)).toEqual(["posted.ts"]);
+        });
+
+        // The test above sets the statuses by hand, which is the orchestrator's word for them.
+        // What reaches the page is the vetting's word, and the two differ on the ordinary run:
+        // an unrated finding always clears the print bar, so an `already-reported` one with
+        // nobody entitled vouching for it comes back as `new` and is printed in full. Counted
+        // off `merged.findings` it was left out of the very sentence that says which findings
+        // are printed on a tier nothing computed.
+        test("counts as unrated a finding the vetting reopened, which is one the body prints", () => {
+            const merged: Merged = {
+                findings: [finding({ file: "answered.ts", risk: undefined, status: "already-reported" })],
+            };
+            const vetted = vetSuppression(
+                merged.findings,
+                survey(asExisting({})),
+                new Set<string>(),
+                REVIEW_THRESHOLD,
+                true,
+            );
+            const parts = partition(vetted.findings);
+
+            expect(parts.fresh.map((f) => f.file)).toEqual(["answered.ts"]);
+            expect(coverageOf(merged, quiet, parts).unrated.map((f) => f.file)).toEqual(["answered.ts"]);
         });
 
         test("bounds the unrated paths, which the body is charged for before any finding", () => {
@@ -986,7 +900,7 @@ describe("composeReview", () => {
                     finding({ file: `${"p".repeat(200)}/${i}.ts`, risk: undefined }),
                 ),
             };
-            const sentence = COVERAGE_NOTICES.unrated.say(coverageOf(merged, quiet), (text) => text);
+            const sentence = COVERAGE_NOTICES.unrated.say(coverageOf(merged, quiet, partition(merged.findings)), (text) => text);
 
             expect(sentence).toContain("(cut for length)");
             expect(sentence.length).toBeLessThan(1000);

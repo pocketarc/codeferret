@@ -100,26 +100,23 @@ export interface Located {
 }
 
 export interface Survey {
-    /** Every comment the pull request carries, by url. */
-    comments: Map<string, Located>;
     /**
-     * Every url the pull request carries, which is what a review body may render as a link.
+     * Every comment the pull request carries, by url.
      *
-     * The same urls as the keys of `comments`, because `fetch-existing.ts` writes a thread's
-     * url as its first comment's and that comment is keyed here too. Named apart from them
-     * because the two answer different questions: `mention` asks only whether the pull request
-     * carries a url, and the vetting asks what the comment behind one says about which file.
-     *
-     * This was documented as the wider set and never has been one, which left a reader
-     * auditing `mention`'s bound looking for a difference no input a run makes could produce.
-     * Widening it means giving a thread a url of its own in the fetch, and a reason to.
+     * The keys are also every url the pull request carries, which is the set `mention` in
+     * review-body.ts may render as a link: `fetch-existing.ts` writes a thread's url as its
+     * first comment's, and that comment is keyed here too. So a reader auditing `mention`'s
+     * bound is looking at this map. Widening the url set past the comments means giving a thread
+     * a url of its own in the fetch, and a reason to.
      */
+    comments: Map<string, Located>;
 }
 
 /**
- * One walk, so the two views cannot disagree about what the pull request carries.
+ * One walk, so a caller reading the comments and a caller reading their urls cannot disagree
+ * about what the pull request carries.
  *
- * Built twice in two modules before this, with the difference above unstated in either.
+ * Built twice in two modules before this.
  */
 export function survey(existing: Surveyed): Survey {
     const comments = new Map<string, Located>();

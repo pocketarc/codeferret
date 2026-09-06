@@ -9,14 +9,39 @@
  * while a posted run explained it.
  *
  * Sentences only. What a character does to markdown is in `markdown.ts`, and how a body is
- * cut to fit is in `review-body.ts`.
+ * cut to fit is in `body-budget.ts`.
  */
 
-import { brokenLenses, isFresh, lensLabel, silentLenses, unratedFindings } from "./findings.ts";
-import type { Finding, LensHealth, Merged, Reopening, Vetted } from "./findings.ts";
-import { clampTo } from "./markdown.ts";
+import { brokenLenses, lensLabel, MAY_DECLINE, silentLenses, unratedFindings } from "./findings.ts";
+import type { Finding, LensHealth, Merged, Partitioned, Reopening, Vetted } from "./findings.ts";
+import { clampedInline } from "./markdown.ts";
 import { STANDING_DETAIL } from "./standing-detail.ts";
 import { lenses, plural } from "./words.ts";
+
+/** Items joined the way a sentence reads them: "an owner", or "an owner or a collaborator". */
+function orList(items: string[]): string {
+    const last = items[items.length - 1] ?? "";
+
+    return items.length < 2 ? last : `${items.slice(0, -1).join(", ")} or ${last}`;
+}
+
+/** The associations `MAY_DECLINE` admits, as the nouns a sentence about them uses. */
+const ENTITLED = [...MAY_DECLINE].map((association) => association.toLowerCase());
+
+/**
+ * Who a reopening sentence says a comment had to come from, read off the rule itself.
+ *
+ * `MEMBER` was taken out of `MAY_DECLINE`, out of `orchestrator.md` and out of the decision
+ * record in one commit, and these two sentences went on naming it, because they were the
+ * fourth place the rule was written out and the only one nothing compiles against. A maintainer
+ * whose organisation colleague had written "working as intended" was told the decline "cited no
+ * comment from an owner, member or collaborator" when it had cited exactly that, and went
+ * looking for a broken citation rather than learning that the rule had moved.
+ */
+const ENTITLED_NAMED = orList(ENTITLED.map((noun) => `${"aeiou".includes(noun[0] ?? "") ? "an" : "a"} ${noun}`));
+
+/** The same list where the sentence supplies the article: "no owner or collaborator". */
+const ENTITLED_BARE = orList(ENTITLED);
 
 /**
  * Keyed by the counter rather than listed beside it. A `Record` over the counter names turns
@@ -30,7 +55,7 @@ import { lenses, plural } from "./words.ts";
  */
 const REOPENING: Record<Reopening, (n: number) => string> = {
     untraceable: (n) =>
-        `${plural(n, "decline")} cited no comment from an owner, member or collaborator,` +
+        `${plural(n, "decline")} cited no comment from ${ENTITLED_NAMED},` +
         " and no resolved thread. A resolved thread settles only a finding this review does" +
         " not print in full. Reporting them as new.",
     unrelated: (n) =>
@@ -38,7 +63,7 @@ const REOPENING: Record<Reopening, (n: number) => string> = {
         " finding is in. Reporting them as new.",
     unvouched: (n) =>
         `${plural(n, "finding")} came back as already raised at a rating this review prints` +
-        " in full, with no owner, member or collaborator having said so. Reporting them as new.",
+        ` in full, with no ${ENTITLED_BARE} having said so. Reporting them as new.`,
     unreported: (n) =>
         `${plural(n, "finding")} came back as already raised, citing a comment that is not` +
         " on this pull request or says nothing about the file. Reporting them as new.",
@@ -103,6 +128,12 @@ export interface Coverage {
      * The posted ones alone, because the sentence about them says they are printed whatever
      * their tier. A suppressed or declined finding gets a line in a collapsed block instead, so
      * counting those made the notice wrong about its own subject.
+     *
+     * Which findings those are is the caller's partition, not a second filter over the
+     * orchestrator's own statuses. `vetSuppression` hands back new objects and only ever moves a
+     * finding towards `new`, and an unrated finding always clears the print bar, so an
+     * `already-reported` one with no usable `risk` is reopened, printed in full, and was
+     * missing from both the count and the file list in the very sentence describing it.
      */
     unrated: Finding[];
 }
@@ -125,13 +156,19 @@ export interface RunFacts {
     unread: string[];
 }
 
-/** The one derivation, so a posted review and a printed one cannot describe different runs. */
-export function coverageOf(merged: Merged, facts: RunFacts): Coverage {
+/**
+ * The one derivation, so a posted review and a printed one cannot describe different runs.
+ *
+ * `parts` is required rather than derived here, for the reason `composeReview` requires it: a
+ * second partition is a second answer, and both callers have already made the one the body and
+ * the terminal are rendered from.
+ */
+export function coverageOf(merged: Merged, facts: RunFacts, parts: Partitioned): Coverage {
     const health = merged.lens_health ?? [];
 
     return {
         health,
-        unrated: unratedFindings(merged.findings.filter(isFresh)),
+        unrated: unratedFindings(parts.fresh),
         broken: brokenLenses(health),
         silent: silentLenses(
             health.map((h) => h.lens),
@@ -170,27 +207,22 @@ export function caveatOf(h: LensHealth): string | undefined {
 }
 
 /**
- * How much of what the comment fetch could not read the sentence carries.
+ * How much quoted text a notice may carry.
  *
- * Every other externally-derived string a review body puts on the page is bounded, and this
- * one was not. `unreadOf` hands back whatever `fetch-existing.ts` wrote, which for a GraphQL
- * failure is every message GitHub returned joined together. `assemble` charges the head
+ * One bound for the two notices that quote something, because it answers one question for both:
+ * how much text that nothing else bounds a page can afford. `assemble` charges the head
  * against the body's limit before it measures a single finding, so a long enough one takes the
- * findings section first and then pushes the body into the last-resort cut, which cuts from
- * the end, where the caveats are.
- */
-const MAX_UNREAD = 500;
-
-/**
- * How much of the unrated findings' paths the sentence carries.
+ * findings section first and then pushes the body into the last-resort cut, which cuts from the
+ * end, where the caveats are.
  *
- * Bounded for the reason above, and reachable on exactly the run this notice exists for. Every
- * path is a model's own string, `check-findings.ts` asks only that it be non-empty, and
+ * Both quotes can arrive long. `unreadOf` hands back whatever `fetch-existing.ts` wrote, which
+ * for a GraphQL failure is every message GitHub returned joined together. Every path in the
+ * unrated list is a model's own string, `check-findings.ts` asks only that it be non-empty, and
  * `unratedAxes` calls a finding unrated when `risk` is absent, so a run whose orchestrator
- * omitted `risk` throughout puts every finding it posts in this sentence. A fixture run has
+ * omitted `risk` throughout puts every finding it posts in that sentence. A fixture run has
  * produced ninety-seven.
  */
-const MAX_UNRATED = 500;
+const MAX_QUOTED = 500;
 
 /** An escape for the stretch of a sentence that came from a model or from GitHub. */
 export type Escape = (text: string) => string;
@@ -235,6 +267,13 @@ const COVERAGE_ORDER = ["unread", "changed", "unrated", "unaccounted", "silent",
 
 export type CoverageAlert = (typeof COVERAGE_ORDER)[number];
 
+/**
+ * What each notice says, keyed by name and read in `COVERAGE_ORDER`'s order.
+ *
+ * The entries are declared in that same order, because each carries a comment arguing where it
+ * sits on the page, and a reader takes the order they are declared in for the order they appear
+ * in. Nothing checks it.
+ */
 export const COVERAGE_NOTICES: Record<CoverageAlert, Notice<Coverage>> = {
     // First, because it is about the counts a reader has just read rather than about coverage
     // of the diff: a finding this review repeats is one whose answer went unread, and without
@@ -242,33 +281,9 @@ export const COVERAGE_NOTICES: Record<CoverageAlert, Notice<Coverage>> = {
     unread: {
         level: "warning",
         raised: (c) => c.unread.length > 0,
-        say: (c, escape) => {
-            const { kept, marker } = clampTo(c.unread.join(" "), MAX_UNREAD);
-
-            return (
-                "Part of the discussion on this pull request could not be read, so anything answered" +
-                ` there is raised again: ${escape(kept)}${marker === "" ? "" : " (cut for length)"}`
-            );
-        },
-    },
-
-    // Beside the counts rather than among the lens notices, because it is about findings the
-    // reader is looking at: an unrated finding is in the list in front of them, printed on a
-    // tier nothing computed. Without this it would be there with nothing to say why.
-    unrated: {
-        level: "warning",
-        raised: (c) => c.unrated.length > 0,
-        say: (c, escape) => {
-            const { kept, marker } = clampTo(c.unrated.map((f) => f.file).join(", "), MAX_UNRATED);
-
-            return (
-                `${plural(c.unrated.length, "finding")} could not be rated, so ` +
-                `${c.unrated.length === 1 ? "it is" : "they are"} printed here whatever ` +
-                `${c.unrated.length === 1 ? "its" : "their"} tier would have been: ` +
-                `${escape(kept)}${marker === "" ? "" : " (cut for length)"}. ` +
-                "`risk` in `findings.json` has what each one answered."
-            );
-        },
+        say: (c, escape) =>
+            "Part of the discussion on this pull request could not be read, so anything answered" +
+            ` there is raised again: ${clampedInline(c.unread.join(" "), MAX_QUOTED, escape)}`,
     },
 
     // Above the coverage notices, because it is what decides how much they are worth: the lens
@@ -280,6 +295,20 @@ export const COVERAGE_NOTICES: Record<CoverageAlert, Notice<Coverage>> = {
             `The review session changed ${escape(c.sessionChanged.join(", "))} under it.` +
             " The commit these findings are lines of, and the list of lenses counted below, are that" +
             " session's own answer rather than what this run built.",
+    },
+
+    // Beside the counts rather than among the lens notices, because it is about findings the
+    // reader is looking at: an unrated finding is in the list in front of them, printed on a
+    // tier nothing computed. Without this it would be there with nothing to say why.
+    unrated: {
+        level: "warning",
+        raised: (c) => c.unrated.length > 0,
+        say: (c, escape) =>
+            `${plural(c.unrated.length, "finding")} could not be rated, so ` +
+            `${c.unrated.length === 1 ? "it is" : "they are"} printed here whatever ` +
+            `${c.unrated.length === 1 ? "its" : "their"} tier would have been: ` +
+            `${clampedInline(c.unrated.map((f) => f.file).join(", "), MAX_QUOTED, escape)}. ` +
+            "`risk` in `findings.json` has what each one answered.",
     },
 
     // Its own notice, and not a lens missing from a list: with no `lens_health` at all there is

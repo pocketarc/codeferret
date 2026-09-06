@@ -27,8 +27,14 @@
 
 import { lines } from "./lines.ts";
 
-/** Where the findings a run produced are written, which is the file the next run reads back. */
-const FINDINGS_FILE = "findings.json";
+/**
+ * Where the findings a run produced are written, which is the file the next run reads back.
+ *
+ * Exported because the review body names it on the page, both where it sends a reader to the
+ * artifact and where it tells a maintainer what to set `artifact-path` to. Typed out there, it
+ * was three literals a rename here would leave behind on the page.
+ */
+export const FINDINGS_FILE = "findings.json";
 
 export interface Kept {
     /** What `upload-artifact` is given, one absolute path per entry. */

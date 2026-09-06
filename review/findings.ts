@@ -202,8 +202,12 @@ export interface Partitioned {
  * `authorAssociation` is still an approximation of the question. Asking GitHub for the
  * commenter's permission on the repository would answer it outright, at an API call per
  * commenter and a new way for the fetch to fail; `fetch-existing.ts` is where that would go.
+ *
+ * Exported because the sentences a reader gets when a suppression is reopened name these
+ * associations, and `ENTITLED_NAMED` in `caveats.ts` builds that phrase from this set rather
+ * than spelling the rule out a fourth time.
  */
-const MAY_DECLINE = new Set(["OWNER", "COLLABORATOR"]);
+export const MAY_DECLINE: ReadonlySet<string> = new Set(["OWNER", "COLLABORATOR"]);
 
 /** Whether whoever wrote a comment has standing in the repository. */
 function entitled(comment: Located): boolean {
@@ -275,8 +279,8 @@ export interface Vetted {
      *
      * Counted apart from `unreported` because it is the one reopening that happens with no
      * comment cited at all, and that is the ordinary shape of it. While the two shared a
-     * counter, a maintainer watching a critical come back on every push was told the finding
-     * had cited a comment, which sent them looking for one that was never there.
+     * counter, a maintainer watching a finding come back on every push was told it had cited a
+     * comment, which sent them looking for one that was never there.
      */
     unvouched: number;
     /** `already-reported` findings citing a comment that is absent or about another file. */
@@ -320,6 +324,82 @@ function raisedBefore(raisedFiles: ReadonlySet<string>, file: string): boolean {
 }
 
 /**
+ * Why a decline does not stand, or null where it does.
+ *
+ * A decline needs an author with standing, or, for a finding the body prints as one line, a
+ * thread somebody closed. GitHub closes a conversation for anyone with repository write or for
+ * whoever opened the pull request, and `resolveReviewThread` grants neither, so on a branch from
+ * an outside contributor the only person who can close a thread is the one whose work is under
+ * review: open a thread on a line, have any account reply "intentional", close it, and every
+ * finding in that file is declined for as long as the pull request lives. Replying to a closed
+ * thread takes no more than commenting and does not reopen it, so a reply there settles the file
+ * its thread is anchored to and nothing else.
+ *
+ * A finding the body prints in full is held to the association instead, matching `vetReported`
+ * below. `printed` is what the body itself filters on, so the set this protects and the set a
+ * reader sees are the same set.
+ *
+ * `orchestrator.md` carves out a security defect from any reply, and that carve-out is prompt
+ * text sitting in the same context as the comments it judges, so this is where refusing costs
+ * an attacker anything.
+ */
+function vetDecline(f: Finding, cited: Located | undefined, printed: boolean): Reopening | null {
+    const closed = cited?.onClosedThread === true && !printed;
+
+    if (!cited || !(entitled(cited) || closed)) return "untraceable";
+
+    const about = entitled(cited) ? isAbout(cited, f.file) : cited.file !== "" && cited.file === f.file;
+
+    return about ? null : "unrelated";
+}
+
+/**
+ * Why an `already-reported` finding does not stand, or null where it does.
+ *
+ * A defect somebody has written down is a defect somebody has written down, whoever they are,
+ * and it keeps its line in the review either way, so all this ordinarily needs is that what it
+ * rests on is there and is about the same file: a comment where it cites one, and otherwise the
+ * previous review, which is where the orchestrator is told to take the status from.
+ *
+ * A finding the body prints in full is the exception, and takes a comment from someone
+ * `MAY_DECLINE` admits, whether or not one is cited. The lower bar rests on the finding keeping
+ * its line either way, and for these that is not the whole of it: the body prints them whole and
+ * everything else as one line in a collapsed block, so demoting one is the difference between a
+ * reader seeing the defect and seeing its title.
+ *
+ * `printed` rather than a test spelled out here: when each side named its own set, a finding
+ * graded `blocker` took the whole page and the low bar at once. `vetDecline` above takes a
+ * comment on a thread somebody closed, and the two agree about what that is worth: closure is
+ * standing enough for a finding printed as one line, and not for one taking a reader off the
+ * page. Widening either to take a closed thread at any tier is the edit to refuse.
+ *
+ * Citing nothing leaves less to check, and the bar is the same either way. While the bar applied
+ * only where a url was present, omitting the url skipped it and fell through to `raisedBefore`,
+ * which asks only whether the previous review raised anything at all in that file, at any tier.
+ * A nit in the same file would then settle a critical.
+ *
+ * What that costs is the whole printed section, on every push. Most `already-reported` findings
+ * cite no comment, because STEP 3 of `orchestrator.md` asks for the status from `previous.json`
+ * and for a url only where the entry has one, so on the shipped defaults every finding at or
+ * above the threshold comes back as new and is printed again until somebody entitled answers it
+ * in writing. Narrowing the test to one tier would buy the repetition back and break the coupling
+ * above in the direction that matters: a `high` finding a reader is looking at would then be
+ * settled by the previous review alone.
+ */
+function vetReported(
+    f: Finding,
+    cited: Located | undefined,
+    raisedFiles: ReadonlySet<string>,
+    printed: boolean,
+): Reopening | null {
+    if (printed && !(cited && entitled(cited))) return "unvouched";
+
+    if (f.existing_comment_url) return cited && isAbout(cited, f.file) ? null : "unreported";
+
+    return raisedBefore(raisedFiles, f.file) ? null : "unmatched";
+}
+
+/**
  * Reopen every suppression that the comments on the pull request do not bear out.
  *
  * The orchestrator is told which associations may settle a finding, and it then takes that
@@ -328,15 +408,9 @@ function raisedBefore(raisedFiles: ReadonlySet<string>, file: string): boolean {
  * them for the rule would silence a finding for as long as the pull request lives. So the
  * decision is taken again here, against what GitHub reported.
  *
- * The two statuses are held to different bars. A decline needs an author with standing, or, for
- * a finding the body prints as one line, a thread somebody closed: closing one takes repository
- * write or authorship of the pull request, and `resolveReviewThread` grants neither. Replying to
- * a closed thread takes no more than commenting and does not reopen it, so a reply there
- * settles the file its thread is anchored to and nothing else. An `already-reported` finding
- * is a defect somebody has written down, whoever they are, and it stays a finding in the file
- * either way, so all it needs is that what it rests on is there and is about the same file: a
- * comment where it cites one, and otherwise the previous review, which is where the
- * orchestrator is told to take the status from.
+ * The two statuses are held to different bars, and each bar is a function of its own above.
+ * What stays here is the dispatch and the counting: one increment site, whatever a policy
+ * answers.
  *
  * When existing.json or previous.json cannot be read, nothing can be traced and every
  * suppression resting on it is reopened. That costs a comment somebody has already answered,
@@ -372,80 +446,18 @@ export function vetSuppression(
     const vetted = findings.map((f) => {
         const url = f.existing_comment_url;
         const cited = url ? comments.get(url) : undefined;
+        // Computed once and handed to whichever policy applies, so the two policies and the body
+        // cannot differ about which findings are printed in full.
+        const printed = isPrinted(f, threshold, deferrable);
 
-        if (f.status === "declined") {
-            // A closed thread stands for every finding the body prints as one line. GitHub
-            // resolves a conversation for anyone with repository write, or for whoever opened
-            // the pull request, so on a branch from an outside contributor the only person
-            // who can close a thread is the one whose work is under review: open a thread on
-            // a line, have any account reply "intentional", close it, and every finding in
-            // that file is declined for as long as the pull request lives.
-            //
-            // A finding the body prints in full is held to the association instead, matching
-            // the `already-reported` branch below. `isPrinted` is what the body itself filters
-            // on, so the set this protects and the set a reader sees are the same set.
-            //
-            // `orchestrator.md` carves out a security defect from any reply, and that
-            // carve-out is prompt text sitting in the same context as the comments it judges,
-            // so this branch is where refusing costs an attacker anything.
-            const closed = cited?.onClosedThread === true && !isPrinted(f, threshold, deferrable);
+        const why =
+            f.status === "declined"
+                ? vetDecline(f, cited, printed)
+                : f.status === "already-reported"
+                  ? vetReported(f, cited, raisedFiles, printed)
+                  : null;
 
-            if (!cited || !(entitled(cited) || closed)) return reopen(f, "untraceable");
-
-            const about = entitled(cited) ? isAbout(cited, f.file) : cited.file !== "" && cited.file === f.file;
-
-            if (about) return f;
-
-            return reopen(f, "unrelated");
-        }
-
-        if (f.status === "already-reported") {
-            // A finding the body prints in full takes an owner, a member or a collaborator
-            // saying so, whether or not a comment is cited. The lower bar below rests on the
-            // finding keeping its line in the review either way, and for these that is not the
-            // whole of it: the body prints them whole and everything else as one line in a
-            // collapsed block, so demoting one is the difference between a reader seeing the
-            // defect and seeing its title.
-            //
-            // `isPrinted` rather than a test spelled out here: when each side named its own
-            // set, a finding graded `blocker` took the whole page and the low bar at once.
-            //
-            // The decline branch above takes a comment on a thread somebody closed, and the
-            // two branches agree about a critical: closure is standing enough for a finding
-            // printed as one line, and not for one taking a reader off the page.
-            // Whoever replied under the thread needed no more than the ability to comment,
-            // and whoever closed it needed repository write or authorship of the pull
-            // request. Widening either branch to take a closed thread at any tier is the
-            // edit to refuse.
-            //
-            // Citing nothing is not the weaker case, it is the emptier one. Gated on a url
-            // being present, omitting the url skipped the bar and fell through to
-            // `raisedBefore`, which asks only whether the previous review raised anything at
-            // all in that file, at any tier. A nit in the same file would then settle a
-            // critical. So the bar is the same whether or not a comment is cited.
-            //
-            // The cost is a critical that was genuinely reported before and never commented
-            // on, printed in full again on every push. Criticals are rare and that is the
-            // direction to be wrong in.
-            if (isPrinted(f, threshold, deferrable) && !(cited && entitled(cited))) return reopen(f, "unvouched");
-
-            if (url) {
-                if (cited && isAbout(cited, f.file)) return f;
-
-                return reopen(f, "unreported");
-            }
-
-            // No url is the ordinary path rather than an edge case: STEP 3 tells the
-            // orchestrator to take this status from `previous.json` and to copy a url only
-            // where the entry has one, so most suppressions arrive with nothing cited. Left
-            // to fall through, they were the one status decided by the orchestrator alone
-            // and re-decided nowhere, and the status carries into every later run.
-            if (raisedBefore(raisedFiles, f.file)) return f;
-
-            return reopen(f, "unmatched");
-        }
-
-        return f;
+        return why === null ? f : reopen(f, why);
     });
 
     return { findings: vetted, ...counts };

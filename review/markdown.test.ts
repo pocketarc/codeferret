@@ -171,10 +171,8 @@ describe("escapeBlocks", () => {
         expect(escapeBlocks(["A claim", "="])).toEqual(["A claim", "\\="]);
     });
 
-    test("leaves the emphasis and links a model meant to write", () => {
-        expect(escapeBlocks(["**bold** and [a link](https://example.test)"])).toEqual([
-            "**bold** and [a link](https://example.test)",
-        ]);
+    test("leaves the emphasis a model meant to write", () => {
+        expect(escapeBlocks(["**bold** and _italic_"])).toEqual(["**bold** and _italic_"]);
     });
 
     test("leaves everything inside a fence alone", () => {
@@ -190,7 +188,9 @@ describe("escapeBlocks", () => {
     });
 
     test("escapes a markdown image, which renders without a click", () => {
-        expect(escapeBlocks(["![alt](https://example.test/x.png)"])).toEqual(["\\![alt](https://example.test/x.png)"]);
+        expect(escapeBlocks(["![alt](https://example.test/x.png)"])).toEqual([
+            "!\\[alt\\](https://example.test/x.png)",
+        ]);
     });
 
     test("fences an indented code block, which would otherwise show its backslashes", () => {
@@ -217,9 +217,13 @@ describe("escapeBlocks", () => {
         expect(escapeBlocks(["- outer", "    - inner", "- other"])).toEqual(["- outer", "    - inner", "- other"]);
     });
 
-    test("leaves an ordinary exclamation mark and an ordinary link alone", () => {
-        expect(escapeBlocks(["it fails! see [the docs](https://example.test)"])).toEqual([
-            "it fails! see [the docs](https://example.test)",
+    test("leaves an ordinary exclamation mark alone", () => {
+        expect(escapeBlocks(["it fails! read the log"])).toEqual(["it fails! read the log"]);
+    });
+
+    test("escapes a link in prose, so a label cannot stand in front of its destination", () => {
+        expect(escapeBlocks(["see [the docs](https://example.test)"])).toEqual([
+            "see \\[the docs\\](https://example.test)",
         ]);
     });
 

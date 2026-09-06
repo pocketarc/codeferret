@@ -1,13 +1,19 @@
 /**
- * The rendering a posted review is built from.
+ * What a posted review says: which sections appear, in what order, and how each one is
+ * rendered.
  *
- * Every function here is pure over strings and JSON, and each one has a failure mode
- * nothing downstream would report: markdown a model did not mean to write renders as
- * debris, and a budget that goes negative drops the findings the body exists to carry. What
- * a run produced is in `findings.ts`; what a character does to markdown is in `markdown.ts`;
- * what the run says about itself, in the words a printed review uses too, is in `caveats.ts`.
+ * Every function here is pure over strings and JSON, and each one has a failure mode nothing
+ * downstream would report: markdown a model did not mean to write renders as debris. What a run
+ * produced is in `findings.ts`; what a character does to markdown is in `markdown.ts`; what the
+ * run says about itself, in the words a printed review uses too, is in `caveats.ts`; and how the
+ * whole of it is fitted into the length GitHub accepts is in `body-budget.ts`, which names no
+ * finding of its own and is handed the items and how to render them.
  */
 
+import { ARTIFACT_NAME } from "./artifact.ts";
+import { FINDINGS_FILE } from "./artifact-path.ts";
+import { assemble, boundedBlock } from "./body-budget.ts";
+import type { Listing } from "./body-budget.ts";
 import { caveatOf, COVERAGE_NOTICES, coverageOf, noticesFor, raisedIn } from "./caveats.ts";
 import type { Coverage, CoverageAlert, Notice, RunFacts } from "./caveats.ts";
 import { findingRank, isPrinted, lensLabel, lineOf } from "./findings.ts";
@@ -16,7 +22,7 @@ import { lenses, plural } from "./words.ts";
 import {
     clamp,
     clampTo,
-    closeOpenDetails,
+    CUT_INLINE,
     closeOpenFence,
     code,
     details,
@@ -28,14 +34,6 @@ import {
     prose,
     splitLines,
 } from "./markdown.ts";
-
-/**
- * GitHub's limit on a review body is 65536 characters. The difference is headroom.
- *
- * Exported for review-body.test.ts, which builds a body against the limit rather than
- * against a number typed out beside it. Nothing else outside this module reads it.
- */
-export const MAX_BODY = 60000;
 
 // The orchestrator writes both the summary and the notes, and nothing bounds what a model
 // produces. Left unbounded, a runaway summary eats the length the findings need.
@@ -133,6 +131,27 @@ export function destinationOf(env: Record<string, string | undefined>): Destinat
 }
 
 /**
+ * Where this run leaves a finding the body does not print, or null where it keeps it nowhere.
+ *
+ * The one place the variant is tested for, so that one question gets one answer.
+ */
+export function artifactUrl(to: Destination): string | null {
+    return to.kind === "artifact" ? to.url : null;
+}
+
+/**
+ * Whether the run has somewhere to leave the findings the body does not print in full.
+ *
+ * The same question the url answers, because only `artifact` carries one. `isPrinted` takes
+ * this beside the threshold, and the two have to be the same answer wherever they are asked: if
+ * the body decides one way and the suppression bar the other, a finding is printed in full while
+ * a closed thread may still settle it for the life of the pull request.
+ */
+export function defers(to: Destination): boolean {
+    return artifactUrl(to) !== null;
+}
+
+/**
  * The findings the body prints in full.
  *
  * With an artifact behind it the body prints what scored at the threshold or above and names
@@ -142,7 +161,7 @@ export function destinationOf(env: Record<string, string | undefined>): Destinat
  * instead, since there is nowhere else to read it, and the threshold decides nothing.
  */
 function listedIn(fresh: Finding[], to: Destination, threshold: Tier): Finding[] {
-    return fresh.filter((f) => isPrinted(f, threshold, to.kind === "artifact"));
+    return fresh.filter((f) => isPrinted(f, threshold, defers(to)));
 }
 
 /**
@@ -173,7 +192,7 @@ export function bullet(f: Finding): string {
     const label = escapeInline(kept);
     // The marker sits outside the emphasis, because `clampTo` writes it as markdown of its own
     // and a second pair of underscores inside the first renders as literal punctuation.
-    const cut = marker === "" ? "" : " (cut for length)";
+    const cut = marker === "" ? "" : CUT_INLINE;
     const category = label === "" ? "" : `\n\n  _${label}_${cut}`;
 
     return `- ${code(where(f))}: **${title(f)}**\n\n  ${body}${category}`;
@@ -278,153 +297,13 @@ function lensDetail(detail: string): string {
     return `\n\n  ${oneLine(detail, MAX_LENS_DETAIL)}`;
 }
 
-/** The joined body, and which findings actually reached it. */
-interface Assembled {
-    body: string;
-    /**
-     * The findings whose bullets went in.
-     *
-     * The set offered to the listing is not the set printed: a finding too long for what is
-     * left is skipped, and nothing outside `assemble` can tell which ones went. `post-review.ts`
-     * logs this count as what the body carried, and a log line that contradicts the body it
-     * describes is worse than no log line.
-     */
-    printed: Finding[];
-}
-
-/** A heading, a reason, and findings listed under it. The one section that can run long. */
-interface Listing {
-    heading: string;
-    /** Why these findings and not others. Empty when the section holds all of them. */
-    lead: string;
-    /** Where to read the findings this section had no room for. */
-    omission: string;
-    items: Finding[];
-}
-
-/**
- * Held back from a list's budget for the line saying what the budget left out.
- *
- * Wide enough for the longest of those lines, the findings listing's: a count, the clause saying
- * a dropped finding outranks a printed one, and the sentence `omissionFor` gives this
- * destination. A fourth, longer sentence there eats the margin and nothing fails.
- */
-const OMISSION_RESERVE = 300;
-
-/**
- * Items rendered and kept while they fit, with the rest dropped whole.
- *
- * A dropped item costs only itself: an item too long for what is left is passed over and the
- * shorter ones after it are still admitted. The alternative is to stop at the first one that
- * does not fit, which would leave a reader a prefix of a list already ordered worst-first, and
- * costs more, because `partition` puts the worst first and a single verbose critical would then
- * empty the section under it.
- *
- * What that leaves is a page a reader cannot take at face value, so `assemble` says on the page
- * when something dropped outranks something printed.
- */
-function cutToFit<T>(
-    items: T[],
-    render: (item: T) => string,
-    limit: number,
-    separator: number,
-): { kept: T[]; lines: string[] } {
-    const kept: T[] = [];
-    const lines: string[] = [];
-    let used = 0;
-
-    for (const item of items) {
-        const text = render(item);
-
-        if (used + text.length + separator > limit) continue;
-
-        kept.push(item);
-        lines.push(text);
-        used += text.length + separator;
-    }
-
-    return { kept, lines };
-}
-
-/**
- * A list cut to a character budget, with the line saying what was left out already in it.
- *
- * The reserve is subtracted here rather than at each caller. Both callers had their own copy of
- * that subtraction, their own count of what was missing and their own omission line, so the two
- * sections of one review body could come to disagree about what the reserve covers or how an
- * omission is worded.
- *
- * `omission` is handed the count and what was kept, and inflects the count itself: the lens
- * block is the one list here whose noun takes no `s`, and a helper that appended one printed
- * "further lenss" on any run that overflowed.
- */
-function boundedList<T>(
-    items: T[],
-    render: (item: T) => string,
-    limit: number,
-    separator: number,
-    omission: (missing: number, kept: T[]) => string,
-): { kept: T[]; lines: string[] } {
-    const { kept, lines } = cutToFit(items, render, limit - OMISSION_RESERVE, separator);
-    const missing = items.length - kept.length;
-
-    return { kept, lines: missing === 0 ? lines : [...lines, `- _${omission(missing, kept)}_`] };
-}
-
-/**
- * Join the review into one body no longer than GitHub accepts.
- *
- * Everything but the listing is short, and it is the part that makes the review honest: the
- * counts, the lens health, what was suppressed, and the caveats saying what the run could
- * not check. So the listing gets whatever length the rest leaves, and it loses whole
- * findings rather than being cut at a character offset. An offset lands inside a
- * `<details>`, a fenced block, or a finding's own markup, and GitHub renders the wreckage.
- *
- * What goes is not the tail of the list. `cutToFit` has why, and the omission line says when a
- * dropped finding outranks a printed one.
- *
- * Exported for review-body.test.ts. `composeReview` is what a run calls, and the cutting is
- * the part with cases worth writing down one by one.
- */
-export function assemble(head: string[], listing: Listing | null, tail: string[]): Assembled {
-    let budget = MAX_BODY - [...head, ...tail].reduce((total, s) => total + s.length + 2, 0);
-
-    const rendered = [...head];
-    let printed: Finding[] = [];
-
-    if (listing) {
-        const heading = listing.lead ? `### ${listing.heading}\n\n${listing.lead}` : `### ${listing.heading}`;
-        budget -= heading.length + 2;
-
-        const { kept, lines } = boundedList(
-            listing.items,
-            bullet,
-            budget,
-            2,
-            (missing, shown) =>
-                `${plural(missing, "further finding")} left out for length` +
-                `${outranksPrinted(listing.items, shown) ? ", one of them rated above a finding printed here" : ""}.` +
-                ` ${listing.omission}`,
-        );
-
-        printed = kept;
-        rendered.push([heading, ...lines].join("\n\n"));
-    }
-
-    rendered.push(...tail);
-
-    const body = rendered.join("\n\n");
-
-    return { body: body.length > MAX_BODY ? fit(body) : body, printed };
-}
-
 /**
  * Whether a finding the length cut dropped rates above one it printed.
  *
- * The listing is ordered worst-first and `cutToFit` skips rather than stops, so the findings
- * on the page can be findings 1, 2, 4 and 5 with the third missing. Nothing else on the page
- * would say so: `bullet` prints no tier, and the heading names the bar the section was filtered
- * on rather than what survived the budget.
+ * The listing is ordered worst-first and `cutToFit` in body-budget.ts skips rather than stops,
+ * so the findings on the page can be findings 1, 2, 4 and 5 with the third missing. Nothing else
+ * on the page would say so: `bullet` prints no tier, and the heading names the bar the section
+ * was filtered on rather than what survived the budget.
  */
 function outranksPrinted(items: Finding[], kept: Finding[]): boolean {
     const shown = new Set(kept);
@@ -433,52 +312,6 @@ function outranksPrinted(items: Finding[], kept: Finding[]): boolean {
     if (dropped.length === 0 || kept.length === 0) return false;
 
     return Math.min(...dropped.map(findingRank)) < Math.max(...kept.map(findingRank));
-}
-
-/**
- * The last-resort cut, reached only when the short sections alone exceed the limit, which
- * takes a `lens_health` list or a suppressed list of a size nothing here has seen.
- *
- * Both closers run before the notice. This cut lands anywhere, including inside one of the
- * `<details>` blocks above, and a browser closes that block at the end of the comment: the
- * reader would get a review that appears to stop, with the notice saying it was cut sealed
- * inside a collapsed disclosure.
- *
- * It never lands inside a finding, and that is what makes `closeOpenFence` sound here.
- * `assemble` reaches this only with the budget already negative, which is to say with no
- * bullet rendered. A bullet's body is indented two columns into the list item, so a fence at
- * its own indent 2 sits at absolute 4: still a fence to a renderer measuring from the item's
- * content column, and an indented code block to the absolute bound `fenceMap` applies.
- * Cutting inside one of those would leave a block neither closer can see.
- *
- * The reserve is for the closers, and overrunning it costs nothing: `MAX_BODY` already sits
- * under GitHub's limit.
- *
- * The cut lands on a line boundary because `details` writes its markup one element to a line,
- * and a character offset lands inside the `<summary>`: the reader got a disclosure control
- * labelled with a word fragment, or, two characters earlier, one whose `<summ` GitHub's
- * sanitiser drops, leaving the browser's own "Details" triangle over nothing.
- * `closeOpenDetails` counts `<details>` against `</details>` and repairs neither.
- */
-function fit(body: string): string {
-    const notice = "\n\n_(this review was cut for length)_";
-    const limit = MAX_BODY - notice.length - 200;
-    const boundary = body.lastIndexOf("\n", limit);
-    const kept = dropEmptyDetails(body.slice(0, boundary > 0 ? boundary : limit));
-
-    return `${closeOpenDetails(closeOpenFence(kept))}${notice}`;
-}
-
-/**
- * A trailing disclosure the cut left with nothing under it.
- *
- * On a line boundary the summary is whole or absent, so what is left of a half-cut block is
- * an opening tag and at most its label. `closeOpenDetails` would close it into a control that
- * opens onto nothing, at the foot of the review, where a reader takes it for content somebody
- * hid.
- */
-function dropEmptyDetails(body: string): string {
-    return body.replace(/\n?<details(?: open)?>(?:\n<summary>[^\n]*<\/summary>)?\s*$/, "");
 }
 
 /**
@@ -539,7 +372,7 @@ export interface Composed {
  * run with no findings worth posting anyway), and a second derivation is a second answer.
  */
 export function composeReview(merged: Merged, posting: Posting, parts: Partitioned): Composed {
-    const coverage = coverageOf(merged, posting);
+    const coverage = coverageOf(merged, posting, parts);
     const raised = noticesFor(coverage);
     const aboutPosting = postingNotices(posting);
 
@@ -566,7 +399,8 @@ export function composeReview(merged: Merged, posting: Posting, parts: Partition
     // repeated comment is the cost this repository already accepts elsewhere for the same
     // trade, where a repeated comment costs less than a finding nobody sees. What would buy
     // back the quiet is saying the standing caveats only where no earlier review is still
-    // carrying them, which needs a signal for that and is written up in review/DECISIONS.md.
+    // carrying them, which needs a signal for that. "`lens_health` covers every lens dispatched"
+    // in review/DECISIONS.md has the rest.
     const warned = raised.length > 0 || aboutPosting.length > 0;
 
     return { body, listed: printed, warned };
@@ -732,13 +566,6 @@ const MAX_MENTION_BLOCK = 4000;
  */
 const MAX_LENS_BLOCK = 12_000;
 
-/** A list of rendered lines from the head or the tail, cut to a character budget. */
-export function boundedBlock(items: string[], limit: number, omitted: (n: number) => string): string {
-    const say = (missing: number): string => `${omitted(missing)} left out for length.`;
-
-    return boundedList(items, (item) => item, limit, 1, say).lines.join("\n");
-}
-
 function furtherFindings(n: number): string {
     return plural(n, "further finding");
 }
@@ -809,40 +636,56 @@ function tailOf(merged: Merged, parts: Partitioned, posting: Posting, aboutPosti
  * `assemble` bounds the listing whichever branch this takes, and says how many findings did
  * not fit. `offered` is what the section leads with, so it stays the count the lead sentence
  * quotes; what came back out of `assemble` is what `Composed.listed` reports.
+ *
+ * Exported for review-body.test.ts, which pairs it with `assemble` to reach the omission line
+ * over a body long enough to overflow. Nothing else outside this module calls it.
  */
-function listingOf(
+export function listingOf(
     fresh: Finding[],
     to: Destination,
     threshold: Tier,
-): { listing: Listing | null; notice: string | null } {
+): { listing: Listing<Finding> | null; notice: string | null } {
     const offered = listedIn(fresh, to, threshold);
-    const artifact = to.kind === "artifact" ? to.url : null;
+    const artifact = artifactUrl(to);
 
     if (offered.length > 0) {
+        const rest = omissionFor(to);
+
         return {
             listing: {
                 heading: artifact ? listingHeading(threshold) : "Findings",
-                lead: artifact
-                    ? `${offered.length} of ${plural(fresh.length, "finding")}.` +
-                      ` \`findings.json\` in the \`codeferret-run\` artifact of [this run](${artifact}) holds every one.`
-                    : "",
-                omission: omissionFor(to),
+                lead: artifact ? `${offered.length} of ${plural(fresh.length, "finding")}. ${artifactSentence(artifact)}` : "",
                 items: offered,
+                render: bullet,
+                // The budget knows only how many it dropped, so the clause `outranksPrinted`
+                // decides has to be worded here.
+                omitted: (missing, shown) =>
+                    `${plural(missing, "further finding")} left out for length` +
+                    `${outranksPrinted(offered, shown) ? ", one of them rated above a finding printed here" : ""}.` +
+                    ` ${rest}`,
             },
             notice: null,
         };
     }
 
     if (fresh.length > 0 && artifact) {
-        return {
-            listing: null,
-            notice:
-                `Nothing rates ${threshold} or above.` +
-                ` \`findings.json\` in the \`codeferret-run\` artifact of [this run](${artifact}) holds every one.`,
-        };
+        return { listing: null, notice: `Nothing rates ${threshold} or above. ${artifactSentence(artifact)}` };
     }
 
     return { listing: null, notice: null };
+}
+
+/**
+ * Where every finding is, for the two branches above that have somewhere to send a reader.
+ *
+ * Both names come from the constants that own them. `ARTIFACT_NAME` is generated from
+ * `action.yml`, and `fetch-previous.ts` opens the artifact by it, so a rename there moved the
+ * code that reads the artifact and left this sentence sending a reader to download one that no
+ * longer exists, with nothing red: the generator check compares the constant against
+ * `action.yml` and never against a sentence.
+ */
+function artifactSentence(url: string): string {
+    return `\`${FINDINGS_FILE}\` in the \`${ARTIFACT_NAME}\` artifact of [this run](${url}) holds every one.`;
 }
 
 /**
@@ -860,7 +703,7 @@ function omissionFor(to: Destination): string {
         case "artifact":
             return "Every one of them is in the findings file.";
         case "run":
-            return "This run kept no artifact, so the rest were kept nowhere. Set `artifact-path` to `findings.json`.";
+            return `This run kept no artifact, so the rest were kept nowhere. Set \`artifact-path\` to \`${FINDINGS_FILE}\`.`;
         case "session":
             return "This review was posted from a session, so ask whoever ran it for the rest.";
     }

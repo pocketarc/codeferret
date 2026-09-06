@@ -30,7 +30,7 @@ import { readMerged, REVIEW_THRESHOLD, runFacts, vetAgainstExisting } from "./re
 import { graphql, graphqlFailure, requirePullNumber, requireRepository, rest, tokenFromStdinOrEnv } from "./github.ts";
 import { reason } from "./json.ts";
 import { reopenedReasons } from "./caveats.ts";
-import { composeReview, destinationOf } from "./review-body.ts";
+import { composeReview, defers, destinationOf } from "./review-body.ts";
 import { plural } from "./words.ts";
 
 const [findingsPath, headSha, prNumber] = process.argv.slice(2);
@@ -130,7 +130,7 @@ const vetted = await vetAgainstExisting(
     // alone. This one picks the threshold; `deferrable` decides whether a threshold means
     // anything, because a run with nowhere to leave a finding prints all of them.
     protecting(threshold, REVIEW_THRESHOLD),
-    to.kind === "artifact",
+    defers(to),
 );
 const existing = vetted.existing;
 

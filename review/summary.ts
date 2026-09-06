@@ -79,19 +79,35 @@ const table = `### CodeFerret\n\n| Measure | Value |\n|---|---|\n${rows
     .map(([measure, reading]) => `| ${measure} | ${reading} |`)
     .join("\n")}\n`;
 
-const refused = denials === 1 ? "1 tool call was" : `${denials} tool calls were`;
+/**
+ * What the summary says about refused tool calls, or nothing where none were.
+ *
+ * The count is inflected inside the branch that has one. Built above the branches, it
+ * rendered "null tool calls were" for a log carrying no `permission_denials` list, and was
+ * correct only because a ternary written elsewhere reached the null case first. Formatting ahead
+ * of that check has already cost this file twice: the `$` on the cost row, and the blank cell
+ * `value` now answers null for.
+ */
+function refusals(denials: number | null): string {
+    if (denials === null) {
+        return (
+            "\n> [!WARNING]\n> Whether any tool call was refused could not be read from this run's log." +
+            " The review may cover less than this summary suggests.\n"
+        );
+    }
 
-const refusals =
-    denials === null
-        ? "\n> [!WARNING]\n> Whether any tool call was refused could not be read from this run's log." +
-          " The review may cover less than this summary suggests.\n"
-        : denials > 0
-          ? `\n> [!WARNING]\n> ${refused} refused. The review covers less than this summary suggests.\n`
-          : "";
+    // `count` reads whatever number the file holds, so the test is for a positive one rather
+    // than for zero: a run that wrote `-1` would otherwise report that refusal on the page.
+    if (denials <= 0) return "";
+
+    const refused = denials === 1 ? "1 tool call was" : `${denials} tool calls were`;
+
+    return `\n> [!WARNING]\n> ${refused} refused. The review covers less than this summary suggests.\n`;
+}
 
 const failed =
     exitStatus !== undefined && exitStatus !== "0"
         ? "\n> [!WARNING]\n> The review failed. Read the step log.\n"
         : "";
 
-process.stdout.write(table + refusals + failed);
+process.stdout.write(table + refusals(denials) + failed);

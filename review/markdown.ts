@@ -143,7 +143,7 @@ export function closeOpenFence(text: string): string {
  *
  * The counterpart to `closeOpenFence`, and it exists for the review body's last-resort cut:
  * a browser closes an unclosed `<details>` at the end of the comment, hiding everything
- * after the cut inside a collapsed disclosure. `fit` in review-body.ts has the rest.
+ * after the cut inside a collapsed disclosure. `fit` in body-budget.ts has the rest.
  *
  * Counted over the view `escapeTags` leaves behind, which means line by line and outside
  * every code span: a fenced line is a code sample, a span is one too, and a `\<` is prose
@@ -336,8 +336,8 @@ export function escapeInline(text: string): string {
  * Escape the raw HTML and the mentions in a line of a model's prose, leaving its markdown
  * alone.
  *
- * For a block of prose, where emphasis and links are the model's own and worth keeping but
- * a tag is not. GitHub renders `<details>` and `<div>` wherever they sit on a line, not
+ * For a block of prose, where the emphasis and the lists are the model's own and worth keeping
+ * but a tag is not. GitHub renders `<details>` and `<div>` wherever they sit on a line, not
  * only at column zero, and one left unclosed hides everything after it: the suppressed
  * list, the declined list and the caveats included, which are where a reader learns how
  * much of the review to trust. Prose about markup is exactly what these lenses write.
@@ -346,23 +346,25 @@ export function escapeInline(text: string): string {
  * package name would otherwise notify an account on every push, and one quoting `#123` would
  * cross-reference that issue from the review's own account just as often.
  *
- * A link the model wrote survives, whereas `mention` in review-body.ts bounds the url it
- * renders to one the pull request carries. The two are answering different questions.
- * `mention` puts a url from somewhere else behind a label of ours that reads as provenance,
- * and a reader clicks it on the strength of that label. Prose is the model's own sentence,
- * and bounding the links in it would buy nothing: GFM autolinks a bare `https://` run, so
- * the same destination reaches the same page with no link syntax at all.
+ * The brackets go for the destination a reader cannot see. A model's own url is not worth
+ * bounding, because GFM autolinks a bare `https://` run and the same destination reaches the
+ * same page with no link syntax at all. An autolink shows the url, though, where `[label](url)`
+ * hides it behind words the writer chose, which is the reason `mention` in review-body.ts is
+ * bounded to the urls the pull request carries. The text is reachable: the orchestrator is asked,
+ * in `orchestrator.md`, to copy attempted-injection lines out of pull request comments into
+ * `notes`, so on a public repository anyone who can comment can supply one. With `[` and `]`
+ * escaped, the label renders as the literal text it is and the url beside it autolinks as itself.
  *
- * An image is the exception, and it is why the `!` goes. That argument turns on the reader
- * choosing to click; GitHub loads an image on sight, from a url the model chose, into a
- * comment posted under the account this review goes out as. `<img>` is already escaped, and
- * this is the other spelling of the same element. Only the `!` that opens one is escaped, so
- * a sentence keeps its exclamation marks.
+ * The same escape covers an image, which is the case that could not wait for a click at all:
+ * GitHub loads one on sight, from a url the model chose, into a comment posted under the account
+ * this review goes out as. `<img>` is escaped above, `![](…)` is the other spelling of the same
+ * element, and escaping the brackets closes that spelling too.
+ *
+ * `escapeInline` escapes both brackets too. The two policies differ about emphasis and about
+ * `~`, which are the model's own and worth keeping in a paragraph, and about nothing else.
  */
 function escapeTags(text: string): string {
-    const escape = escapeChars("\\<@#");
-
-    return escapeOutsideCode(text, (prose) => escape(prose).replace(/!(?=\[)/g, "\\!"));
+    return escapeOutsideCode(text, escapeChars("\\<@#[]"));
 }
 
 /**
@@ -554,7 +556,18 @@ export interface Clamped {
     marker: string;
 }
 
-const CUT_MARKER = "\n\n_(cut for length)_";
+/** What a cut is called, wherever one is announced. */
+const CUT_WORDS = "(cut for length)";
+
+const CUT_MARKER = `\n\n_${CUT_WORDS}_`;
+
+/**
+ * The same announcement for a caller whose text is one line.
+ *
+ * `CUT_MARKER` opens a paragraph of its own, so a field rendered inline gets this instead. Both
+ * are here so that two notices on one page cannot word the same cut differently.
+ */
+export const CUT_INLINE = ` ${CUT_WORDS}`;
 
 /**
  * Text a model wrote, cut to a length the rest of the page can fit around, before the marker.
@@ -593,6 +606,22 @@ export function clampTo(text: string, limit: number): Clamped {
     if (word > 0) return cut(window.slice(0, word));
 
     return cut(window);
+}
+
+/**
+ * Text a model wrote, cut to `limit`, escaped, and followed by the words saying a cut happened.
+ *
+ * For a sentence a run writes about itself, where the quoted stretch sits mid-line. `escape` is
+ * whatever the destination needs: a page passes the escaping GitHub's renderer takes, and a
+ * terminal passes the text through.
+ *
+ * The clamp comes before the escape, for the reason `clampTo` gives, and `CUT_INLINE` stands in
+ * for the marker `clampTo` returns, which is a paragraph and would break the line in two.
+ */
+export function clampedInline(text: string, limit: number, escape: (text: string) => string): string {
+    const { kept, marker } = clampTo(text, limit);
+
+    return `${escape(kept)}${marker === "" ? "" : CUT_INLINE}`;
 }
 
 /** The cut, with whatever fence it left open closed and the marker on the end. */

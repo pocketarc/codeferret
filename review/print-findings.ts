@@ -10,8 +10,8 @@
  * What differs from the posted body is what suits a terminal. Findings are grouped by file
  * rather than ordered by risk, because whoever reads this opens the files next. Nothing
  * is escaped, because nothing here goes through GitHub's renderer. What a finding scored and
- * which lenses agreed stay out for the reason `review/DECISIONS.md` gives: both are in the
- * findings file.
+ * which lenses agreed stay out for the reason given under "A finding shows the claim and nothing
+ * else" in review/DECISIONS.md: both are in the findings file.
  *
  * Usage: bun print-findings.ts <findings.json>
  */
@@ -52,7 +52,8 @@ const vetted = await vetAgainstExisting(
     // Nothing to defer to: this path prints every finding to a terminal.
     false,
 );
-const { fresh, suppressed, declined } = partition(vetted.findings);
+const parts = partition(vetted.findings);
+const { fresh, suppressed, declined } = parts;
 
 // The same sentences the posted path writes. Without them a session reopened a suppression
 // and printed nothing about it, so whoever ran it read a finding they had already answered
@@ -97,7 +98,7 @@ if (older.length > 0) {
 // nothing escaped: this goes to a terminal rather than through GitHub's renderer. The
 // hand-built version had already lost the sentence about a half-read discussion, so a session
 // printed reopened findings with nothing saying why, while a posted run explained it.
-const coverage = coverageOf(merged, await runFacts(buildDir, vetted.existing));
+const coverage = coverageOf(merged, await runFacts(buildDir, vetted.existing), parts);
 
 for (const name of noticesFor(coverage)) out.push(COVERAGE_NOTICES[name].say(coverage, (text) => text));
 
