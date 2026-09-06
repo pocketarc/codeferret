@@ -1,11 +1,12 @@
 #!/usr/bin/env bun
 /**
- * Write what a run needs to know about action.yml, out of action.yml.
+ * Write what a run needs to know about action.yml and the plugin manifest, out of both.
  *
- * Two kinds of value. A Claude Code session cannot read a YAML default, so
- * `/codeferret:review` cats review/defaults/*.txt to get the same lenses and exclusions the
- * action runs. And the upload step's name and retention window are decisions action.yml
- * makes that fetch-previous.ts has to act on, so they leave here as a module it imports.
+ * A Claude Code session cannot read a YAML default, so `/codeferret:review` cats
+ * review/defaults/*.txt to get the same lenses and exclusions the action runs. The upload
+ * step's name and retention window are decisions action.yml makes that fetch-previous.ts has
+ * to act on, so they leave here as a module it imports. And the plugin namespace comes from
+ * the plugin manifest, which build-prompts.sh writes into every dispatch.
  *
  * Generated rather than checked. Both used to be spelled out a second time by hand with a
  * check reconciling the copies, and a check only reports drift after somebody has written
@@ -28,6 +29,9 @@ const FILES: Array<[string, string]> = [
 ];
 
 const ARTIFACT_MODULE = "review/artifact.ts";
+
+const PLUGIN_MANIFEST = ".claude-plugin/plugin.json";
+const NAMESPACE_FILE = "review/defaults/namespace.txt";
 
 const check = process.argv.includes("--check");
 
@@ -56,6 +60,21 @@ for (const [input, path] of FILES) {
     }
 
     wanted.set(path, `${entries.join("\n")}\n`);
+}
+
+// Refused rather than defaulted, like the two below it. A namespace guessed at here is one
+// every `<namespace>:<lens>` dispatch would name and no agent would answer to, and the review
+// comes back empty for no stated reason.
+//
+// Held to a single non-empty line, which is what `cat` reads back and nothing more. Which
+// characters a namespace may carry stays with `plain_name` in lib.sh.
+const plugin = JSON.parse(await Bun.file(PLUGIN_MANIFEST).text()) as { name?: unknown };
+
+if (typeof plugin.name !== "string" || plugin.name.trim() === "" || plugin.name.includes("\n")) {
+    console.error(`FAIL ${PLUGIN_MANIFEST}: \`name\` is not a single line of text`);
+    problems += 1;
+} else {
+    wanted.set(NAMESPACE_FILE, `${plugin.name.trim()}\n`);
 }
 
 const upload = (action.runs?.steps ?? []).find(
@@ -97,4 +116,4 @@ problems += (await writeOrCheck(wanted, check, "bun scripts/build-defaults.ts"))
 
 if (problems > 0) process.exit(1);
 
-console.log(`OK generated from action.yml: ${wanted.size} file(s)${check ? " match" : " written"}`);
+console.log(`OK generated from the manifests: ${wanted.size} file(s)${check ? " match" : " written"}`);

@@ -1,4 +1,4 @@
-/** The plugin manifest, and the one value build-prompts.sh spells out a second time. */
+/** What the plugin manifest has to declare before a run can build a plugin from it. */
 
 import { existsSync, statSync } from "node:fs";
 import { fail, MANIFEST_FILE, pluginManifest } from "./support.ts";
@@ -20,15 +20,9 @@ export async function checkPluginManifest(): Promise<Failures> {
         fail(list, MANIFEST_FILE, `\`skills\` points at '${skillsPath}', which is not a directory`);
     }
 
-    // build-prompts.sh hardcodes the namespace for every `codeferret:<lens>` dispatch it
-    // builds. If that drifts from the manifest, every dispatch names an agent that does
-    // not exist.
-    const script = await Bun.file("review/build-prompts.sh").text();
-    const hardcoded = script.match(/^NAMESPACE=(\S+)$/m)?.[1];
-
-    if (hardcoded !== manifest.name) {
-        fail(list, "review/build-prompts.sh", `NAMESPACE is '${hardcoded}', but ${MANIFEST_FILE} declares '${manifest.name}'`);
-    }
+    // The namespace is not reconciled here. build-prompts.sh reads it out of
+    // review/defaults/namespace.txt, which scripts/build-defaults.ts writes from this manifest,
+    // and the generated-file check fails when the two differ.
 
     if (list.length === 0) {
         console.log(`OK ${MANIFEST_FILE}: plugin '${manifest.name}' ${manifest.version}`);

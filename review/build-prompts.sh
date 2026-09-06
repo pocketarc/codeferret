@@ -55,24 +55,27 @@ fi
 # The shape is not the same question as whether it is there. `action.yml` verifies the ref
 # it works out, and nothing did on the path /codeferret:review and a by-hand run.sh take, so
 # a base that does not resolve reached `git diff` and the run failed with git's own message
-# after the prompts were built. `--end-of-options` and not `--`: rev-parse reads a bare `--`
-# as the separator between revisions and paths, so the ref would land on the path side and
-# no revision would be verified at all.
-if ! git -C "$WORKSPACE" rev-parse --verify --quiet --end-of-options "$BASE" >/dev/null; then
+# after the prompts were built. review/lib.sh explains the flag `verify_ref` passes, and why.
+if ! verify_ref "$WORKSPACE" "$BASE"; then
     echo "base ref '$BASE' does not resolve in $WORKSPACE" >&2
     exit 1
 fi
 
-NAMESPACE=codeferret
-MANIFEST="$ACTION/.claude-plugin/plugin.json"
+# The namespace every `<namespace>:<lens>` dispatch is written under, out of the file
+# scripts/build-defaults.ts generates from the plugin manifest.
+NAMESPACE_FILE="$ACTION/review/defaults/namespace.txt"
 
-if [ ! -f "$MANIFEST" ]; then
-    echo "no plugin manifest at $MANIFEST" >&2
+if [ ! -f "$NAMESPACE_FILE" ]; then
+    echo "no plugin namespace at $NAMESPACE_FILE" >&2
+    echo "run: bun --config=/dev/null scripts/build-defaults.ts" >&2
     exit 1
 fi
 
-if ! grep -q "\"name\"[[:space:]]*:[[:space:]]*\"$NAMESPACE\"" "$MANIFEST"; then
-    echo "plugin namespace '$NAMESPACE' does not match the name in $MANIFEST" >&2
+NAMESPACE=$(cat "$NAMESPACE_FILE")
+
+# It becomes a path component, so it is held to the bar a lens name is held to.
+if ! plain_name "$NAMESPACE"; then
+    echo "plugin namespace '$NAMESPACE' in $NAMESPACE_FILE is not a plain name" >&2
     exit 1
 fi
 

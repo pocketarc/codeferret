@@ -227,6 +227,24 @@ describe("run.sh: the build files a later step reads", () => {
     test("replaces a number the session wrote for itself", () => {
         expect(review('printf 99 >"$BUILD/permission-denials"').build("permission-denials")).toBe("unknown");
     });
+
+    test("still posts the review when the session left a directory where a build file goes", () => {
+        const run = review('mkdir "$BUILD/findings.json"');
+
+        expect(run.build("findings-checked")).toBe("ok");
+        expect(run.status).toBe(0);
+    });
+
+    test("writes nothing through a link the session left where the build directory was", () => {
+        const planted = join(root, "planted-build");
+        mkdirSync(planted, { recursive: true });
+        writeFileSync(join(planted, "existing.json"), "planted\n");
+
+        const run = review(`rm -rf "$BUILD" && ln -sfn '${planted}' "$BUILD"`);
+
+        expect(readFileSync(join(planted, "existing.json"), "utf8")).toBe("planted\n");
+        expect(run.status).not.toBe(0);
+    });
 });
 
 describe("run.sh: what the agent is started with", () => {

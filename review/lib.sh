@@ -443,6 +443,17 @@ default_branch() {
 }
 
 
+# Whether a ref resolves in a repository, and nothing on stdout either way.
+#
+# `--end-of-options` rather than `--`: rev-parse reads a bare `--` as the separator between
+# revisions and paths, so the ref lands on the path side and no revision is verified at all.
+# That spelling shipped and failed every run at the action's fourth step.
+#
+# Usage: verify_ref <repository> <ref>
+verify_ref() {
+    git -C "$1" rev-parse --verify --quiet --end-of-options "$2" >/dev/null
+}
+
 # The ref a review diffs against: what the caller named, then the open pull request's base,
 # then origin's default branch. Empty when none of the three answers. Call `open_pr` first.
 #

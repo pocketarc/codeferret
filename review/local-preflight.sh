@@ -200,7 +200,7 @@ fi
 
 say base "$BASE"
 
-if git rev-parse --verify --quiet --end-of-options "$BASE" >/dev/null; then
+if verify_ref . "$BASE"; then
     say base_resolves yes
 
     # Unrelated histories have no merge base: a fresh repository with a remote added

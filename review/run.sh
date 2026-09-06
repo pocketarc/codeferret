@@ -306,12 +306,24 @@ rmdir "$LOG_DIR"
             --plugin-dir "$OUT"
 ) >&9 || SESSION_STATUS=$?
 
-# The session is gone, so the log becomes a file again: a plain one, in the build directory,
-# written by this shell out of a descriptor nothing else ever held. `rm -f` first, because a
-# session that pre-created the path as a symbolic link would otherwise have this write through
-# it. `run.json` is not in `RECORDED` because there is nothing to compare it against: this run
-# wrote every byte of it after the session had exited.
 exec 9>&-
+
+# What the build directory has to be before this run writes another byte into it: a real
+# directory carrying the marker build-prompts.sh wrote, holding nothing but plain files.
+# `guardBuildDir` in review/finalise.ts does the sweep, and `UNREPORTED` in
+# review/run-files.ts holds the numbers a run that reported none still writes down.
+#
+# Ahead of every other line that touches `$BUILD`. The session held `Bash` over that
+# directory, and each of those lines deletes or writes: run.test.ts has the two paths that
+# reach through them, a directory left where `findings.json` goes and a link left where
+# `$BUILD` was.
+$PREFIX bun --config=/dev/null "$ACTION/review/finalise.ts" prepare "$BUILD"
+
+# The session is gone, so the log becomes a file again: a plain one, in the build directory,
+# written by this shell out of a descriptor nothing else ever held. `rm -f` first, because the
+# sweep above leaves a plain file the session wrote at that path in place. `run.json` is not in
+# `RECORDED` because there is nothing to compare it against: this run wrote every byte of it
+# after the session had exited.
 rm -f "$BUILD/run.json"
 cat <&8 >"$BUILD/run.json"
 exec 8<&-
@@ -320,7 +332,9 @@ exec 8<&-
 # because nothing downstream reads a session copy: this is the report, and it is worth having
 # because a difference means that the lenses did not all read the same diff.
 #
-# Before the deletions below, so that `existing.json` is still the file the fetch wrote.
+# Before the deletions below, so that `existing.json` is still the file the fetch wrote. After
+# the sweep, which takes away any build copy that is not a plain file, so the comparison below
+# finds it missing and records the file as changed.
 CHANGED=()
 
 # `diff-args` is in both lists, and it is the one file a session can fail both checks with at
@@ -382,12 +396,6 @@ rm -f "$BUILD/findings.json" "$BUILD/findings-checked" "$BUILD/existing.json" "$
 empty_existing "$BUILD/existing.json"
 empty_previous "$BUILD/previous.json"
 
-# What the build directory has to be before anything reads it again: nothing but plain files,
-# and every number a run that reported none still writes down. `guardBuildDir` in
-# review/finalise.ts does the sweep, and `UNREPORTED` in review/run-files.ts holds the numbers,
-# beside the names they are written under.
-$PREFIX bun --config=/dev/null "$ACTION/review/finalise.ts" prepare "$BUILD"
-
 # Written down rather than only said, and the review still goes out. `readSessionChanged` in
 # run-files.ts carries this into the posted body as a coverage warning, beside the one for a
 # lens that reported nothing about itself, because a detection whose only output is stderr has
@@ -398,8 +406,8 @@ $PREFIX bun --config=/dev/null "$ACTION/review/finalise.ts" prepare "$BUILD"
 # exists to prevent, and it would hand a session that wanted its findings buried a one-line way
 # to do it: rewrite an input this compares, and the review it was paid for is never posted.
 #
-# After the sweep above, so a file the session pre-created as a symbolic link is gone rather
-# than written through, and truncated first, so nothing the session left in it stands either way.
+# After the sweep, so a file the session pre-created as a symbolic link is gone rather than
+# written through, and truncated first, so nothing the session left in it stands either way.
 : >"$BUILD/session-changed.txt"
 
 for changed in "${CHANGED[@]+"${CHANGED[@]}"}"; do
