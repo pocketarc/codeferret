@@ -1,7 +1,11 @@
 ---
 standing-detail: >-
-  No application was used, so nothing was judged from a build, a bundle or a rendered
-  page.
+  No application was used, so nothing that needs a build or a running server was measured,
+  among them bundle size and import chains, per-route output size, which routes were
+  prerendered, the server's errors, route map and logs, and whether a custom cache handler
+  shares revalidated pages across instances. A
+  hydration mismatch was judged from the source causes of one alone, never from comparing
+  the server output against the client output on a rendered page.
 ---
 
 The skill you are about to load assumes a running application. Do not use one, whatever this
@@ -43,8 +47,8 @@ Next.js, not for its workflow. Every finding you make comes from source.
   writes `.open-next/`, which the default `exclude-paths` hides, so its writes would be
   invisible rather than absent.
 
-Your scope is everything in the skill except what the bullets above take out, which is most
-of it. Start with the server and client boundary and what crosses it, `async` `params`,
+Your scope is everything in the skill except what the bullets above take out. That leaves
+most of it. Start with the server and client boundary and what crosses it, `async` `params`,
 `searchParams`, `cookies()` and `headers()`, the `'use client'`, `'use server'` and
 `'use cache'` directives, file conventions and route structure, parallel and intercepting
 routes and what they need to work (`@slot` directories, a `default.tsx` beside each one,

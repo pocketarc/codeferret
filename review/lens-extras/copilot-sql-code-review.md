@@ -25,11 +25,17 @@ disappears as well, and in the BAD query that join filters: an order whose `prod
 matches no row in `products` is excluded there and included here. Recommend the shape that
 preserves the result set, which is a semi-join carrying the same date range: `SELECT u.id,
 u.name, u.email FROM users u WHERE EXISTS (SELECT 1 FROM orders o JOIN products p ON p.id =
-o.product_id WHERE o.user_id = u.id AND o.order_date >= '2024-01-01' AND o.order_date <
-'2025-01-01')`. Bare date strings rather than the `DATE '2024-01-01'` typed literal, which
-SQL Server has no syntax for. The range condition on `order_date` in place of
-`YEAR(o.order_date)` is the part of the skill's rewrite that is right, and it is the part
-worth teaching.
+o.product_id WHERE o.user_id = u.id AND o.order_date >= '20240101' AND o.order_date <
+'20250101')`. Unseparated date strings rather than the ANSI `DATE '2024-01-01'` typed
+literal, which T-SQL has no syntax for, and rather than the separated `'2024-05-01'`: SQL
+Server parses that one through `SET DATEFORMAT` and `SET LANGUAGE` against a legacy
+`datetime` or `smalldatetime` column, so under a `dmy` session it is the fifth of January
+rather than the first of May, while `'20240501'` is year-month-day there under every session
+setting and every date type, and PostgreSQL and MySQL both accept it. Oracle takes neither
+spelling: it reads a bare string through `NLS_DATE_FORMAT`, whose default is `DD-MON-RR`, and
+it does have the ANSI literal, so recommend `DATE '2024-05-01'` there. The range condition on
+`order_date` in place of `YEAR(o.order_date)` is the part of the skill's rewrite that is
+right, and it is the part worth teaching.
 
 Its "Overuse of DISTINCT" example replaces `SELECT DISTINCT u.name` with the same query under
 `GROUP BY u.name`, presented as a fix for the join. It is not: the grouping deduplicates the
@@ -57,8 +63,10 @@ placeholder, and `$1` is PostgreSQL's placeholder besides. Elsewhere the same qu
 `WHERE o.user_id IN (?, ?, ...)` over a placeholder list the client generates per id, or a
 table-valued parameter on SQL Server and a bound collection through `TABLE()` on Oracle; a
 temporary table holding the ids is the shape to reach for once the list is long enough to
-bloat the plan cache. Recommend whichever the diff's own client can bind, and raise the
-skill's own example if it appears in a diff.
+bloat the plan cache. The placeholder list leaves the caller to skip the query outright on an
+empty id list, because with no placeholders the clause is `IN ()`, which parses on none of the
+four engines, while `= ANY` on an empty array binds and returns nothing. Recommend whichever
+the diff's own client can bind, and raise the skill's own example if it appears in a diff.
 
 Its "SECURE" examples are wrong twice over, and neither half is what an application author
 needs. The projection is `SELECT *` from `users`, which is the table the same skill uses to
@@ -89,20 +97,28 @@ says. The GOOD query leaves `o.order_date >= '2024-01-01'` in the `WHERE` clause
 vanishes from a result the author believes is outer. The reformatting is the part worth
 teaching and the join is not. Give the two shapes instead, one per intent: move the predicate
 into the join condition, `LEFT JOIN orders o ON u.id = o.user_id AND o.order_date >=
-'2024-01-01'`, where users with no matching order are wanted, and write `INNER JOIN` where they
-are not. Raise the pattern in a reviewed diff as well: a `LEFT JOIN` whose right-hand column is
-filtered anywhere but the `ON` clause, except an `IS NULL` test, which is the anti-join. Its
-"Join Optimization" checklist has "Verify appropriate join types" and no example of a wrong
-join.
+'20240101'`, where users with no matching order are wanted, and write `INNER JOIN` where they
+are not. Raise the pattern in a reviewed diff as well, by what the predicate does rather than
+by how it is written: a `LEFT JOIN` with a null-rejecting predicate on its right-hand column
+outside the `ON` clause, meaning one that is unknown wherever that column is `NULL`, so the
+preserved rows are the rows it discards. The shapes that resemble the defect without being it:
+`IS NULL`, which is the anti-join; a second disjunct for the null rows, `o.order_date >=
+'20240101' OR o.order_date IS NULL`, which is true of every preserved row; a null-tolerant
+wrapper such as `COALESCE(o.total, 0) < 100`, which is true or false on those rows rather than
+unknown, so they survive; and a `HAVING` over an aggregate of the right-hand table,
+`HAVING COUNT(o.id) = 0`, which is the anti-join again. Its "Join Optimization" checklist has
+"Verify appropriate join types" and no example of a wrong join.
 
 The line under it, "Join Order: Optimize for smaller result sets first", is not a knob an author
 has. Every engine the skill names reorders inner joins by cost, so the order the `JOIN`
 clauses are written in is not the order they run in, and asking for them to be reordered changes
-no plan and no row. The exceptions are narrow, and outside them there is nothing to raise:
-MySQL's `STRAIGHT_JOIN`, a PostgreSQL query past `join_collapse_limit` or
-`from_collapse_limit`, which both default to 8, and outer joins, whose order is fixed by what
-they mean rather than chosen for size. Raise join order only in one of those cases, and name
-which one it is.
+no plan and no row. The exceptions are where the written order binds the planner, and outside
+them there is nothing to raise: on MySQL a `SELECT STRAIGHT_JOIN` or the 8.0 `JOIN_FIXED_ORDER`
+and `JOIN_ORDER` optimizer hints; on PostgreSQL a query past `join_collapse_limit` or
+`from_collapse_limit`, which both default to 8; on SQL Server `OPTION (FORCE ORDER)`; on
+Oracle a `/*+ ORDERED */` or `/*+ LEADING(...) */` hint; and on any of the four an outer join,
+whose order is fixed by what it means rather than chosen for size. Raise join order only in one
+of those cases, and name which one it is.
 
 Its checklist line "Subqueries are optimized or converted to JOINs" holds for one case and not
 the other, and the corrections above on its `DISTINCT` examples go the other way. A correlated
@@ -139,7 +155,20 @@ nothing. Work out which server the diff targets before you name the reset: on 8.
 later it takes an instance where somebody turned the variable off, or where an inherited
 config does. The missing index is a defect on either server.
 Recommend `expires DATETIME NOT NULL` with an explicit `KEY idx_sessions_expires (expires)`,
-and raise the same gap where a reviewed diff copies this shape.
+and say what the column swap costs as well as what it buys: MySQL converts a `TIMESTAMP` from
+the connection's `time_zone` to UTC on write and back on read, and stores a `DATETIME` exactly
+as it was given, so nothing normalises the stored value and the application and the sweep have
+to agree on a zone themselves. Name UTC and both ends of it, `UTC_TIMESTAMP()` on the write and
+`DELETE FROM sessions WHERE expires < UTC_TIMESTAMP()` for the sweep, or an application server
+and a cron job on different zones expire sessions early and late.
+The block's other statement, `ALTER TABLE large_table ADD INDEX idx_covering (status,
+created_at, id);` under a comment reading `-- Optimize for InnoDB`, is a redundancy rather than
+a technique if `id` is that table's primary key: InnoDB carries the clustered primary key in
+every secondary index as the row locator and the optimizer treats it as part of the index, so
+the trailing column changes neither the index nor any plan and `(status, created_at)` is the
+same index. The skill has no DDL for `large_table`, so carry that condition into the finding: a
+trailing column that is not the primary key is a real part of the covering index and stays.
+Raise the same gaps where a reviewed diff copies either shape.
 
 Its PostgreSQL "Database-Specific Best Practices" example, `CREATE TABLE tags (post_id INT,
 tag_names TEXT[]);`, illustrates the `TEXT[]` type and is not a schema to copy: it has no

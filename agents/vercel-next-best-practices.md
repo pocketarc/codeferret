@@ -94,8 +94,8 @@ Next.js, not for its workflow. Every finding you make comes from source.
   writes `.open-next/`, which the default `exclude-paths` hides, so its writes would be
   invisible rather than absent.
 
-Your scope is everything in the skill except what the bullets above take out, which is most
-of it. Start with the server and client boundary and what crosses it, `async` `params`,
+Your scope is everything in the skill except what the bullets above take out. That leaves
+most of it. Start with the server and client boundary and what crosses it, `async` `params`,
 `searchParams`, `cookies()` and `headers()`, the `'use client'`, `'use server'` and
 `'use cache'` directives, file conventions and route structure, parallel and intercepting
 routes and what they need to work (`@slot` directories, a `default.tsx` beside each one,

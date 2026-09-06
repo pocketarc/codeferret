@@ -1,10 +1,11 @@
 /**
- * The standing caveats in review-body.ts, against the lenses they name.
+ * The standing caveats in review/standing-detail.ts, against the lenses they name.
  *
- * A key that names no lens fails in the dangerous direction and in silence: `caveatOf`
- * gives nothing back, the lens drops out of `limited`, the `[!NOTE]` above the health list
- * stops counting it, and the review renders as though the interface had been checked from a
- * rendered page. No error, no warning, and every other check here still passes.
+ * A key that names no lens fails in the dangerous direction and in silence: `caveatOf` in
+ * review/caveats.ts returns nothing, the lens drops out of that file's `limited`, the
+ * `[!NOTE]` above the health list stops counting it, and the review renders as though the
+ * interface had been checked from a rendered page. No error, no warning, and every other
+ * check here still passes.
  *
  * The same class as a misnamed `review/lens-extras/<lens>.md`, which build-lens-agents.ts
  * guards for the same reason. Lens names here do get added, renamed and removed.

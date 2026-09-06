@@ -1,10 +1,13 @@
 ---
 standing-detail: >-
-  No page was rendered, so element overflow and overlap, alignment and computed spacing, the
-  mobile, tablet, desktop and wide viewport sweep, whether the resulting keyboard tab order
-  is logical, whether text visibly clips or its ellipsis renders, focus-indicator
-  visibility, whether a declared hover or active state is visually distinct enough, and
-  layout shift on load were not evaluated. A contrast ratio or a target size is reported only
+  No page was rendered, so nothing that depends on one was evaluated, among them element
+  overflow and overlap, alignment and computed spacing, the mobile, tablet, desktop and wide
+  viewport sweep, whether the resulting keyboard tab order is logical, whether text visibly
+  clips or its ellipsis renders, computed line height and characters per line,
+  focus-indicator visibility, whether a declared hover, active, disabled or loading state is
+  visually distinct enough, whether a chart or a diagram is still legible with a colour vision
+  difference, how an image renders at another pixel density or what stands in for it when it
+  fails to load, and layout shift on load. A contrast ratio or a target size is reported only
   where the diff, or a file read alongside it, settles the colour pair or the box outright;
   neither was reached otherwise.
 ---
@@ -34,8 +37,12 @@ Its workflow does not.
   focus state is declared at all, and a font or a colour that matches no other in the
   change. Responsive Verification goes with the sweep except for the part the document head
   settles. A page with no `<meta name="viewport">` is laid out on a phone at a fallback width
-  near 980 CSS pixels and then scaled down, which settles the checklist's "Content fits
-  within screen width" and "No horizontal scrolling occurs" from the head alone; and a
+  near 980 CSS pixels and then scaled down to fit, so every media query is evaluated against
+  that width and no mobile breakpoint in the change ever matches, and the text is rendered at
+  roughly a third of the size it was written for. Report the unmatched breakpoints and the
+  shrunken text from the head alone. The scaling is also why "Content fits within screen
+  width" and "No horizontal scrolling occurs" pass for any layout that fallback width fits,
+  so report neither of those against a page whose tag is missing; and a
   viewport tag carrying `user-scalable=no`, or a `maximum-scale` below 2, caps zoom below
   200%, which fails 1.4.4 Resize Text (Level AA). Report those. Whether a layout survives at
   375px is the rendered half and stays out.

@@ -80,8 +80,12 @@ Its workflow does not.
   focus state is declared at all, and a font or a colour that matches no other in the
   change. Responsive Verification goes with the sweep except for the part the document head
   settles. A page with no `<meta name="viewport">` is laid out on a phone at a fallback width
-  near 980 CSS pixels and then scaled down, which settles the checklist's "Content fits
-  within screen width" and "No horizontal scrolling occurs" from the head alone; and a
+  near 980 CSS pixels and then scaled down to fit, so every media query is evaluated against
+  that width and no mobile breakpoint in the change ever matches, and the text is rendered at
+  roughly a third of the size it was written for. Report the unmatched breakpoints and the
+  shrunken text from the head alone. The scaling is also why "Content fits within screen
+  width" and "No horizontal scrolling occurs" pass for any layout that fallback width fits,
+  so report neither of those against a page whose tag is missing; and a
   viewport tag carrying `user-scalable=no`, or a `maximum-scale` below 2, caps zoom below
   200%, which fails 1.4.4 Resize Text (Level AA). Report those. Whether a layout survives at
   375px is the rendered half and stays out.

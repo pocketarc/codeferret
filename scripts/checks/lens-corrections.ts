@@ -71,6 +71,12 @@ const CORRECTIONS: Correction[] = [
             // that pairing, so the fragment spans both: either fix in the extras (writing
             // INNER JOIN, or moving the predicate into the ON clause) breaks it.
             "LEFT JOIN orders o ON u.id = o.user_id\nWHERE u.status = 'active'",
+            // The join types bullet, a checklist item that names a judgement and gives no
+            // example. Carried to the line below, so that a qualification appended to the
+            // bullet and an example inserted under it both break it. Only the presence half is
+            // bound: an example added elsewhere in that section makes "no example of a wrong
+            // join" false while this fragment still matches.
+            "- **Join Types**: Verify appropriate join types (INNER vs LEFT vs EXISTS)\n- **Join Order**:",
             // The checklist line the corrections above go the other way on.
             "Subqueries are optimized or converted to JOINs",
             // The join order bullet, which the extras narrows to the few cases where the
@@ -82,6 +88,11 @@ const CORRECTIONS: Correction[] = [
             // added to the table breaks it; the column line alone would survive the addition
             // the correction asks for.
             "    expires TIMESTAMP\n) ENGINE=InnoDB;",
+            // The covering index beside it, whose trailing primary key column InnoDB already
+            // carries. Starts at `ADD INDEX`: the `-- Optimize for InnoDB` comment the
+            // correction also rests on is left out, because the `ALTER TABLE` line between them
+            // ends in a trailing space no reader would see.
+            "ADD INDEX idx_covering (status, created_at, id);",
             // The PostgreSQL array table. Spans the whole body for the same reason: a key, a
             // constraint or a REFERENCES clause has to land inside these lines.
             "    post_id INT,\n    tag_names TEXT[]\n);",
