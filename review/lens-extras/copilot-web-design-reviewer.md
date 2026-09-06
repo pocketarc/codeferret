@@ -75,8 +75,8 @@ Its workflow does not.
   component searches and file patterns are how you get from a piece of markup to the rules
   that style it.
 - Grade on the schema's `severity` field and nothing else. Step 2.2's tables carry a
-  `Severity` column, Step 3.1 is a P1 to P3 matrix, and `references/visual-checklist.md` ends
-  with a P0 to P3 one. Those are three of upstream's own scales and none of them is the
+  `Severity` column, Step 3.1 is a P1 to P3 matrix, and `references/visual-checklist.md`
+  carries a P0 to P3 one under `## Priority Matrix`. Those are three of upstream's own scales and none of them is the
   enum you have to return, so read each as a statement about how much a defect matters and
   then choose a value from the schema.
 - Leave the Output Format's "Issues Fixed", "Fixed File" and "Fix Details" alone. Your

@@ -154,8 +154,14 @@ purge_url_traces() {
 #
 # The value never reaches the output. It is the credential, and everything printed here goes
 # into a job log a run publishes.
+# Rewrites every url carrying a credential, and reports through its exit status whether it
+# rewrote any. Success means it found one, which is the inverse of the usual reading and is why
+# the caller is written as a plain `if` rather than a test against a variable: the alternative
+# was an undeclared global set deep inside the loop, invisible to a reader of either function
+# and one `local` away from silently never propagating, which would leave the reflog purge
+# unrun with the url still in it.
 scrub_urls() {
-    local key value seen="" cleaned dirty
+    local key value seen="" cleaned dirty found=1
 
     while IFS= read -r key; do
         [ -n "$key" ] || continue
@@ -184,8 +190,10 @@ scrub_urls() {
         done
 
         echo "rewrote $key in $(pwd) without the credential embedded in it"
-        URL_SCRUBBED=1
+        found=0
     done < <(git config --local --name-only --get-regexp "$URLS" || true)
+
+    return "$found"
 }
 
 # `--local` on every read here: this is the file being edited, and a read that expanded an
@@ -197,10 +205,7 @@ scrub_urls() {
 scrub_repo() {
     local key path
 
-    URL_SCRUBBED=0
-    scrub_urls
-
-    if [ "$URL_SCRUBBED" = 1 ]; then
+    if scrub_urls; then
         purge_url_traces
     fi
 
@@ -249,6 +254,24 @@ scrub_repo() {
 # evidence and one it does not cover is one the script reports a clean workspace over. A url
 # key is named only where its value carries userinfo, since most of them are ordinary remotes,
 # and the value itself is dropped: the caller prints this to a job log.
+# Anything printed, with the credential taken out of it.
+#
+# Naming the key and withholding the value was the first rule here and it was wrong on the one
+# shape this script had just been taught: `url.<base>.insteadOf` keeps the credential in the
+# key, so a rewrite rule the removal could not reach was written to the step log in full. On a
+# public repository that log is world-readable, and a token minted inside the job rather than
+# read from `secrets.*` is not masked by Actions.
+#
+# The substitutions are the `CREDENTIAL` alternatives again, one to one, so anything detection
+# can find redaction can hide. Adding a shape to one without the other is the way this leaks
+# next, and `scrub-credentials.test.ts` pins that both know each shape.
+redact() {
+    printf '%s' "$1" | sed -E \
+        -e 's#://[^/@[:space:]]*:?[^/@[:space:]]*@#://REDACTED@#g' \
+        -e 's#(gh[psour]_|github_pat_)[A-Za-z0-9_]+#\1REDACTED#g' \
+        -e 's#([Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]:).*#\1 REDACTED#g'
+}
+
 reachable() {
     local line origin rest
 
@@ -264,9 +287,7 @@ reachable() {
         rest=${line#*$'\t'}
 
         if printf '%s' "$rest" | grep -Eqi "$CREDENTIAL"; then
-            # The key alone. Everything this prints goes into a job log anyone who can read the
-            # repository can read, and a value is the thing being hidden.
-            printf '%s\t%s\n' "$origin" "${rest%%=*}"
+            printf '%s\t%s\n' "$origin" "$(redact "${rest%%=*}")"
         fi
     done < <(git config --show-origin --list 2>/dev/null || true)
 }
@@ -344,10 +365,17 @@ removed=$(
     git submodule foreach --recursive --quiet "bash '$SELF' --one \"\$PWD\"" 2>/dev/null || true
 )
 
+# Deduplicated, because the three passes overlap on purpose. The walk finds the workspace's own
+# repository as well as any beside it, and every pass reads the global and system files, so one
+# credential in `~/.gitconfig` is found once per repository. Reporting it once is the whole of
+# what this changes: the passes stay wide, since narrowing them to make the report tidy is how
+# a shape goes unlooked-for.
 left=$(
-    reachable
-    each_repository --check-one
-    git submodule foreach --recursive --quiet "bash '$SELF' --check-one \"\$PWD\"" 2>/dev/null || true
+    {
+        reachable
+        each_repository --check-one
+        git submodule foreach --recursive --quiet "bash '$SELF' --check-one \"\$PWD\"" 2>/dev/null || true
+    } | sort -u
 )
 
 if [ -n "${left//[[:space:]]/}" ]; then

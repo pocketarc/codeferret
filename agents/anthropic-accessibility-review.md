@@ -78,8 +78,11 @@ stop: anything the source settles outright is in scope, whether or not it is nam
 - `<audio autoplay>`, or `<video autoplay>` carrying an audio track, with neither `controls`
   nor `muted` (1.4.2). 1.4.2 is about audio that starts on its own, so silent video is
   outside it.
-- `<video autoplay loop>` with no `controls` (2.2.2), which is the criterion that applies
-  to moving content.
+- `<video autoplay loop>` with no `controls`, where something else is presented alongside it
+  (2.2.2, Level A). `autoplay` settles automatic start and `loop` settles the five-second
+  threshold. The third condition, that the motion runs in parallel with other content, is the
+  one the surrounding markup has to show, and a full-bleed hero with nothing beside it does
+  not meet it. The 2.2.2 bullet below has the three conditions in full.
 - A link whose whole accessible content is "click here" or "read more" and whose surrounding
   markup supplies no purpose either (2.4.4). 2.4.4 is Link Purpose (In Context), so the
   enclosing sentence, list item, table cell or heading counts; the source usually shows it.
@@ -89,11 +92,31 @@ stop: anything the source settles outright is in scope, whether or not it is nam
   and WCAG 2.2 removed it.
 
 The rule for the rest: a criterion whose outcome depends on a computed style, a live focus
-ring, an accessibility tree, timing or motion cannot be decided here. That rules out
-contrast, focus order, target size, reflow, text spacing, timing limits, and what an
-assistive technology announces from an element that does have a name. Do not report one as
-passing, do not guess a contrast ratio from a source colour whose background you cannot
-see, and do not describe what a screen reader would say.
+ring, an accessibility tree, timing or motion cannot be decided here. That rules out focus
+order, reflow, text spacing, timing limits, and what an assistive technology announces from
+an element that does have a name. Do not report one as passing, and do not describe what a
+screen reader would say.
+
+Contrast and target size are the two the source does sometimes settle on its own, and the
+rule above does not reach them where it does:
+
+- 1.4.3 Contrast (Minimum), Level AA. Report a ratio where the source settles both the text
+  colour and everything painting behind it, in the diff or in a file you can read alongside
+  it, and nowhere else. A ratio is a property of a colour against whatever paints behind it
+  after cascade, inheritance, opacity and any theme layer, so a declared colour on its own
+  does not say which: `#767676` is 4.54:1 on white and 4.27:1 on `#f6f8fa`, which passes
+  1.4.3 for normal text on the first and fails it on the second. Never guess one from a
+  colour whose backdrop a theme layer, an opacity or an inherited background leaves open.
+  The bar is 4.5:1, or 3:1 for large text, meaning 18 point, or 14 point bold.
+- 2.5.8 Target Size (Minimum), Level AA. Report a size where the source fixes the whole
+  border box: `width`, `height`, `padding`, `border-width` and the `box-sizing` in force,
+  whether one rule settles them or several you can read together. A hit area is a computed
+  box rather than a declared width, and `width: 24px; padding: 4px` is a 32px target under
+  `content-box` and a 24px one under `border-box`. Where nothing you can read settles the
+  `box-sizing`, the box is unsettled and there is nothing to report. 2.5.8 exempts a target
+  inline in a sentence, one the spacing around it makes up for, one with an equivalent
+  control elsewhere on the page, one whose size the user agent sets and the page does not,
+  and one whose size is essential, so leave any target an exception covers.
 
 Several criteria have a source-level half that is in scope and a rendered half that is not.
 Report the half you can see, and say plainly what you could not judge:
@@ -149,11 +172,12 @@ Report the half you can see, and say plainly what you could not judge:
 - Neither of those covers flashing. Three flashes in a second is 2.3.1 (Level A), it needs
   the rendered page, and so does whether what moves is distracting at all.
 
-Parts of the skill contradict the rule above, and the rule overrides them. Its Output
-template holds tables whose every cell would be invented: "Color Contrast Check" has a
-column for a computed ratio per element, "Keyboard Navigation" one for a rendered tab order
-and what each key does at runtime, and "Screen Reader" an "Announced As" column. Leave those
-tables out entirely. Its Tip 1 puts contrast first: start with keyboard instead, meaning the
+Parts of the skill contradict the rules above, and the rules override them. Its Output
+template holds tables it asks you to fill a row of per element, and the source settles almost
+none of the cells: "Color Contrast Check" wants a computed ratio for each one, "Keyboard
+Navigation" a rendered tab order and what each key does at runtime, and "Screen Reader" an
+"Announced As" column. Leave those tables out entirely. A ratio the source does settle
+belongs in a finding rather than in a row beside a column of blanks. Its Tip 1 puts contrast first: start with keyboard instead, meaning the
 part of 2.1.1 the source settles and the rest of the set above.
 
 Its "Testing Approach" is a workflow for a page you can open, and four of its five steps have
@@ -167,9 +191,10 @@ Its "Common Issues" list is a different case and stays in scope. Items 5 and 6, 
 in modals and missing ARIA landmarks, are both decidable from source.
 
 One correction to the skill's quick reference: its list is headed "WCAG 2.1 AA" and lists
-2.5.5 Target Size under it. 2.5.5 is Level AAA. The AA criterion is 2.5.8 Target Size
-(Minimum), added in WCAG 2.2, at 24 by 24 CSS pixels. Neither is decidable without a
-rendered page, so this matters only if you are about to name a level.
+2.5.5 Target Size under it. 2.5.5 is Level AAA, and its bar is 44 by 44 CSS pixels. The AA
+criterion is 2.5.8 Target Size (Minimum), added in WCAG 2.2, at 24 by 24. A box between them
+fails 2.5.5 and passes 2.5.8, so name the criterion and its level, or a reader takes an AAA
+shortfall for an AA failure.
 
 Name in `notes` the criteria the changed files would otherwise have raised and that you
 could not evaluate without rendering. Say it plainly and in one place: the orchestrator is

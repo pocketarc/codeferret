@@ -418,6 +418,55 @@ describe("scrub-credentials.sh", () => {
         });
     });
 
+    // The step log is world-readable on a public repository, and a token minted inside the job
+    // rather than read from `secrets.*` is not masked by Actions.
+    describe("what it writes to the log", () => {
+        const TOKEN = "ghs_notarealtoken111111111111111111111";
+
+        /** A credential in a config this script cannot edit, so it survives to be reported. */
+        function unreachableConfig(body: string): Record<string, string> {
+            const global = join(realpathSync(mkdtempSync(join(tmpdir(), "gitconfig-"))), "gitconfig");
+
+            writeFileSync(global, body);
+
+            return { GIT_CONFIG_GLOBAL: global };
+        }
+
+        // Naming the key and withholding the value was the rule, and it was wrong on the one
+        // shape the script had just been taught: a rewrite rule keeps the credential in its key.
+        test("redacts a credential that lives in the key", () => {
+            const dir = repo();
+            const env = unreachableConfig(`[url "https://x-access-token:${TOKEN}@github.com/"]\n\tinsteadOf = https://github.com/\n`);
+            const proc = Bun.spawnSync(["bash", SCRIPT, dir], { stdout: "pipe", stderr: "pipe", env: { ...process.env, ...ISOLATED, ...env } });
+            const said = proc.stdout.toString() + proc.stderr.toString();
+
+            expect(proc.exitCode).toBe(1);
+            expect(said).not.toContain(TOKEN);
+            expect(said).toContain("REDACTED");
+        });
+
+        test("redacts a header value it could not remove", () => {
+            const dir = repo();
+            const env = unreachableConfig(`[http]\n\textraheader = AUTHORIZATION: basic ${TOKEN}\n`);
+            const proc = Bun.spawnSync(["bash", SCRIPT, dir], { stdout: "pipe", stderr: "pipe", env: { ...process.env, ...ISOLATED, ...env } });
+            const said = proc.stdout.toString() + proc.stderr.toString();
+
+            expect(proc.exitCode).toBe(1);
+            expect(said).not.toContain(TOKEN);
+        });
+
+        // Three passes overlap on purpose and each reads the unscoped config, so one credential
+        // was named once per repository walked.
+        test("names a surviving credential once, however many passes found it", () => {
+            const dir = repo();
+            const env = unreachableConfig(`[http]\n\textraheader = AUTHORIZATION: basic ${TOKEN}\n`);
+            const proc = Bun.spawnSync(["bash", SCRIPT, dir], { stdout: "pipe", stderr: "pipe", env: { ...process.env, ...ISOLATED, ...env } });
+            const lines = proc.stderr.toString().split("\n").filter((l) => l.includes("http.extraheader"));
+
+            expect(lines.length).toBe(1);
+        });
+    });
+
     describe("what it reports", () => {
         test("does not claim nothing was reachable when a submodule held a credential", () => {
             const dir = withSubmodule();

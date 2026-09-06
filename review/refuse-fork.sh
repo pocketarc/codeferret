@@ -81,9 +81,9 @@ fi
 # The two payload fields that name where a commit came from, each spelled its own way:
 # `pull_request` and its review events fill `HEAD_REPO`, `workflow_run` fills `RUN_REPO`, and
 # every other event fills neither.
-for named in "$HEAD_REPO" "$RUN_REPO"; do
-    if [ -n "$named" ] && [ "$named" != "$THIS_REPO" ]; then
-        echo "The commit this run would review is on $named, not on $THIS_REPO." >&2
+for repo in "$HEAD_REPO" "$RUN_REPO"; do
+    if [ -n "$repo" ] && [ "$repo" != "$THIS_REPO" ]; then
+        echo "The commit this run would review is on $repo, not on $THIS_REPO." >&2
         echo "CodeFerret runs an agent with Bash over the branch it reviews, in the" >&2
         echo "job holding your tokens, so it reviews only a branch from this repository." >&2
         echo "Add the head-repo test to the job's if: to skip such a run" >&2

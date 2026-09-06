@@ -317,7 +317,32 @@ exec 9>&-
 # directory, and each of those lines deletes or writes: run.test.ts has the two paths that
 # reach through them, a directory left where `findings.json` goes and a link left where
 # `$BUILD` was.
-$PREFIX bun --config=/dev/null "$ACTION/review/finalise.ts" prepare "$BUILD"
+prepared=0
+$PREFIX bun --config=/dev/null "$ACTION/review/finalise.ts" prepare "$BUILD" || prepared=$?
+
+# `guardBuildDir` calls failing the safe direction, on the grounds that a run stopping there
+# posts nothing and ends red. Ending red it does on its own; posting nothing is this block.
+# The step that runs this script reads `findings-checked` out of the build directory after
+# this script has returned, whatever it returned, and the posting step is gated on that file
+# alone. So a session that writes the marker itself and then deletes `.codeferret-run` makes
+# the guard refuse and keeps its own findings file, which is the one that gets posted. What
+# closes it is taking the names the next step reads away before returning.
+#
+# Two shapes, because the guard refuses on two. Where `$BUILD` is still a directory of its own
+# the files inside it are the ones to go, and `rm -r` unlinks a symbolic link the session
+# planted rather than writing through it. Where it is not, the session left something else at
+# that path and every name below it leads through whatever it points at, so the name itself is
+# what goes.
+if [ "$prepared" -ne 0 ]; then
+    if [ -d "$BUILD" ] && [ ! -L "$BUILD" ]; then
+        rm -rf "$BUILD/findings.json" "$BUILD/findings-checked" \
+            "$BUILD/existing.json" "$BUILD/previous.json"
+    else
+        rm -rf "$BUILD"
+    fi
+
+    exit "$prepared"
+fi
 
 # The session is gone, so the log becomes a file again: a plain one, in the build directory,
 # written by this shell out of a descriptor nothing else ever held. `rm -f` first, because the

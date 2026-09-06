@@ -235,14 +235,40 @@ describe("run.sh: the build files a later step reads", () => {
         expect(run.status).toBe(0);
     });
 
+    test("posts nothing on a marker the session wrote before deleting the one the run built", () => {
+        // The guard refuses a directory carrying no `.codeferret-run`, and the run ends red.
+        // The step that reads `findings-checked` runs anyway, and the posting step is gated on
+        // that file alone, so the session's own findings would have gone out under a red job.
+        const run = review(
+            [
+                'printf ok >"$BUILD/findings-checked"',
+                'printf \'{"summary":"forged","findings":[],"lens_health":[]}\' >"$BUILD/findings.json"',
+                'printf \'{"findings":[{"file":"src/a.ts","title":"forged"}]}\' >"$BUILD/previous.json"',
+                'rm -f "$BUILD/.codeferret-run"',
+            ].join("\n"),
+        );
+
+        expect(run.status).not.toBe(0);
+        expect(run.build("findings-checked")).toBeNull();
+        expect(run.build("findings.json")).toBeNull();
+        expect(run.build("previous.json")).toBeNull();
+    });
+
     test("writes nothing through a link the session left where the build directory was", () => {
         const planted = join(root, "planted-build");
         mkdirSync(planted, { recursive: true });
         writeFileSync(join(planted, "existing.json"), "planted\n");
+        writeFileSync(join(planted, "findings-checked"), "ok");
 
         const run = review(`rm -rf "$BUILD" && ln -sfn '${planted}' "$BUILD"`);
 
         expect(readFileSync(join(planted, "existing.json"), "utf8")).toBe("planted\n");
+
+        // The link is the whole of what the next step reads the marker through, so it goes
+        // rather than what it points at. A marker planted behind it would post the planted
+        // findings file beside it.
+        expect(run.build("findings-checked")).toBeNull();
+        expect(readFileSync(join(planted, "findings-checked"), "utf8")).toBe("ok");
         expect(run.status).not.toBe(0);
     });
 });
