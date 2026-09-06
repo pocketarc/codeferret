@@ -235,15 +235,19 @@ describe("run.sh: the build files a later step reads", () => {
         expect(run.status).toBe(0);
     });
 
-    test("posts nothing on a marker the session wrote before deleting the one the run built", () => {
-        // The guard refuses a directory carrying no `.codeferret-run`, and the run ends red.
-        // The step that reads `findings-checked` runs anyway, and the posting step is gated on
-        // that file alone, so the session's own findings would have gone out under a red job.
+    test("posts nothing when the session writes `findings-checked` and deletes `.codeferret-run`", () => {
+        // The step that reads `findings-checked` runs whatever this script exits with, and
+        // that file is the posting step's only condition, so ending red on its own would have
+        // let the session's own findings out.
+        const planted = join(root, "planted-cost.txt");
+        writeFileSync(planted, "elsewhere\n");
+
         const run = review(
             [
                 'printf ok >"$BUILD/findings-checked"',
                 'printf \'{"summary":"forged","findings":[],"lens_health":[]}\' >"$BUILD/findings.json"',
                 'printf \'{"findings":[{"file":"src/a.ts","title":"forged"}]}\' >"$BUILD/previous.json"',
+                `ln -sfn '${planted}' "$BUILD/cost-usd"`,
                 'rm -f "$BUILD/.codeferret-run"',
             ].join("\n"),
         );
@@ -252,6 +256,11 @@ describe("run.sh: the build files a later step reads", () => {
         expect(run.build("findings-checked")).toBeNull();
         expect(run.build("findings.json")).toBeNull();
         expect(run.build("previous.json")).toBeNull();
+
+        // `emit_output_file` tests with `-f`, so a run file left as a link publishes whatever
+        // it points at. The entry has to go without the run reading or writing through it.
+        expect(run.build("cost-usd")).toBeNull();
+        expect(readFileSync(planted, "utf8")).toBe("elsewhere\n");
     });
 
     test("writes nothing through a link the session left where the build directory was", () => {
@@ -264,9 +273,8 @@ describe("run.sh: the build files a later step reads", () => {
 
         expect(readFileSync(join(planted, "existing.json"), "utf8")).toBe("planted\n");
 
-        // The link is the whole of what the next step reads the marker through, so it goes
-        // rather than what it points at. A marker planted behind it would post the planted
-        // findings file beside it.
+        // The marker is reachable through the link and is the posting step's only condition,
+        // so the link goes rather than what it points at.
         expect(run.build("findings-checked")).toBeNull();
         expect(readFileSync(join(planted, "findings-checked"), "utf8")).toBe("ok");
         expect(run.status).not.toBe(0);

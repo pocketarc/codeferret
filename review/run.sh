@@ -320,27 +320,24 @@ exec 9>&-
 prepared=0
 $PREFIX bun --config=/dev/null "$ACTION/review/finalise.ts" prepare "$BUILD" || prepared=$?
 
-# `guardBuildDir` calls failing the safe direction, on the grounds that a run stopping there
-# posts nothing and ends red. Ending red it does on its own; posting nothing is this block.
+# `guardBuildDir` treats failure as the safe direction, on the grounds that a run stopping
+# there posts nothing and ends red. It ends red on its own; posting nothing is this block.
 # The step that runs this script reads `findings-checked` out of the build directory after
-# this script has returned, whatever it returned, and the posting step is gated on that file
-# alone. So a session that writes the marker itself and then deletes `.codeferret-run` makes
-# the guard refuse and keeps its own findings file, which is the one that gets posted. What
-# closes it is taking the names the next step reads away before returning.
+# this script has returned, whatever it returned, and that file is the posting step's only
+# condition. So a session that writes `findings-checked` itself and then deletes
+# `.codeferret-run` makes the guard refuse while its own findings file stands, and that is the
+# file the next step posts. What closes it is deleting the names the next step reads before
+# this script returns.
 #
-# Two shapes, because the guard refuses on two. Where `$BUILD` is still a directory of its own
-# the files inside it are the ones to go, and `rm -r` unlinks a symbolic link the session
-# planted rather than writing through it. Where it is not, the session left something else at
-# that path and every name below it leads through whatever it points at, so the name itself is
-# what goes.
+# The whole directory, and not just `findings.json` and `findings-checked`. The guard's answer
+# is that this is not the directory this run built, which leaves nothing in it that anything
+# downstream may read: `emit_output_file` in lib.sh tests with `-f`, so a link the session left
+# at `cost-usd` has the next step publish whatever it points at. Nothing true is lost, because
+# a run that reaches this line has not written any of those numbers yet. The session directory
+# is untouched, so a run that reached this because build-prompts.sh wrote no marker still has
+# the copies it was handed to look at.
 if [ "$prepared" -ne 0 ]; then
-    if [ -d "$BUILD" ] && [ ! -L "$BUILD" ]; then
-        rm -rf "$BUILD/findings.json" "$BUILD/findings-checked" \
-            "$BUILD/existing.json" "$BUILD/previous.json"
-    else
-        rm -rf "$BUILD"
-    fi
-
+    rm -rf "$BUILD"
     exit "$prepared"
 fi
 
