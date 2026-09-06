@@ -21,8 +21,12 @@
 # that into a checkout, so the head repository it names is tested here under its own spelling.
 #
 # The action refuses rather than warns, and refuses here rather than after a review that took
-# twenty minutes. Where an event names no head repository at all, there is nothing to test and
-# the step says so rather than passing in silence.
+# twenty minutes. Where an event names no head repository there is nothing to test it against,
+# and such a run is refused unless `unverified-head` is set to 'allow', which puts the decision
+# in the caller's workflow beside the `if:` that already decides who may start the job. A
+# dispatch takes write access to start, so whoever passed the input could have pushed the
+# commit anyway; `issue_comment` takes no more than the ability to comment, which on a public
+# repository is anybody.
 #
 # A script rather than a `run:` block, for the reason review/artifact-path.ts gives one step
 # further down: shell inside a YAML string has shellcheck for its only reader, and shellcheck
@@ -41,6 +45,8 @@
 #   HEAD_SHA   the head-sha input.
 #   PR_NUMBER  the pr-number input.
 #   CHECKOUT   the checkout input.
+#   UNVERIFIED_HEAD  the unverified-head input: refuse or allow.
+#   WORKSPACE  github.workspace, to see a checkout the caller made for themselves.
 #
 # Exit: 0 nothing names a commit from elsewhere, 1 refused with the reason on stderr.
 set -euo pipefail
@@ -52,6 +58,18 @@ THIS_REPO=${THIS_REPO:-}
 HEAD_SHA=${HEAD_SHA:-}
 PR_NUMBER=${PR_NUMBER:-}
 CHECKOUT=${CHECKOUT:-}
+UNVERIFIED_HEAD=${UNVERIFIED_HEAD:-refuse}
+WORKSPACE=${WORKSPACE:-}
+
+# Here rather than beside the branch that reads it, so a misspelt value stops the run on every
+# event instead of on the ones nobody tests with.
+case $UNVERIFIED_HEAD in
+refuse | allow) ;;
+*)
+    echo "unverified-head is '$UNVERIFIED_HEAD'. It must be 'refuse' or 'allow'." >&2
+    exit 1
+    ;;
+esac
 
 if [ "$EVENT" = "pull_request_target" ]; then
     echo "CodeFerret will not run under pull_request_target." >&2
@@ -74,16 +92,10 @@ for named in "$HEAD_REPO" "$RUN_REPO"; do
     fi
 done
 
-# Said rather than refused. A workflow_dispatch or a repository_dispatch takes write access to
-# start, so an input arriving on one was chosen by somebody who could have pushed the commit
-# anyway. An issue_comment takes only the ability to comment, and its payload carries no head
-# sha of its own, so whoever wired that trigger chose where the value came from and this script
-# cannot see their choice.
-#
-# All three inputs, not `head-sha` alone. Each is a way to point the same job at somebody
-# else's work: `head-sha` is the commit the checkout takes, `pr-number` decides which pull
-# request the review reads and posts to, and `checkout: skip` hands the whole question to a
-# step of the caller's own, which is where a `gh pr checkout` of a fork's branch goes.
+# Below here the payload names no head repository, so all this script can still read is how
+# the caller pointed the job at a commit. A checkout already in the workspace counts as one of
+# those routes: it is `checkout` left at its default, because the probe in action.yml leaves
+# whatever it finds alone.
 if [ -n "$HEAD_REPO" ] || [ -n "$RUN_REPO" ]; then
     exit 0
 fi
@@ -110,7 +122,24 @@ if [ "$CHECKOUT" = "skip" ]; then
     name_route "checkout: skip"
 fi
 
-if [ -n "$named" ]; then
+# Asked here rather than read off the probe step, which runs after this one: this is the last
+# point at which the answer can still stop a run.
+if [ -n "$WORKSPACE" ] && [ -d "$WORKSPACE/.git" ]; then
+    name_route "a checkout this action did not make"
+fi
+
+if [ -z "$named" ]; then
+    exit 0
+fi
+
+if [ "$UNVERIFIED_HEAD" = "allow" ]; then
     echo "$named names what this run reviews, and $EVENT carries no head repository" >&2
     echo "to check it against, so the job's if: is the only gate on whose code runs here." >&2
+    exit 0
 fi
+
+echo "$named names what this run reviews, and $EVENT carries no head repository to check" >&2
+echo "it against. CodeFerret runs an agent with Bash over the branch it reviews, in the job" >&2
+echo "holding your tokens, and an issue_comment needs no more than the ability to comment." >&2
+echo "Restrict who may start the job, then set unverified-head: allow to record that." >&2
+exit 1

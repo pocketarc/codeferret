@@ -35,4 +35,9 @@ fi
 
 cd "$BUILD"
 
+# print-findings.ts makes no request, and the fetch above took its credential on stdin, so
+# nothing past this line needs one. local-run.sh drops the same two names before its own exec
+# and gives the reason.
+unset -v GITHUB_TOKEN GH_TOKEN
+
 exec bun --config=/dev/null "$PLUGIN/review/print-findings.ts" "$FINDINGS"

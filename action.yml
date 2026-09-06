@@ -112,8 +112,11 @@ inputs:
             lines if your repository has one, because an excluded file is not in the diff and
             nothing in the review says it was left out.
 
-            What the two leave behind is the export's copy of everything under `public/`: the
-            same bytes twice, when the source path alone is worth reading. Add
+            What `**/out/**/*.html` and `**/out/**/*.txt` leave behind falls into two kinds.
+            The export's copy of everything under `public/` is the same bytes twice, when the
+            source path alone is worth reading. The App Router's file-based metadata duplicates
+            no source file and lands under extensions neither glob matches, `out/sitemap.xml`
+            and the `.png` an `opengraph-image` writes beside every route among them. Add
             `<your-root>/out/**` to `exclude-paths` if the export lives somewhere other than
             the repository root, `apps/*` or `packages/*`.
 
@@ -282,6 +285,24 @@ inputs:
             it when you check out yourself, or need submodules, LFS, or a sparse checkout.
         required: false
         default: auto
+    unverified-head:
+        description: |
+            What to do when the event carries no head repository to check the reviewed commit
+            against, and an input or your own checkout step names the commit instead.
+            'refuse' stops the run. 'allow' proceeds.
+
+            The events are `issue_comment`, `schedule` and the dispatches. On any of them the
+            commit comes from `head-sha`, from `pr-number`, from your own checkout step, or
+            from `checkout: skip`, and none of those names the repository the commit is on.
+            A `pull_request` or `workflow_run` event is unaffected: the payload names the head
+            repository and the action compares it itself, whatever this is set to.
+
+            The default is 'refuse', because commenting on a public repository takes nothing,
+            and this action resolves a pull request number read off a comment to a fork's head
+            commit. Restrict who may start the job (the shipped workflow's `if:` is the
+            example), then set 'allow' to record that you have.
+        required: false
+        default: refuse
     install:
         description: |
             Whether to install the toolchain. 'auto' installs bun and claude globally via
@@ -373,6 +394,8 @@ runs:
               HEAD_SHA: ${{ inputs.head-sha }}
               PR_NUMBER: ${{ inputs.pr-number }}
               CHECKOUT: ${{ inputs.checkout }}
+              UNVERIFIED_HEAD: ${{ inputs.unverified-head }}
+              WORKSPACE: ${{ github.workspace }}
           run: bash "$GITHUB_ACTION_PATH/review/refuse-fork.sh"
 
         # actions/checkout cleans by default, deleting whatever an earlier step in the
@@ -479,6 +502,12 @@ runs:
               DEFAULT_HEAD: ${{ github.event.pull_request.head.sha }}
               RESOLVE_THREADS_IN: ${{ inputs.resolve-threads }}
           run: |
+              # At the top of the step: `verify_ref` undefined exits 127, and `! 127` is
+              # true inside the `if` below, so the ref check would report a good ref as
+              # unresolvable rather than fail.
+              # shellcheck source=review/lib.sh
+              . "$GITHUB_ACTION_PATH/review/lib.sh"
+
               # An invalid value fails here, because both later steps turn this input into
               # RESOLVE_THREADS, where anything that is not 'true' becomes '0'.
               case "$RESOLVE_THREADS_IN" in
@@ -508,18 +537,14 @@ runs:
                   git fetch --no-tags origin -- "$DEFAULT_BASE" || true
               fi
 
-              # `--end-of-options` rather than the `--` the fetch above takes. Both guard
-              # the same thing, that `$base` comes from the `base-ref` input and
-              # build-prompts.sh's `plain_ref` has not run on it yet, but `--` means
-              # something else here: rev-parse reads it as the rev/path separator, so the
-              # ref lands on the path side and `--verify` finds no revision at all.
-              if ! git rev-parse --verify --quiet --end-of-options "$base" >/dev/null; then
+              # `$base` comes from the `base-ref` input and build-prompts.sh's `plain_ref`
+              # has not run on it yet, so a ref beginning with a dash reaches git here.
+              # lib.sh has why rev-parse cannot guard that with the `--` the fetch above
+              # takes.
+              if ! verify_ref . "$base"; then
                   echo "base ref '$base' does not resolve in this checkout" >&2
                   exit 1
               fi
-
-              # shellcheck source=review/lib.sh
-              . "$GITHUB_ACTION_PATH/review/lib.sh"
 
               emit_output base "$base"
               emit_output pr "${PR_NUMBER:-$DEFAULT_PR}"

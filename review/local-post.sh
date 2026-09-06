@@ -96,4 +96,13 @@ cd "$BUILD"
 # orchestrator gets; this is the half that the code answers to.
 export RESOLVE_THREADS=0
 
-exec bun --config=/dev/null "$PLUGIN/review/post-review.ts" "$FINDINGS" "$REVIEWED_HEAD" "$PR"
+# The credential over stdin, and `GITHUB_TOKEN` blanked rather than passed, which is what
+# `run_tool` does on the action's path and for the same reason: an environment holds what a
+# process was started with for as long as it lives, and `/proc/<pid>/environ` is readable by
+# anything running as this user. On a runner that is a disposable machine. Here it is the
+# developer's own `gh` credential on the developer's own laptop, so the reasoning is stronger
+# rather than weaker. `tokenFromStdinOrEnv` reads stdin when the variable is empty.
+#
+# Not `exec`, because the token has to be piped in and the pipeline needs a shell to own it.
+printf '%s' "$GITHUB_TOKEN" |
+    GITHUB_TOKEN='' bun --config=/dev/null "$PLUGIN/review/post-review.ts" "$FINDINGS" "$REVIEWED_HEAD" "$PR"
