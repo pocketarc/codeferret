@@ -88,14 +88,19 @@ function protecting(a: Tier, b: Tier): Tier {
 const findingsFile: string = findingsPath;
 const buildDir = dirname(findingsFile);
 
-// An absolute path and the flag, because whoever reads this line is standing wherever the
-// run left them, which for a session is the checkout under review, the directory bun takes a
-// `bunfig.toml` from.
-const merged = await readMerged(
-    findingsFile,
-    (line) => console.error(line),
-    `check it with: bun --config=/dev/null ${join(import.meta.dir, "check-findings.ts")} ${findingsFile}`,
-);
+const read = await readMerged(findingsFile);
+
+if (!read.ok) {
+    console.error(read.message);
+
+    // An absolute path and the flag, because whoever reads this line is standing wherever the
+    // run left them, which for a session is the checkout under review, the directory bun takes
+    // a `bunfig.toml` from.
+    console.error(`check it with: bun --config=/dev/null ${join(import.meta.dir, "check-findings.ts")} ${findingsFile}`);
+    process.exit(1);
+}
+
+const merged = read.value;
 
 // The decision is taken again here: the orchestrator held the suppression rules and the
 // comments it judged as text in one context.
@@ -197,6 +202,14 @@ if (foreign.length > 0) {
 
 const resolved: Array<{ reason: string }> = [];
 let resolveDenied = false;
+
+// Threads are closed before the review is posted, because the body reports how many were closed.
+// What that costs: the post below exits 1 on a 502 with the threads already shut. The next run
+// reads them back as resolved, the orchestrator marks the matching findings `declined`,
+// `vetSuppression` accepts a closed thread for anything the body would not have printed in full,
+// and `previousOf` holds that for the life of the pull request. That is a suppression resting on
+// a review nobody ever saw, which is what the `posted` record exists to prevent.
+// `resolve-threads` is off unless a caller sets it, so only the migration path reaches this.
 
 // Resolving is a write, so a dry run decides which threads to close and closes none. The
 // entries still go in: `DRY_RUN=1` is documented as printing the review instead of posting it,

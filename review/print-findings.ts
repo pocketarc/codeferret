@@ -33,7 +33,14 @@ if (!findingsPath) {
 
 const findingsFile: string = findingsPath;
 const buildDir = dirname(findingsFile);
-const merged = await readMerged(findingsFile, (line) => console.error(line));
+const read = await readMerged(findingsFile);
+
+if (!read.ok) {
+    console.error(read.message);
+    process.exit(1);
+}
+
+const merged = read.value;
 
 // A suppression the posting path would overturn has to be overturned here too, or a session
 // reports as settled a finding a posted review would raise.

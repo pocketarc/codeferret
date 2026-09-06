@@ -46,6 +46,16 @@ describe("partition", () => {
         expect(suppressed.map((f) => f.title)).toEqual(["seen"]);
         expect(declined.map((f) => f.title)).toEqual(["no"]);
     });
+
+    test("sorts a finding whose rating failed with the worst, since the body prints it either way", () => {
+        const { all } = partition([
+            finding({ title: "nit", risk: riskFor("nit") }),
+            finding({ title: "unrated", risk: undefined }),
+            finding({ title: "crit", risk: riskFor("critical") }),
+        ]);
+
+        expect(all.map((f) => f.title)).toEqual(["unrated", "crit", "nit"]);
+    });
 });
 
 describe("lineOf", () => {

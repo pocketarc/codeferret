@@ -140,6 +140,10 @@ describe("escapeInline", () => {
         expect(escapeInline("bump @types/bun")).toBe("bump \\@types/bun");
     });
 
+    test("escapes a hash mid-line, which would cross-reference that issue on every push", () => {
+        expect(escapeInline("as of #123")).toBe("as of \\#123");
+    });
+
     test("does not close a shorter opener on a longer run, which left a tag unescaped", () => {
         expect(escapeInline("``<details>``` a `")).toBe("\\`\\`\\<details>\\`\\`\\` a \\`");
     });
@@ -179,6 +183,10 @@ describe("escapeBlocks", () => {
 
     test("escapes a mention in prose, which would notify an account on every push", () => {
         expect(escapeBlocks(["the @param tag"])).toEqual(["the \\@param tag"]);
+    });
+
+    test("escapes an issue reference in prose, which GitHub links from the review's account", () => {
+        expect(escapeBlocks(["fixed by #123, see owner/repo#4"])).toEqual(["fixed by \\#123, see owner/repo\\#4"]);
     });
 
     test("escapes a markdown image, which renders without a click", () => {

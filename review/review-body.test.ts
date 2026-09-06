@@ -1,8 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { partition } from "./findings.ts";
 import type { Finding, Merged } from "./findings.ts";
-import { anyWarning, COVERAGE_NOTICES, coverageOf, noticesFor } from "./caveats.ts";
-import type { Notice } from "./caveats.ts";
+import { COVERAGE_NOTICES, coverageOf, noticesFor } from "./caveats.ts";
 import { closeOpenFence, escapeInline, fenceMap } from "./markdown.ts";
 import {
     assemble,
@@ -91,7 +90,7 @@ describe("bullet", () => {
     test("keeps a multi-line category on one line, so it cannot open a heading below the item", () => {
         const line = bullet(finding({ category: "sql-injection\n\n# Findings" }));
 
-        expect(line).toEndWith("_sql-injection # Findings_");
+        expect(line).toEndWith("_sql-injection \\# Findings_");
     });
 
     test("clamps a runaway title, so it is not a wall of bold text", () => {
@@ -184,14 +183,14 @@ describe("mention", () => {
 });
 
 describe("destinationOf", () => {
-    test("builds the run url from what a runner sets", () => {
+    test("keeps no url for a run that kept nothing, because there is nowhere to send a reader", () => {
         expect(
             destinationOf({
                 GITHUB_SERVER_URL: "https://github.com",
                 GITHUB_REPOSITORY: "pocketarc/codeferret",
                 GITHUB_RUN_ID: "42",
             }),
-        ).toEqual({ kind: "run", url: "https://github.com/pocketarc/codeferret/actions/runs/42" });
+        ).toEqual({ kind: "run" });
     });
 
     test("carries whether the run kept the findings file", () => {
@@ -246,6 +245,30 @@ describe("assemble", () => {
 
         expect(body).not.toContain("Huge");
         expect(body).toContain("Small");
+    });
+
+    test("says on the page when what it dropped rates above what it printed", () => {
+        const items = [
+            finding({ title: "Huge", body: "x".repeat(3900), risk: riskFor("critical") }),
+            finding({ title: "Small", risk: riskFor("low") }),
+        ];
+        const { body } = assemble(["x".repeat(MAX_BODY - 3000)], listing(items), []);
+
+        expect(body).toContain("Small");
+        expect(body).toContain("one of them rated above a finding printed here");
+        expect(body.length).toBeLessThanOrEqual(MAX_BODY);
+    });
+
+    test("says nothing of the sort when the findings it dropped are the lesser ones", () => {
+        const items = [
+            finding({ title: "First", risk: riskFor("critical") }),
+            finding({ title: "Second", body: "x".repeat(3900), risk: riskFor("low") }),
+        ];
+        const { body } = assemble(["x".repeat(MAX_BODY - 3000)], listing(items), []);
+
+        expect(body).toContain("First");
+        expect(body).toContain("left out for length");
+        expect(body).not.toContain("rated above");
     });
 
     test("reports the findings it printed, not the ones it was offered", () => {
@@ -341,25 +364,6 @@ describe("boundedBlock", () => {
 
     test("leaves a list that fits whole, with no line about omissions", () => {
         expect(boundedBlock(["- one", "- two"], 400, furtherItems)).toBe("- one\n- two");
-    });
-});
-
-describe("anyWarning, the one test both notice tables go through", () => {
-    const table: Record<"news" | "standing", Notice<null>> = {
-        news: { level: "warning", raised: () => true, say: () => "" },
-        standing: { level: "note", raised: () => true, say: () => "" },
-    };
-
-    test("a note raised on its own does not make a run worth posting", () => {
-        expect(anyWarning(["standing"], table)).toBe(false);
-    });
-
-    test("a warning does", () => {
-        expect(anyWarning(["news"], table)).toBe(true);
-    });
-
-    test("a warning beside a note still does", () => {
-        expect(anyWarning(["standing", "news"], table)).toBe(true);
     });
 });
 
@@ -792,7 +796,7 @@ describe("composeReview", () => {
             ).toBe(true);
         });
 
-        test("a lens that named something it could not check does not, on its own", () => {
+        test("a lens that named something it could not check is enough on its own, note or not", () => {
             const limited = { lens: "codeferret:anthropic-accessibility-review", findings_returned: 0, ok: true };
 
             expect(
@@ -800,37 +804,14 @@ describe("composeReview", () => {
                     { lens_health: [limited] },
                     { dispatched: ["codeferret:anthropic-accessibility-review"] },
                 ),
-            ).toBe(false);
+            ).toBe(true);
         });
 
-        test("the shipped lens set with nothing new and nothing broken stays quiet", () => {
-            const lenses = [
-                "caveman-review",
-                "anthropic-code-review",
-                "wshobson-code-review-excellence",
-                "cursor-thermo-nuclear-review",
-                "sentry-security-review",
-                "copilot-security-review",
-                "vercel-next-best-practices",
-                "copilot-web-design-reviewer",
-                "copilot-sql-code-review",
-                "anthropic-accessibility-review",
-            ].map((name) => `codeferret:${name}`);
-
-            expect(
-                warnedBy(
-                    { lens_health: lenses.map((lens) => ({ lens, findings_returned: 0, ok: true })) },
-                    { dispatched: lenses },
-                ),
-            ).toBe(false);
-        });
-
-        // The test above is this repository's own dispatched set: action.yml's default minus
-        // `comment-review` and `writing-review`, which .github/workflows/codeferret.yml
-        // excludes. A consumer who excludes neither runs both as well, and neither has a
-        // `STANDING_DETAIL` entry, so this covers the same ground with the full default rather
-        // than trusting that the two missing names cannot matter.
-        test("the full shipped default, excluding nothing, stays quiet too", () => {
+        // action.yml's whole default, which is what a consumer excluding nothing runs. A lens
+        // shipping without the capability its skill describes has something to say on every
+        // run, so this is the ordinary quiet push: the pull request gets a comment carrying
+        // nothing but what the review could not cover.
+        test("the shipped default with nothing new and nothing broken posts the coverage anyway", () => {
             const lenses = [
                 "caveman-review",
                 "anthropic-code-review",
@@ -845,6 +826,17 @@ describe("composeReview", () => {
                 "comment-review",
                 "writing-review",
             ].map((name) => `codeferret:${name}`);
+
+            expect(
+                warnedBy(
+                    { lens_health: lenses.map((lens) => ({ lens, findings_returned: 0, ok: true })) },
+                    { dispatched: lenses },
+                ),
+            ).toBe(true);
+        });
+
+        test("a run where every lens ran and none had anything to declare stays quiet", () => {
+            const lenses = ["codeferret:caveman-review", "codeferret:anthropic-code-review"];
 
             expect(
                 warnedBy(
@@ -961,6 +953,43 @@ describe("composeReview", () => {
             expect(body).toContain("No risk at all");
             expect(body).not.toContain("scored.ts");
             expect(warned).toBe(true);
+        });
+
+        test("a lens's standing caveat is enough to post a run that found nothing new", () => {
+            const merged: Merged = {
+                findings: [],
+                lens_health: [{ lens: "codeferret:anthropic-accessibility-review", findings_returned: 0, ok: true }],
+            };
+            const posting: Posting = { ...quiet, dispatched: ["codeferret:anthropic-accessibility-review"] };
+            const { body, warned } = composeReview(merged, posting, partition(merged.findings));
+
+            expect(noticesFor(coverageOf(merged, posting))).toEqual(["limited"]);
+            expect(body).toContain("No page was rendered");
+            expect(warned).toBe(true);
+        });
+
+        test("counts as unrated only the findings it posts, which are the ones it says it prints", () => {
+            const merged: Merged = {
+                findings: [
+                    finding({ file: "posted.ts", risk: undefined }),
+                    finding({ file: "answered.ts", risk: undefined, status: "already-reported" }),
+                    finding({ file: "settled.ts", risk: undefined, status: "declined" }),
+                ],
+            };
+
+            expect(coverageOf(merged, quiet).unrated.map((f) => f.file)).toEqual(["posted.ts"]);
+        });
+
+        test("bounds the unrated paths, which the body is charged for before any finding", () => {
+            const merged: Merged = {
+                findings: Array.from({ length: 40 }, (_, i) =>
+                    finding({ file: `${"p".repeat(200)}/${i}.ts`, risk: undefined }),
+                ),
+            };
+            const sentence = COVERAGE_NOTICES.unrated.say(coverageOf(merged, quiet), (text) => text);
+
+            expect(sentence).toContain("(cut for length)");
+            expect(sentence.length).toBeLessThan(1000);
         });
 
         test("bounds what the fetch could not read, which the body is charged for before any finding", () => {

@@ -9,7 +9,7 @@
  */
 
 import type { Located, Survey } from "./existing.ts";
-import { meetsThreshold, score, tierOf as bandOf, tierRank, unratedAxes } from "./risk.ts";
+import { meetsThreshold, score, TIER_NAMES, tierOf as bandOf, tierRank, unratedAxes } from "./risk.ts";
 import type { Risk, Tier } from "./risk.ts";
 
 export type { Tier } from "./risk.ts";
@@ -64,9 +64,21 @@ export function tierOf(f: Finding): Tier {
     return bandOf(score(f.risk ?? {}));
 }
 
-/** Where a finding sorts. Lower is worse, so the worst reads first. */
+const WORST_RANK = Math.min(...TIER_NAMES.map(tierRank));
+
+/**
+ * Where a finding sorts. Lower is worse, so the worst reads first.
+ *
+ * A finding whose rating failed sorts with the worst, because `score` gives an absent or
+ * unrecognised `risk` a 0 and 0 bands to `nit`. Ranked on that number, the findings `isListed`
+ * rescues from the threshold sorted among the real nits, read last, and were dropped first by
+ * the length cut: the one rating nobody can vouch for decided the order as if it were an answer.
+ * The worst rank rather than a place among the rated ones, for the reason `isListed` prints
+ * them at all: an unrated finding may be anything, and being wrong about it here costs a
+ * reader a critical they never saw.
+ */
 export function findingRank(f: Finding): number {
-    return tierRank(tierOf(f));
+    return isUnrated(f) ? WORST_RANK : tierRank(tierOf(f));
 }
 
 /**
@@ -169,7 +181,22 @@ export interface Partitioned {
     declined: Finding[];
 }
 
-/** GitHub's `authorAssociation` values for someone with standing in the repository. */
+/**
+ * GitHub's `authorAssociation` values that may settle a finding for good.
+ *
+ * The same values `orchestrator.md` names, so the model's rule and this one are one rule. What
+ * `MEMBER` admits is wider than the other two: GitHub answers it for anybody in the
+ * organisation that owns the repository, whether or not they hold a permission on the
+ * repository itself, so on a public repository owned by a large organisation this accepts a
+ * comment from someone who could not push to it. `OWNER` and `COLLABORATOR` are the two that
+ * do imply a permission here.
+ *
+ * Kept as it is because narrowing it in code alone would leave the orchestrator declining on a
+ * rule this then overturns every run, and the reopening would name a comment the maintainer can
+ * see is from a colleague. Closing it properly means resolving the commenter's actual
+ * permission in `fetch-existing.ts` and carrying it beside `association`, which is a change to
+ * what the fetch asks GitHub for.
+ */
 const MAY_DECLINE = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
 
 /** Whether whoever wrote a comment has standing in the repository. */
@@ -423,13 +450,22 @@ export function isMerged(value: unknown): value is Merged {
     return typeof value === "object" && value !== null && Array.isArray((value as Merged).findings);
 }
 
+/**
+ * Whether this review posts the finding rather than reporting it as already answered.
+ *
+ * The rule `partition` splits on, exported so that `coverageOf` counts against the same set.
+ */
+export function isFresh(f: Finding): boolean {
+    return f.status !== "already-reported" && f.status !== "declined";
+}
+
 /** Every finding, worst first, and the three subsets the review is rendered from. */
 export function partition(findings: Finding[]): Partitioned {
     const all = [...findings].sort((a, b) => findingRank(a) - findingRank(b));
 
     return {
         all,
-        fresh: all.filter((f) => f.status !== "already-reported" && f.status !== "declined"),
+        fresh: all.filter(isFresh),
         suppressed: all.filter((f) => f.status === "already-reported"),
         declined: all.filter((f) => f.status === "declined"),
     };

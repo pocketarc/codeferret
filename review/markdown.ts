@@ -317,6 +317,11 @@ function outsideCode(text: string): string {
  * wants that only has to put a handle where a lens will quote it. GitHub renders `\@name`
  * as the text it is.
  *
+ * `#` is in the set for the same reason and the same mechanism. A quoted `#123` is a live
+ * issue reference: GitHub links it and records a cross-reference on whatever issue that number
+ * names, attributed to the account the review posts under, once per push for as long as the
+ * fragment stays in the diff.
+ *
  * Flattened here rather than at each caller. This escapes what a character does mid-line and
  * says nothing about the start of one, so a line ending that survives into the result puts
  * the rest of the field where `#` opens a heading and `**` never closes. A caller handing over
@@ -324,7 +329,7 @@ function outsideCode(text: string): string {
  * lens names read out of a file the review session can write.
  */
 export function escapeInline(text: string): string {
-    return escapeOutsideCode(flatten(text), escapeChars("\\*_[]<~@"));
+    return escapeOutsideCode(flatten(text), escapeChars("\\*_[]<~@#"));
 }
 
 /**
@@ -337,8 +342,9 @@ export function escapeInline(text: string): string {
  * list, the declined list and the caveats included, which are where a reader learns how
  * much of the review to trust. Prose about markup is exactly what these lenses write.
  *
- * `@` for the reason `escapeInline` takes it: a finding body quoting a scoped package name
- * would otherwise notify an account on every push.
+ * `@` and `#` for the reasons `escapeInline` takes them: a finding body quoting a scoped
+ * package name would otherwise notify an account on every push, and one quoting `#123` would
+ * cross-reference that issue from the review's own account just as often.
  *
  * A link the model wrote survives, whereas `mention` in review-body.ts bounds the url it
  * renders to one the pull request carries. The two are answering different questions.
@@ -354,7 +360,7 @@ export function escapeInline(text: string): string {
  * a sentence keeps its exclamation marks.
  */
 function escapeTags(text: string): string {
-    const escape = escapeChars("\\<@");
+    const escape = escapeChars("\\<@#");
 
     return escapeOutsideCode(text, (prose) => escape(prose).replace(/!(?=\[)/g, "\\!"));
 }

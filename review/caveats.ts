@@ -12,7 +12,7 @@
  * cut to fit is in `review-body.ts`.
  */
 
-import { brokenLenses, lensLabel, silentLenses, unratedFindings } from "./findings.ts";
+import { brokenLenses, isFresh, lensLabel, silentLenses, unratedFindings } from "./findings.ts";
 import type { Finding, LensHealth, Merged, Reopening, Vetted } from "./findings.ts";
 import { clampTo } from "./markdown.ts";
 import { STANDING_DETAIL } from "./standing-detail.ts";
@@ -97,7 +97,13 @@ export interface Coverage {
     unread: string[];
     /** The build files the session changed under the run. */
     sessionChanged: string[];
-    /** The findings whose risk answers could not be scored, so their tier means nothing. */
+    /**
+     * The findings this review posts whose risk answers could not be scored.
+     *
+     * The posted ones alone, because the sentence about them says they are printed whatever
+     * their tier. A suppressed or declined finding gets a line in a collapsed block instead, so
+     * counting those made the notice wrong about its own subject.
+     */
     unrated: Finding[];
 }
 
@@ -125,7 +131,7 @@ export function coverageOf(merged: Merged, facts: RunFacts): Coverage {
 
     return {
         health,
-        unrated: unratedFindings(merged.findings),
+        unrated: unratedFindings(merged.findings.filter(isFresh)),
         broken: brokenLenses(health),
         silent: silentLenses(
             health.map((h) => h.lens),
@@ -175,6 +181,17 @@ export function caveatOf(h: LensHealth): string | undefined {
  */
 const MAX_UNREAD = 500;
 
+/**
+ * How much of the unrated findings' paths the sentence carries.
+ *
+ * Bounded for the reason above, and reachable on exactly the run this notice exists for. Every
+ * path is a model's own string, `check-findings.ts` asks only that it be non-empty, and
+ * `unratedAxes` calls a finding unrated when `risk` is absent, so a run whose orchestrator
+ * omitted `risk` throughout puts every finding it posts in this sentence. A fixture run has
+ * produced ninety-seven.
+ */
+const MAX_UNRATED = 500;
+
 /** An escape for the stretch of a sentence that came from a model or from GitHub. */
 export type Escape = (text: string) => string;
 
@@ -187,7 +204,13 @@ export type Escape = (text: string) => string;
  * the same shape once rather than kept in step by hand between two files.
  */
 export interface Notice<T> {
-    /** How much of a reader's attention it asks for. A page renders it as GitHub's alert of that name. */
+    /**
+     * How much of a reader's attention it asks for. A page renders it as GitHub's alert of
+     * that name.
+     *
+     * Styling and nothing else. What a run posts is decided by `warned` in review-body.ts, on
+     * whether any notice was raised at all.
+     */
     level: "warning" | "note";
     /** Whether this run raises it. */
     raised: (subject: T) => boolean;
@@ -235,12 +258,17 @@ export const COVERAGE_NOTICES: Record<CoverageAlert, Notice<Coverage>> = {
     unrated: {
         level: "warning",
         raised: (c) => c.unrated.length > 0,
-        say: (c, escape) =>
-            `${plural(c.unrated.length, "finding")} could not be rated, so ` +
-            `${c.unrated.length === 1 ? "it is" : "they are"} printed here whatever ` +
-            `${c.unrated.length === 1 ? "its" : "their"} tier would have been: ` +
-            `${escape(c.unrated.map((f) => f.file).join(", "))}. ` +
-            "`risk` in `findings.json` has what each one answered.",
+        say: (c, escape) => {
+            const { kept, marker } = clampTo(c.unrated.map((f) => f.file).join(", "), MAX_UNRATED);
+
+            return (
+                `${plural(c.unrated.length, "finding")} could not be rated, so ` +
+                `${c.unrated.length === 1 ? "it is" : "they are"} printed here whatever ` +
+                `${c.unrated.length === 1 ? "its" : "their"} tier would have been: ` +
+                `${escape(kept)}${marker === "" ? "" : " (cut for length)"}. ` +
+                "`risk` in `findings.json` has what each one answered."
+            );
+        },
     },
 
     // Above the coverage notices, because it is what decides how much they are worth: the lens
@@ -287,9 +315,11 @@ export const COVERAGE_NOTICES: Record<CoverageAlert, Notice<Coverage>> = {
             " so this review covers less than it appears to.",
     },
 
-    // A note rather than a warning, and it belongs beside the rest anyway: what these decide is
-    // whether a reader has to see the review at all, and a lens that could not render the page
-    // is exactly the thing a green tick would be read as denying.
+    // Styled as a note and counted with the rest: what these decide is whether a reader has to
+    // see the review at all, and a lens that could not render the page is exactly the thing a
+    // green tick would be read as denying. The cost is that this one stands for as long as a lens
+    // ships without the capability its skill describes, so a pull request with nothing new on it
+    // gets a comment saying so on every push.
     limited: {
         level: "note",
         raised: (c) => c.limited.length > 0,
@@ -307,17 +337,6 @@ export const COVERAGE_NOTICES: Record<CoverageAlert, Notice<Coverage>> = {
  */
 export function raisedIn<K extends string, T>(order: readonly K[], table: Record<K, Notice<T>>, subject: T): K[] {
     return order.filter((name) => table[name].raised(subject));
-}
-
-/**
- * Whether any of these raised notices is worth posting a review for on its own.
- *
- * `level` does double duty: it picks GitHub's alert and it decides whether a notice can break
- * the silence of a run with nothing new. A notice that must reach a reader on a quiet push has
- * to be a `warning`, whatever styling suits it.
- */
-export function anyWarning<K extends string, T>(names: readonly K[], table: Record<K, Notice<T>>): boolean {
-    return names.some((name) => table[name].level === "warning");
 }
 
 /** The notices this run raises, in the order above. */

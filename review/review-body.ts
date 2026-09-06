@@ -8,9 +8,9 @@
  * what the run says about itself, in the words a printed review uses too, is in `caveats.ts`.
  */
 
-import { anyWarning, caveatOf, COVERAGE_NOTICES, coverageOf, noticesFor, raisedIn } from "./caveats.ts";
+import { caveatOf, COVERAGE_NOTICES, coverageOf, noticesFor, raisedIn } from "./caveats.ts";
 import type { Coverage, CoverageAlert, Notice, RunFacts } from "./caveats.ts";
-import { isPrinted, lensLabel, lineOf } from "./findings.ts";
+import { findingRank, isPrinted, lensLabel, lineOf } from "./findings.ts";
 import type { Finding, Merged, Partitioned, Tier } from "./findings.ts";
 import { lenses, plural } from "./words.ts";
 import {
@@ -103,11 +103,12 @@ const MAX_LENS_NAME = 100;
  * instead, no reader read the boolean: each folded it back into "is there a run holding the
  * rest" and then asked `kind` as well to tell the rest apart, so the one question took two
  * answers.
+ *
+ * Only `artifact` carries a url, because it is the only destination with anywhere to send a
+ * reader. A run that kept no artifact kept the rest nowhere, and `omissionFor` says so instead
+ * of linking.
  */
-export type Destination =
-    | { kind: "artifact"; url: string }
-    | { kind: "run"; url: string }
-    | { kind: "session" };
+export type Destination = { kind: "artifact"; url: string } | { kind: "run" } | { kind: "session" };
 
 /**
  * Which destination this run is posting to.
@@ -126,10 +127,9 @@ export function destinationOf(env: Record<string, string | undefined>): Destinat
     const id = env.GITHUB_RUN_ID;
 
     if (!server || !repo || !id) return { kind: "session" };
+    if (env.ARTIFACT_HAS_FINDINGS !== "true") return { kind: "run" };
 
-    const url = `${server}/${repo}/actions/runs/${id}`;
-
-    return env.ARTIFACT_HAS_FINDINGS === "true" ? { kind: "artifact", url } : { kind: "run", url };
+    return { kind: "artifact", url: `${server}/${repo}/actions/runs/${id}` };
 }
 
 /**
@@ -305,13 +305,24 @@ interface Listing {
 /**
  * Held back from a list's budget for the line saying what the budget left out.
  *
- * Wide enough for the longest of those lines, the findings listing's: a count plus the
- * sentence `omissionFor` gives this destination. A fourth, longer sentence there eats the
- * margin and nothing fails.
+ * Wide enough for the longest of those lines, the findings listing's: a count, the clause saying
+ * a dropped finding outranks a printed one, and the sentence `omissionFor` gives this
+ * destination. A fourth, longer sentence there eats the margin and nothing fails.
  */
-const OMISSION_RESERVE = 200;
+const OMISSION_RESERVE = 300;
 
-/** Items rendered and kept while they fit, with the rest dropped whole. */
+/**
+ * Items rendered and kept while they fit, with the rest dropped whole.
+ *
+ * A dropped item costs only itself: an item too long for what is left is passed over and the
+ * shorter ones after it are still admitted. The alternative is to stop at the first one that
+ * does not fit, which would leave a reader a prefix of a list already ordered worst-first, and
+ * costs more, because `partition` puts the worst first and a single verbose critical would then
+ * empty the section under it.
+ *
+ * What that leaves is a page a reader cannot take at face value, so `assemble` says on the page
+ * when something dropped outranks something printed.
+ */
 function cutToFit<T>(
     items: T[],
     render: (item: T) => string,
@@ -336,6 +347,31 @@ function cutToFit<T>(
 }
 
 /**
+ * A list cut to a character budget, with the line saying what was left out already in it.
+ *
+ * The reserve is subtracted here rather than at each caller. Both callers had their own copy of
+ * that subtraction, their own count of what was missing and their own omission line, so the two
+ * sections of one review body could come to disagree about what the reserve covers or how an
+ * omission is worded.
+ *
+ * `omission` is handed the count and what was kept, and inflects the count itself: the lens
+ * block is the one list here whose noun takes no `s`, and a helper that appended one printed
+ * "further lenss" on any run that overflowed.
+ */
+function boundedList<T>(
+    items: T[],
+    render: (item: T) => string,
+    limit: number,
+    separator: number,
+    omission: (missing: number, kept: T[]) => string,
+): { kept: T[]; lines: string[] } {
+    const { kept, lines } = cutToFit(items, render, limit - OMISSION_RESERVE, separator);
+    const missing = items.length - kept.length;
+
+    return { kept, lines: missing === 0 ? lines : [...lines, `- _${omission(missing, kept)}_`] };
+}
+
+/**
  * Join the review into one body no longer than GitHub accepts.
  *
  * Everything but the listing is short, and it is the part that makes the review honest: the
@@ -343,6 +379,9 @@ function cutToFit<T>(
  * not check. So the listing gets whatever length the rest leaves, and it loses whole
  * findings rather than being cut at a character offset. An offset lands inside a
  * `<details>`, a fenced block, or a finding's own markup, and GitHub renders the wreckage.
+ *
+ * What goes is not the tail of the list. `cutToFit` has why, and the omission line says when a
+ * dropped finding outranks a printed one.
  *
  * Exported for review-body.test.ts. `composeReview` is what a run calls, and the cutting is
  * the part with cases worth writing down one by one.
@@ -355,17 +394,20 @@ export function assemble(head: string[], listing: Listing | null, tail: string[]
 
     if (listing) {
         const heading = listing.lead ? `### ${listing.heading}\n\n${listing.lead}` : `### ${listing.heading}`;
-        budget -= heading.length + 2 + OMISSION_RESERVE;
+        budget -= heading.length + 2;
 
-        const { kept, lines } = cutToFit(listing.items, bullet, budget, 2);
-        const missing = listing.items.length - kept.length;
+        const { kept, lines } = boundedList(
+            listing.items,
+            bullet,
+            budget,
+            2,
+            (missing, shown) =>
+                `${plural(missing, "further finding")} left out for length` +
+                `${outranksPrinted(listing.items, shown) ? ", one of them rated above a finding printed here" : ""}.` +
+                ` ${listing.omission}`,
+        );
 
         printed = kept;
-
-        if (missing > 0) {
-            lines.push(`- _${plural(missing, "further finding")} left out for length. ${listing.omission}_`);
-        }
-
         rendered.push([heading, ...lines].join("\n\n"));
     }
 
@@ -374,6 +416,23 @@ export function assemble(head: string[], listing: Listing | null, tail: string[]
     const body = rendered.join("\n\n");
 
     return { body: body.length > MAX_BODY ? fit(body) : body, printed };
+}
+
+/**
+ * Whether a finding the length cut dropped rates above one it printed.
+ *
+ * The listing is ordered worst-first and `cutToFit` skips rather than stops, so the findings
+ * on the page can be findings 1, 2, 4 and 5 with the third missing. Nothing else on the page
+ * would say so: `bullet` prints no tier, and the heading names the bar the section was filtered
+ * on rather than what survived the budget.
+ */
+function outranksPrinted(items: Finding[], kept: Finding[]): boolean {
+    const shown = new Set(kept);
+    const dropped = items.filter((f) => !shown.has(f));
+
+    if (dropped.length === 0 || kept.length === 0) return false;
+
+    return Math.min(...dropped.map(findingRank)) < Math.max(...kept.map(findingRank));
 }
 
 /**
@@ -448,13 +507,20 @@ export interface Composed {
     /** The findings the body printed in full, with whatever did not fit dropped. */
     listed: Finding[];
     /**
-     * Whether the body says anything about its own coverage that a reader has to see.
+     * Whether the body says anything about its own coverage or its own posting that a reader
+     * has to see.
      *
      * The one thing a run with nothing new must not swallow. Zero findings and a lens that
      * never reported is the shape of a review that did not happen, and posting nothing leaves
-     * the pull request reading as clean. Every warning is composed here, so a caller deciding
+     * the pull request reading as clean. Every notice is composed here, so a caller deciding
      * for itself would answer for some of the conditions and post a clean pull request on the
      * rest.
+     *
+     * Every notice raised counts, rather than the ones styled as warnings. A run raises one
+     * only when it has something to say about how much of the change it covered, and none of
+     * those is one a reader may be denied: the sentence about a lens that could not render the
+     * page is the whole of what a green tick would otherwise be read as denying. Selecting on
+     * `level` cost that sentence exactly the runs it was written for, the quiet ones.
      */
     warned: boolean;
 }
@@ -486,7 +552,22 @@ export function composeReview(merged: Merged, posting: Posting, parts: Partition
         notice === null ? tail : [notice, ...tail],
     );
 
-    const warned = anyWarning(raised, COVERAGE_NOTICES) || anyWarning(aboutPosting, POSTING_NOTICES);
+    // Any notice a run raises, whatever `level` renders it as. `level` is styling.
+    //
+    // Filtering to warnings made this false on the case it exists for. `limited` is a note, and
+    // it is the sentence saying what a lens could not check, so a first review over markup that
+    // found no critical defect posted nothing at all and the reader took contrast, focus order,
+    // target size and reflow for checked. Silence has to mean nothing was worth saying.
+    //
+    // The consequence, weighed and accepted on 2026-09-05: the shipped lens set always raises
+    // `limited`, because three of its lenses have no browser and say so, so `warned` is always
+    // true and `post-review.ts`'s post-nothing branch cannot fire. Every push posts. That
+    // branch is not dead code to delete — a set excluding those lenses reaches it — and the
+    // repeated comment is the cost this repository already accepts elsewhere for the same
+    // trade, where a repeated comment costs less than a finding nobody sees. What would buy
+    // back the quiet is saying the standing caveats only where no earlier review is still
+    // carrying them, which needs a signal for that and is written up in review/DECISIONS.md.
+    const warned = raised.length > 0 || aboutPosting.length > 0;
 
     return { body, listed: printed, warned };
 }
@@ -651,20 +732,11 @@ const MAX_MENTION_BLOCK = 4000;
  */
 const MAX_LENS_BLOCK = 12_000;
 
-/**
- * A list of rendered lines, cut to a character budget, with a line saying how many went.
- *
- * `omitted` inflects the count, rather than the helper appending an `s` to a noun the caller
- * names. The lens block is the one list here whose noun does not take one, and it printed
- * "further lenss" on any run that overflowed.
- */
+/** A list of rendered lines from the head or the tail, cut to a character budget. */
 export function boundedBlock(items: string[], limit: number, omitted: (n: number) => string): string {
-    const { lines } = cutToFit(items, (item) => item, limit - OMISSION_RESERVE, 1);
-    const missing = items.length - lines.length;
+    const say = (missing: number): string => `${omitted(missing)} left out for length.`;
 
-    if (missing === 0) return lines.join("\n");
-
-    return [...lines, `- _${omitted(missing)} left out for length._`].join("\n");
+    return boundedList(items, (item) => item, limit, 1, say).lines.join("\n");
 }
 
 function furtherFindings(n: number): string {
