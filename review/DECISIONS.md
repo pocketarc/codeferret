@@ -45,8 +45,10 @@ A suppression does not rest on the orchestrator's word alone. `vetSuppression` r
 each one cites back out of `existing.json` or `previous.json`, and reopens whatever those
 files do not bear out.
 
-A decline needs an owner, a member or a collaborator, or, for a finding the body prints as one
-line, a thread somebody closed. GitHub resolves a conversation for anyone with repository
+A decline needs an owner or a collaborator, or, for a finding the body prints as one line, a
+thread somebody closed. `MEMBER` is not enough, though `authorAssociation` groups it with the
+other two: GitHub answers it for anybody in the organisation that owns the repository, whether
+or not they can push to this one. GitHub resolves a conversation for anyone with repository
 write, and for whoever opened the pull request, so closure is not on its own the word of
 somebody with standing: on a branch from an outside contributor, the only person who can close
 a thread is the person under review. The findings that take a reader off the page are held to
@@ -437,8 +439,15 @@ comment is for the person deciding whether to stop, and the file is for whoever 
 That leaves a body holding the summary, the counts, `lens_health`, and the findings the
 paragraph above says belong in it. `review-body.ts` bounds it: the short
 sections that make the review honest are assembled first, the listing takes what is left,
-and it drops whole findings from the end rather than being cut at a character offset, which
-would land inside a `<details>` or a fenced block and leave GitHub rendering the wreckage.
+and it drops whole findings rather than being cut at a character offset, which would land
+inside a `<details>` or a fenced block and leave GitHub rendering the wreckage.
+
+Not from the end, though the order it drops in reads that way most of the time. `cutToFit`
+skips a finding too long for what is left and carries on, rather than stopping there, because
+`partition` orders worst first and one verbose finding at the top would otherwise empty the
+section under it. So what goes is whatever does not fit, and a finding printed below a dropped
+one is the ordinary case rather than a fault. The omission line says when the dropped set
+outranks something printed, which is the part a reader cannot infer from the page.
 
 A good deal went with the inline comments. Whether a line sat inside a diff hunk was checked
 here rather than taken from the lens's own `in_diff`, which was wrong on every run; the

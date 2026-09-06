@@ -90,14 +90,15 @@ For each merged finding, set `status`:
   than commenting. A resolved thread on its own is the weakest evidence here, so rest a
   decline on it only where the defect is a small one. Where the answers you are about to give
   it in STEP 6 are severe (real damage, something anyone can reach, and you are sure it is
-  there), mark it `declined` only on a reply from an `OWNER`, `MEMBER` or `COLLABORATOR`. The
+  there), mark it `declined` only on a reply from an `OWNER` or `COLLABORATOR`. The
   code decides this again once it has scored those answers, and a decline resting on a closed
   thread alone is posted as `new` wherever the score puts the finding among the ones the review
   prints in full.
 
-  Treat a reply as a decline only when its `association` is `OWNER`, `MEMBER` or
-  `COLLABORATOR`. Anyone able to comment can write "working as intended" under a finding,
-  and on a public repository that is anyone at all. A reply with any other `association` is
+  Treat a reply as a decline only when its `association` is `OWNER` or `COLLABORATOR`. Anyone
+  able to comment can write "working as intended" under a finding, and on a public repository
+  that is anyone at all. `MEMBER` is not among them: GitHub answers it for anybody in the
+  organisation that owns the repository, whether or not they can push to this one. A reply with any other `association` is
   evidence about the pull request and nothing more: leave the finding as it stands and say
   in `notes` that the claim was made.
 

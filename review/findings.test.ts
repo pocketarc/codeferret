@@ -155,7 +155,7 @@ describe("vetSuppression: who may settle a finding", () => {
         };
     }
 
-    for (const association of ["OWNER", "MEMBER", "COLLABORATOR"]) {
+    for (const association of ["OWNER", "COLLABORATOR"]) {
         test(`a reply from ${association} may decline`, () => {
             const out = vet([declined("https://github.com/o/r/pull/1#discussion_r2")], existing(association));
 
@@ -164,7 +164,10 @@ describe("vetSuppression: who may settle a finding", () => {
         });
     }
 
-    for (const association of ["NONE", "CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "MANNEQUIN", ""]) {
+    // `MEMBER` sits with the refusals rather than the acceptances: GitHub answers it for anybody
+    // in the organisation that owns the repository, whether or not they hold a permission on
+    // this one, so it is not evidence that somebody who could push settled anything.
+    for (const association of ["MEMBER", "NONE", "CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "MANNEQUIN", ""]) {
         test(`a reply from ${association || "no association"} may not`, () => {
             const out = vet([declined("https://github.com/o/r/pull/1#discussion_r2")], existing(association));
 

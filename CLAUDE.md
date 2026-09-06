@@ -311,8 +311,15 @@ is in `review/DECISIONS.md`.
 - A reply cannot make a security defect safe. The carve-out is written into
   `orchestrator.md`, because "this is intentional" on a vulnerability would otherwise
   silence it for good. Keep it if you touch the decline rules.
-- Only an owner, a member or a collaborator can decline a finding, and `post-review.ts`
-  decides that again for itself. This was an accepted risk until a lens read the code.
+- Only an owner or a collaborator can decline a finding, and `post-review.ts` decides that
+  again for itself. `MEMBER` was among them and came out: GitHub answers it for anybody in the
+  organisation that owns the repository, whether or not they hold a permission on the
+  repository itself, so on one owned by a large organisation it accepted a dismissal lasting
+  the life of the pull request from somebody who could not push. Narrowing it took the code and
+  `orchestrator.md` in the same change, or the model would go on declining on a rule the run
+  overturns every time. `authorAssociation` is still an approximation: the question is what
+  permission the commenter holds here, and answering it outright means asking GitHub in
+  `fetch-existing.ts`. This was an accepted risk until a lens read the code.
   The acceptance rested on there being no way to tell a maintainer's reply from a
   stranger's, and `authorAssociation` had been sitting in `existing.json` unread the whole
   time. The rule is in `orchestrator.md` for the orchestrator and in `vetSuppression` for

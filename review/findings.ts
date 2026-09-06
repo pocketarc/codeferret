@@ -191,13 +191,19 @@ export interface Partitioned {
  * comment from someone who could not push to it. `OWNER` and `COLLABORATOR` are the two that
  * do imply a permission here.
  *
- * Kept as it is because narrowing it in code alone would leave the orchestrator declining on a
- * rule this then overturns every run, and the reopening would name a comment the maintainer can
- * see is from a colleague. Closing it properly means resolving the commenter's actual
- * permission in `fetch-existing.ts` and carrying it beside `association`, which is a change to
- * what the fetch asks GitHub for.
+ * So `MEMBER` came out, here and in `orchestrator.md` together. Narrowed in one place only, the
+ * model would go on declining on a rule this overturns every run, and the reopening would name
+ * a comment a maintainer can see is from a colleague.
+ *
+ * What that costs is a decline from an organisation colleague with no permission here, which
+ * comes back as `new` and has to be said again by someone who has one. What it buys is that a
+ * dismissal lasting the life of the pull request takes a permission on the pull request.
+ *
+ * `authorAssociation` is still an approximation of the question. Asking GitHub for the
+ * commenter's permission on the repository would answer it outright, at an API call per
+ * commenter and a new way for the fetch to fail; `fetch-existing.ts` is where that would go.
  */
-const MAY_DECLINE = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
+const MAY_DECLINE = new Set(["OWNER", "COLLABORATOR"]);
 
 /** Whether whoever wrote a comment has standing in the repository. */
 function entitled(comment: Located): boolean {
