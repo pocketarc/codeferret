@@ -21,11 +21,12 @@ export type Report = (line: string) => void;
  * The lowest tier the review body prints, where the `print-threshold` input names none.
  *
  * Measured on 2026-09-05 against the fixture branches, whose seeded defects are the only
- * findings here with a known right answer. Rated blind — the rater was given the diff and the
- * axes, not the list of what was planted — all six cleared `medium` and none cleared `high`:
- * the hardcoded credential 79, the IDOR 67, the injection 65, the stored XSS 61, the path
- * traversal 44 and the float money arithmetic 36. The three defects that look alarming and are
- * not, `shell_exec` on a `tempnam` path among them, scored 11.
+ * findings here with a known right answer. Rated blind (the rater was given the diff and the
+ * axes, not the list of what was planted), one was banded `critical`, three `high`, two
+ * `medium`, and none fell below that: the hardcoded credential 79, the IDOR 67, the
+ * injection 65, the stored XSS 61, the path traversal 44 and the float money arithmetic 36. The
+ * three defects that look alarming and are not, `shell_exec` on a `tempnam` path among them,
+ * scored 11.
  *
  * So `high` is the wrong default: it would drop a path traversal and money held in a float.
  * `low` prints everything the fixture produced and decides nothing.
@@ -43,25 +44,23 @@ export type Report = (line: string) => void;
  */
 export const REVIEW_THRESHOLD: Tier = "medium";
 
+/** A file that was read, or the one sentence naming the file and what was wrong with it. */
+export type Read<T> = { ok: true; value: T } | { ok: false; message: string };
+
 /**
- * A run's findings file, or the process ends naming the file and what was wrong with it.
+ * A run's findings file, or why it could not be read.
  *
  * Nothing has necessarily validated the file. The action runs check-findings.ts first, but
  * local-post.sh and the by-hand path in review/README.md both come straight to a reader, and
  * an unhandled rejection at the end of a run that cost real money is a worse answer than a
  * sentence naming the file.
  *
- * The exit stays here rather than moving to post-review.ts and print-findings.ts, which is the
- * point of the function being shared: an unreadable findings file is one fact, and a posted
- * review and a printed one answering it differently is what this exists to prevent. `hint` is
- * the extra line a caller adds, naming the check that would explain it.
+ * post-review.ts and print-findings.ts share the message as well as the decision, so a posted
+ * review and a printed one cannot answer the same unreadable file differently. The exit is each
+ * command's own, for the reason finding-rules.ts gives about the split it describes.
  */
-export async function readMerged(path: string, report: Report, hint?: string): Promise<Merged> {
-    const stop = (message: string): never => {
-        report(`${path}: ${message}`);
-        if (hint) report(hint);
-        process.exit(1);
-    };
+export async function readMerged(path: string): Promise<Read<Merged>> {
+    const stop = (message: string): Read<Merged> => ({ ok: false, message: `${path}: ${message}` });
 
     let parsed: unknown;
 
@@ -73,7 +72,7 @@ export async function readMerged(path: string, report: Report, hint?: string): P
 
     if (!isMerged(parsed)) return stop("has no `findings` array");
 
-    return parsed;
+    return { ok: true, value: parsed };
 }
 
 export interface Vetting extends Vetted {

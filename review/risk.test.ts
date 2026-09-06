@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { AXES, AXIS_NAMES, NOT_APPLICABLE, meetsThreshold, score, tierOf, tierRank } from "./risk.ts";
+import { AXES, AXIS_NAMES, NOT_APPLICABLE, SCALING_KINDS, axesOf, meetsThreshold, score, tierOf, tierRank } from "./risk.ts";
 import type { AxisName, Risk } from "./risk.ts";
 
 /** Every axis answered at its worst, which is the only way to reach the top of the scale. */
@@ -89,7 +89,7 @@ describe("score", () => {
     });
 
     describe("every scaling axis damps the score by itself", () => {
-        for (const axis of AXIS_NAMES.filter((name) => AXES[name].kind === "scaling")) {
+        for (const axis of SCALING_KINDS.flatMap(axesOf)) {
             test(axis, () => {
                 const levels = AXES[axis].levels.filter((level) => level.value !== NOT_APPLICABLE);
                 const mildest = levels[levels.length - 1];
@@ -103,7 +103,7 @@ describe("score", () => {
         expect(score({ ...WORST, attack_vector: NOT_APPLICABLE, privileges_required: NOT_APPLICABLE })).toBe(score(WORST));
     });
 
-    // `scaling` in risk.ts has why: falling through to 1 gave a misspelt `confirmed` the score
+    // `factorOf` in risk.ts has why: falling through to 1 gave a misspelt `confirmed` the score
     // of `confirmed`.
     describe("a confidence this file cannot score scores as the mildest level", () => {
         const levels = AXES.confidence.levels;
@@ -135,6 +135,25 @@ describe("score", () => {
 
     test("an unanswered timing damps nothing, because the axis has a not-applicable level", () => {
         expect(score({ ...WORST, timing: NOT_APPLICABLE })).toBe(score(WORST));
+    });
+
+    describe("a value the table does not carry is the mildest answer on every multiplying axis", () => {
+        for (const axis of SCALING_KINDS.flatMap(axesOf)) {
+            const levels = AXES[axis].levels.filter((level) => level.value !== NOT_APPLICABLE);
+            const mildest = levels[levels.length - 1]?.value;
+
+            test(axis, () => {
+                expect(score({ ...WORST, [axis]: "nonsense" })).toBe(score({ ...WORST, [axis]: mildest }));
+                expect(score({ ...WORST, [axis]: "nonsense" })).toBeLessThan(score(WORST));
+            });
+        }
+    });
+
+    test("a typo on both reach axes is not the anonymous network answer twice over", () => {
+        const mistyped = score({ ...WORST, privileges_required: "non", attack_vector: "netwrok" });
+
+        expect(mistyped).toBeLessThan(score(WORST));
+        expect(mistyped).toBe(score({ ...WORST, privileges_required: "maintainer", attack_vector: "push-access" }));
     });
 
     test("not-applicable on a weighted axis costs that axis and no more", () => {
@@ -292,11 +311,26 @@ describe("cost and hazard", () => {
 });
 
 describe("the axis table", () => {
+    // `score` reads its terms out of `kind`, so an axis whose kind belongs to no group never
+    // reaches the arithmetic and damps nothing, with every other test still green.
+    test("every axis belongs to a group score() reads", () => {
+        const grouped = [...axesOf("weighted"), ...axesOf("cost"), ...SCALING_KINDS.flatMap(axesOf)];
+
+        expect(grouped.toSorted()).toEqual([...AXIS_NAMES].toSorted());
+    });
+
+    test("no axis is in two groups at once", () => {
+        const grouped = [...axesOf("weighted"), ...axesOf("cost"), ...SCALING_KINDS.flatMap(axesOf)];
+
+        expect(new Set(grouped).size).toBe(grouped.length);
+    });
+
     test("the weighted axes sum to one, so a score is out of 100", () => {
-        const total = AXIS_NAMES.filter((axis) => AXES[axis].kind === "weighted").reduce(
-            (sum, axis) => sum + AXES[axis].weight,
-            0,
-        );
+        const total = axesOf("weighted").reduce((sum, axis) => {
+            const spec = AXES[axis];
+
+            return sum + (spec.kind === "weighted" ? spec.weight : 0);
+        }, 0);
 
         expect(total).toBeCloseTo(1, 10);
     });

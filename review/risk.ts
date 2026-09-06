@@ -15,18 +15,19 @@
  * values this file scores. Adding an axis here and forgetting the schema is a failing check
  * rather than an axis nothing fills in.
  *
- * The kinds of axis do not combine the same way.
+ * The kinds of axis do not combine the same way, and `kind` is where the table records which
+ * way each one combines.
  *
  * `weighted` axes say how bad the thing is. They are a sum over the whole set, so an axis
  * that says nothing contributes nothing. Sharing its weight among the axes that did answer
  * was the first version, and it paid a finding for the questions it could not answer: a stale
  * comment answering two axes scored what a missing index answering six did.
  *
- * `scaling` axes say how much the badness counts. They multiply, because a defect nobody can
- * reach and a defect nobody is sure is real are both worth less than their consequences
- * suggest, in proportion rather than by a fixed subtraction. Added instead, a speculative
- * catastrophe outranks a confirmed moderate defect, which is the failure mode this whole
- * file exists to avoid.
+ * `reach`, `exposure` and `certainty` say how much the badness counts. They multiply, because a
+ * defect nobody can reach and a defect nobody is sure is real are both worth less than their
+ * consequences suggest, in proportion rather than by a fixed subtraction. Added instead, a
+ * speculative catastrophe outranks a confirmed moderate defect, which is the failure mode this
+ * whole file exists to avoid.
  *
  * A `cost` axis says what the defect costs to live with when nothing ever goes wrong at run
  * time. It is scored on a scale of its own, bounded by `COST_CEILING`, and the score is the
@@ -38,18 +39,44 @@
 export interface Level {
     readonly value: string;
     readonly meaning: string;
-    /** 0 to 1. For a weighted axis, its share of the axis; for a scaling axis, its factor. */
+    /** 0 to 1. For a weighted axis, its share of the axis; for any other, its factor. */
     readonly score: number;
 }
 
-export interface Axis {
-    readonly kind: "weighted" | "scaling" | "cost";
+/**
+ * How an axis reaches the score.
+ *
+ * - `weighted`: a term in the sum of how bad the defect is.
+ * - `cost`: what it costs to live with, on the separate scale `COST_CEILING` bounds.
+ * - `reach`: a reading of who can get at it. These are averaged with each other into one term,
+ *   because asking the same question from either end and multiplying both answers damps a
+ *   network-facing anonymous defect twice for one fact.
+ * - `exposure`: one term each in the same mean as the averaged `reach` term.
+ * - `certainty`: whether there is a defect at all, so it multiplies the finished number instead
+ *   of sitting in that mean. Doubt about the defect is not a reading of how exposed it is, and a
+ *   finding nobody has confirmed should be damped by the whole of that doubt rather than a share.
+ */
+export type AxisKind = "weighted" | "cost" | "reach" | "exposure" | "certainty";
+
+/** The kinds that multiply rather than add, for a caller that has to treat them as one set. */
+export const SCALING_KINDS = ["reach", "exposure", "certainty"] as const satisfies readonly AxisKind[];
+
+interface Weighted {
+    readonly kind: "weighted";
     /** What the model is asked. Rendered into the schema as the field's description. */
     readonly question: string;
-    /** Share of the total for a weighted axis. Ignored for a scaling or a cost one. */
+    /** Share of the total. */
     readonly weight: number;
     readonly levels: readonly Level[];
 }
+
+interface Unweighted {
+    readonly kind: Exclude<AxisKind, "weighted">;
+    readonly question: string;
+    readonly levels: readonly Level[];
+}
+
+export type Axis = Weighted | Unweighted;
 
 /**
  * `not-applicable` is spelled the same on every axis so a reader of a findings file can grep
@@ -67,7 +94,7 @@ const REACH_FLOOR = 0.4;
  * a `critical`, because `critical` is what a person is asked to stop for. The worst thing a
  * duplicated invariant does is cost the next editor an afternoon, and the worst thing an
  * unauthenticated injection does is not that. Set here so the ceiling is one number a reader
- * can find rather than an emergent property of seven weights.
+ * can find rather than an emergent property of the weights.
  *
  * The value puts the worst answer in the middle of `medium`: high enough that a rule with no
  * check behind it is printed, low enough that it does not outrank a hazard. At 0.42 it did:
@@ -168,7 +195,6 @@ export const AXES = {
 
     maintenance: {
         kind: "cost",
-        weight: 0,
         question:
             "What this costs to live with, if nothing ever goes wrong at run time. This is the " +
             "axis for a defect that is expensive rather than dangerous.",
@@ -183,8 +209,7 @@ export const AXES = {
     },
 
     likelihood: {
-        kind: "scaling",
-        weight: 0,
+        kind: "exposure",
         question: "How likely the bad outcome is to be reached in practice, not how bad it would be.",
         levels: [
             { value: "certain", meaning: "Happens every time the code runs.", score: 1 },
@@ -197,8 +222,7 @@ export const AXES = {
     },
 
     confidence: {
-        kind: "scaling",
-        weight: 0,
+        kind: "certainty",
         question: "How sure you are the defect is real, having read the code rather than recognised a pattern.",
         levels: [
             { value: "confirmed", meaning: "Traced in the code. You can name the path from input to damage.", score: 1 },
@@ -209,8 +233,7 @@ export const AXES = {
     },
 
     privileges_required: {
-        kind: "scaling",
-        weight: 0,
+        kind: "reach",
         question: "What someone must already have in order to trigger this.",
         levels: [
             { value: "none", meaning: "Anonymous. No account, no session.", score: 1 },
@@ -222,8 +245,7 @@ export const AXES = {
     },
 
     attack_vector: {
-        kind: "scaling",
-        weight: 0,
+        kind: "reach",
         question: "Where this can be reached from. Not every defect is attacked; one an ordinary user walks into has its own answer.",
         levels: [
             { value: "network", meaning: "Over the internet, by anyone who can reach the service.", score: 1 },
@@ -236,8 +258,7 @@ export const AXES = {
     },
 
     timing: {
-        kind: "scaling",
-        weight: 0,
+        kind: "exposure",
         question: "Whether this is exploitable now or only under conditions that do not hold yet.",
         levels: [
             { value: "live", meaning: "Exploitable against the code as it stands.", score: 1 },
@@ -256,6 +277,10 @@ export const AXIS_NAMES = Object.keys(AXES) as AxisName[];
 
 function levelsOf(axis: AxisName): readonly Level[] {
     return AXES[axis].levels;
+}
+
+export function axesOf(kind: AxisKind): AxisName[] {
+    return AXIS_NAMES.filter((axis) => AXES[axis].kind === kind);
 }
 
 /**
@@ -302,46 +327,40 @@ export function unratedAxes(risk: Partial<Risk> | undefined): AxisName[] {
 /**
  * A finding's risk, 0 to 100.
  *
- * The weighted axes are a sum over the whole set, so an axis that says nothing adds nothing.
- * The scaling axes then multiply it: likelihood, confidence and timing each once, and
- * `privileges_required` with `attack_vector` averaged together first, because those two ask
- * the same question from either end and multiplying both damps a network-facing anonymous
- * defect twice for one fact.
+ * The weighted axes are a sum over the whole set, so an axis that says nothing adds nothing. The
+ * rest multiply it, each according to its `kind`, which `AxisKind` lays out.
  */
 export function score(risk: Partial<Risk>): number {
     let base = 0;
 
     for (const axis of AXIS_NAMES) {
-        if (AXES[axis].kind !== "weighted") continue;
+        const spec = AXES[axis];
+
+        if (spec.kind !== "weighted") continue;
 
         // The weights of the whole set are the denominator, so an axis that says nothing
         // contributes nothing. Sharing its weight out among the axes that did answer was the
         // first version and it inflated exactly the findings it should not have: a stale
         // comment answers two axes and scored what a missing index answering six did.
-        base += (levelScore(axis, risk[axis] ?? NOT_APPLICABLE) ?? 0) * AXES[axis].weight;
+        base += (levelScore(axis, risk[axis] ?? NOT_APPLICABLE) ?? 0) * spec.weight;
     }
 
     // Floored, so being hard to reach demotes a finding without deleting it. Unfloored, a
     // hardcoded credential rated `push-access` on both reach axes went from a base of 0.82 to
     // a score of 20, and that rating is the one a model reaches for about anything sitting in
     // source.
-    const reach = Math.max(mean(["privileges_required", "attack_vector"], risk), REACH_FLOOR);
-    const timing = scaling("timing", risk);
-    const likelihood = scaling("likelihood", risk);
+    const reach = Math.max(mean(axesOf("reach"), risk), REACH_FLOOR);
 
-    // The three reachability answers combine as a geometric mean rather than a product.
-    // Multiplied, they compound at a rate nothing justifies: measured over a real review, a
-    // finding letting a lens dictate the whole posted comment had a base of 0.53 and two
-    // middling answers, `likelihood: possible` and `attack_vector: ci`, and the two alone cut
-    // it to 19 — below a wrong sentence in an input description. They are three readings of
-    // one question, how exposed this is, so the mean of them is the answer and the product is
-    // three separate discounts for it.
-    const exposure = (likelihood * reach * timing) ** (1 / 3);
+    // The reachability answers combine as a geometric mean rather than a product. Multiplied,
+    // they compound at a rate nothing justifies: measured over a real review, a finding letting
+    // a lens dictate the whole posted comment had a base of 0.53 and two middling answers,
+    // `likelihood: possible` and `attack_vector: ci`, and the two alone cut it to 19, below a
+    // wrong sentence in an input description. They are readings of one question, how exposed
+    // this is, so the mean of them is the answer and the product is a separate discount for
+    // each.
+    const exposure = geometricMean([reach, ...axesOf("exposure").map((axis) => scaling(axis, risk))]);
 
-    // Confidence stays a direct multiplier, outside that mean. It is not a reading of how
-    // exposed the defect is; it is whether there is a defect. A finding nobody has confirmed
-    // should be damped by the whole of that doubt rather than a third of it.
-    const confidence = scaling("confidence", risk);
+    const confidence = axesOf("certainty").reduce((factor, axis) => factor * scaling(axis, risk), 1);
 
     // What it would cost to live with, on a scale of its own rather than as one more term in
     // the sum above. Summed, the two dimensions diluted each other: a finding that is purely
@@ -360,45 +379,56 @@ export function score(risk: Partial<Risk>): number {
 }
 
 /**
- * What a scaling axis multiplies by, where the answer is one this file cannot score.
+ * What one answer on a multiplying axis is worth, or null where there is nothing to score.
  *
- * An axis with a `not-applicable` level can be silent on purpose: no `timing` level fits a
- * defect nothing triggers, so 1 is the right multiplier and the score is left where the other
- * axes put it. `confidence` has no such level, because every finding was written with some
- * degree of certainty behind it, so a `confidence` this file cannot score is a question the
- * model failed to answer rather than one it declined. It is worth the mildest answer on the
- * axis, for the same reason a weighted axis nobody answered is worth nothing.
+ * A value the table does not carry is worth the mildest answer on the axis, for the same reason
+ * a weighted axis nobody answered is worth nothing. Falling through to the most generous
+ * multiplier gave a misspelt `confirmed` the score of `confirmed`: measured on the fixture's
+ * path traversal, rated `confirmed` and scoring 44, `speculative` scores it 11 and the typo used
+ * to score it 44.
  *
- * Falling through to 1 whatever the axis said gave a misspelt `confirmed` the score of
- * `confirmed`. Measured on the fixture's path traversal, rated `confirmed` and scoring 44:
- * `speculative` scores it 11, and the typo used to score it 44.
+ * Damping a finding that way loses nothing, because `unratedAxes` reports an unreadable answer
+ * and an absent one alike and `isPrinted` prints the finding whatever its tier. What the mildest
+ * answer settles is where it sorts, and what a reader re-scoring `risk` out of `findings.json`
+ * computes.
  */
-function scaling(axis: AxisName, risk: Partial<Risk>): number {
-    const answered = levelScore(axis, risk[axis] ?? NOT_APPLICABLE);
+function factorOf(axis: AxisName, risk: Partial<Risk>): number | null {
+    const said = risk[axis];
+    const answered = said === undefined ? null : levelScore(axis, said);
 
     if (answered !== null) return answered;
 
     const levels = levelsOf(axis);
 
-    if (levels.some((level) => level.value === NOT_APPLICABLE)) return 1;
+    // `not-applicable` scores 0 wherever it appears, so leaving it in would make a typo worth
+    // less than any answer the model could have given.
+    const mildest = Math.min(...levels.filter((level) => level.value !== NOT_APPLICABLE).map((level) => level.score));
 
-    return Math.min(...levels.map((level) => level.score));
+    if (said !== undefined && said !== NOT_APPLICABLE) return mildest;
+
+    return levels.some((level) => level.value === NOT_APPLICABLE) ? null : mildest;
+}
+
+function scaling(axis: AxisName, risk: Partial<Risk>): number {
+    return factorOf(axis, risk) ?? 1;
+}
+
+function geometricMean(factors: number[]): number {
+    if (factors.length === 0) return 1;
+
+    return factors.reduce((product, factor) => product * factor, 1) ** (1 / factors.length);
 }
 
 /** The worst thing this finding costs to live with, 0 to 1. */
 function costOf(risk: Partial<Risk>): number {
-    const scored = AXIS_NAMES.filter((axis) => AXES[axis].kind === "cost").map(
-        (axis) => levelScore(axis, risk[axis] ?? NOT_APPLICABLE) ?? 0,
-    );
+    const scored = axesOf("cost").map((axis) => levelScore(axis, risk[axis] ?? NOT_APPLICABLE) ?? 0);
 
     return Math.max(0, ...scored);
 }
 
 /** The mean of the axes that answered, or 1 where none did, so silence does not damp anything. */
 function mean(axes: readonly AxisName[], risk: Partial<Risk>): number {
-    const answered = axes
-        .map((axis) => levelScore(axis, risk[axis] ?? NOT_APPLICABLE))
-        .filter((value): value is number => value !== null);
+    const answered = axes.map((axis) => factorOf(axis, risk)).filter((value): value is number => value !== null);
 
     if (answered.length === 0) return 1;
 

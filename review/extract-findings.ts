@@ -9,8 +9,8 @@
  * wants to see.
  *
  * The shape of a run log is upstream's, and a renamed field would report a $36 review as
- * $0.00 with nothing saying the number was not found, so each one is narrowed on the way
- * out and the fallbacks below say what a missing one looks like.
+ * $0.00 with nothing saying the number was not found. `runNumbers` in run-log.ts narrows each
+ * one and sets what a missing one says.
  *
  * Usage: bun extract-findings.ts <run.json> <findings.json>
  */
@@ -18,8 +18,8 @@
 import { dirname, join } from "node:path";
 import type { LensHealth } from "./findings.ts";
 import { number, record, string } from "./json.ts";
-import { type Reported, RUN_FILES, UNREPORTED } from "./run-files.ts";
-import { failureReason, lastResult, messagesOf, totalCost } from "./run-log.ts";
+import { type RunNumberFile, UNREPORTED } from "./run-files.ts";
+import { failureReason, lastResult, messagesOf, reportedNumbers, runNumbers } from "./run-log.ts";
 
 /**
  * `LensHealth` as it arrives, before anything has checked a field.
@@ -45,15 +45,8 @@ if (unparsed > 0) {
 const last = lastResult(messages);
 const dir = dirname(outPath);
 
-/**
- * The numbers a run reports, written together.
- *
- * The set is the contract, not any one name. To every reader an absent file is
- * indistinguishable from a zero, and `unknown` is what a killed session writes, so a file
- * added on one path and forgotten on the other is taken for a killed session on a run that
- * worked. Taking the whole record makes the compiler require every name on both paths.
- */
-async function writeRunFiles(values: Record<Reported, string>): Promise<void> {
+/** The numbers a run reports, written together. `reportedNumbers` in run-log.ts has why. */
+async function writeRunFiles(values: Record<RunNumberFile, string>): Promise<void> {
     for (const [file, value] of Object.entries(values)) {
         await Bun.write(join(dir, file), value);
     }
@@ -76,35 +69,9 @@ if (last.is_error === true) {
     console.error(`the run reported an error: ${failureReason(last)}`);
 }
 
-// The result's `usage` counts the orchestrator's last turn and nothing else. Only
-// `modelUsage` covers the subagents, which is where a lens run spends everything: over a
-// full set of lenses the two differ by a factor of sixty.
-const models = record(last.modelUsage);
-const perModel = models ? Object.entries(models).map(([name, usage]) => [name, record(usage)] as const) : [];
-
-// `null` where the log carries no usage at all, for the reason the module docstring gives:
-// `0` is a measurement, and a summary reading "Cost: unknown" beside "Output tokens: 0" is
-// two answers to the same question.
-const outputTokens =
-    perModel.length === 0 ? null : perModel.reduce((total, [, usage]) => total + (number(usage?.outputTokens) ?? 0), 0);
-
-const summed = perModel.reduce((total, [, usage]) => total + (number(usage?.costUSD) ?? 0), 0);
-const reported = number(last.total_cost_usd);
-
-const costUsd = totalCost(reported, summed, perModel.length);
-const durationMs = number(last.duration_ms);
+const numbers = runNumbers(last);
+const { costUsd, denials, durationMs, outputTokens, perModel, refusals } = numbers;
 const money = costUsd === null ? "unknown" : `$${costUsd.toFixed(2)}`;
-
-// Narrowed element by element, not just as a container. This list is read in the reporting
-// loop at the end, after the findings file is on disk, and a null or a string in it would
-// turn a complete run into a stack trace over the one report saying what a lens was refused.
-const denials = (Array.isArray(last.permission_denials) ? last.permission_denials : [])
-    .map(record)
-    .filter((d) => d !== null);
-
-// A log with no list at all is not evidence that nothing was refused, and the job summary
-// raises its refusal warning off this number.
-const refusals = Array.isArray(last.permission_denials) ? denials.length : null;
 const refused = refusals === null ? "an unknown number of tool calls" : `${refusals} tool call(s)`;
 
 const structured = record(last.structured_output);
@@ -112,13 +79,7 @@ const findings = structured && Array.isArray(structured.findings) ? structured.f
 
 // Before the findings are looked at, because a run that produced none is the one whose cost
 // and refusals somebody most wants to see.
-await writeRunFiles({
-    [RUN_FILES.findingsCount]: findings === null ? "none reported" : String(findings.length),
-    [RUN_FILES.cost]: costUsd === null ? "unknown" : costUsd.toFixed(2),
-    [RUN_FILES.outputTokens]: outputTokens === null ? "unknown" : String(outputTokens),
-    [RUN_FILES.durationMs]: durationMs === null ? "unknown" : String(durationMs),
-    [RUN_FILES.permissionDenials]: refusals === null ? "unknown" : String(refusals),
-});
+await writeRunFiles(reportedNumbers(numbers, findings));
 
 if (!structured || findings === null) {
     console.error("the run produced no structured findings");
@@ -150,9 +111,8 @@ console.log(`cost: ${money}`);
 console.log(`output tokens: ${outputTokens === null ? "unknown" : outputTokens.toLocaleString("en-GB")}`);
 console.log(`wall clock: ${durationMs === null ? "unknown" : `${(durationMs / 60000).toFixed(1)} min`}`);
 
-for (const [model, usage] of perModel) {
-    const tokens = (number(usage?.outputTokens) ?? 0).toLocaleString("en-GB");
-    console.log(`  ${model}: ${tokens} out, $${(number(usage?.costUSD) ?? 0).toFixed(2)}`);
+for (const { model, outputTokens: spent, costUSD } of perModel) {
+    console.log(`  ${model}: ${spent.toLocaleString("en-GB")} out, $${costUSD.toFixed(2)}`);
 }
 
 for (const h of health) {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { failureReason, lastResult, messagesOf, totalCost } from "./run-log.ts";
+import { failureReason, lastResult, messagesOf, reportedNumbers, runNumbers, totalCost } from "./run-log.ts";
 
 describe("totalCost: what a run cost, across the three answers a log can give", () => {
     test("takes the reported total when the log carries one", () => {
@@ -101,5 +101,95 @@ describe("lastResult: the only complete one", () => {
 
     test("is null where the session produced no terminal output", () => {
         expect(lastResult([{ type: "system" }])).toBeNull();
+    });
+});
+
+describe("runNumbers: what a run reports about itself", () => {
+    const spent = {
+        modelUsage: {
+            "claude-opus-4": { outputTokens: 1200, costUSD: 30 },
+            "claude-haiku-4": { outputTokens: 300, costUSD: 6 },
+        },
+    };
+
+    test("sums output tokens and cost across every model, not the last turn alone", () => {
+        const numbers = runNumbers({ ...spent, total_cost_usd: 0.5 });
+
+        expect(numbers.outputTokens).toBe(1500);
+        expect(numbers.costUsd).toBe(0.5);
+        expect(numbers.perModel).toHaveLength(2);
+    });
+
+    test("falls through a reported zero to what the models cost", () => {
+        expect(runNumbers({ ...spent, total_cost_usd: 0 }).costUsd).toBe(36);
+    });
+
+    test("output tokens are unknown rather than zero where the log carries no usage", () => {
+        expect(runNumbers({ total_cost_usd: 3 }).outputTokens).toBeNull();
+    });
+
+    test("a model entry that is not an object costs nothing rather than throwing", () => {
+        const numbers = runNumbers({ modelUsage: { "claude-opus-4": "gone" } });
+
+        expect(numbers.perModel).toEqual([{ model: "claude-opus-4", outputTokens: 0, costUSD: 0 }]);
+        expect(numbers.outputTokens).toBe(0);
+    });
+
+    test("an empty denial list is none refused", () => {
+        expect(runNumbers({ permission_denials: [] }).refusals).toBe(0);
+    });
+
+    test("no denial list at all is unknown rather than none", () => {
+        expect(runNumbers({}).refusals).toBeNull();
+    });
+
+    // An entry too malformed to print is still a refusal, so the count and the printable list
+    // are taken from different places.
+    test("a denial that is not an object is dropped from the report but still counted", () => {
+        const numbers = runNumbers({ permission_denials: [{ tool_name: "Bash" }, null, "Write"] });
+
+        expect(numbers.denials).toEqual([{ tool_name: "Bash" }]);
+        expect(numbers.refusals).toBe(3);
+    });
+
+    test("a duration the log does not carry is unknown", () => {
+        expect(runNumbers({ duration_ms: 61000 }).durationMs).toBe(61000);
+        expect(runNumbers({ duration_ms: "a while" }).durationMs).toBeNull();
+    });
+});
+
+describe("reportedNumbers: those numbers as the run files carry them", () => {
+    test("a measured zero and an unmeasured number do not read the same", () => {
+        const measured = reportedNumbers(runNumbers({ total_cost_usd: 0, permission_denials: [] }), []);
+
+        expect(measured).toEqual({
+            "findings-count": "0",
+            "cost-usd": "0.00",
+            "output-tokens": "unknown",
+            "duration-ms": "unknown",
+            "permission-denials": "0",
+        });
+    });
+
+    test("a run that reported no findings at all is not a run that found none", () => {
+        expect(reportedNumbers(runNumbers({}), null)["findings-count"]).toBe("none reported");
+        expect(reportedNumbers(runNumbers({}), [])["findings-count"]).toBe("0");
+    });
+
+    test("every number a killed session never wrote reads as unknown", () => {
+        expect(reportedNumbers(runNumbers({}), null)).toEqual({
+            "findings-count": "none reported",
+            "cost-usd": "unknown",
+            "output-tokens": "unknown",
+            "duration-ms": "unknown",
+            "permission-denials": "unknown",
+        });
+    });
+
+    test("cost is written to the two decimals every reader of the file expects", () => {
+        const numbers = runNumbers({ modelUsage: { m: { costUSD: 1.2345, outputTokens: 7 } } });
+
+        expect(reportedNumbers(numbers, [])["cost-usd"]).toBe("1.23");
+        expect(reportedNumbers(numbers, [])["output-tokens"]).toBe("7");
     });
 });

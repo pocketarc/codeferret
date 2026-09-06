@@ -34,6 +34,13 @@
  * What the pair still does not match is `bun run`, `bun test` and `bunx`, none of which a
  * review starts. Whoever writes the first one has to widen this again.
  *
+ * A `cf_bun` wrapper in lib.sh, with the rule narrowed to "no shell may name `bun` outside it",
+ * was weighed and refused. It moves the list above rather than deleting it, since every entry on
+ * it still needs an exception, and it reaches only the shell half: the `.ts` files cannot call a
+ * shell function, so `HINT` and its empty-match guard stay whatever the scripts do. What the
+ * wrapper would buy is one fewer place to forget the flag, and the invocations where that
+ * mattered already go through `run_tool`.
+ *
  * The `.ts` files under review/ are matched by a pattern of their own, under the rule at the
  * top: a printed hint counts, and the one that broke it lived in check-findings.ts, which runs
  * inside every review and told its reader to run `bun scripts/validate-repo.ts` with no flag

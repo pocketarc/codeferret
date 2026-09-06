@@ -10,6 +10,7 @@
  */
 
 import { number, record, string } from "./json.ts";
+import { RUN_FILES, type RunNumberFile } from "./run-files.ts";
 
 /** The messages a log holds, and how many of its lines were not JSON at all. */
 export interface RunLog {
@@ -129,4 +130,94 @@ export function failureReason(result: Record<string, unknown>): string {
     const said = (string(result.result) ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
 
     return said === "" ? named : `${named}: ${said}`;
+}
+
+/** What one model spent, narrowed out of the log's own `modelUsage` entry. */
+export interface ModelSpend {
+    model: string;
+    outputTokens: number;
+    costUSD: number;
+}
+
+/** Everything a run reports about itself, before any of it has been turned into a file. */
+export interface RunNumbers {
+    perModel: ModelSpend[];
+    /**
+     * Null where the log carries no usage at all, rather than 0.
+     *
+     * `0` is a measurement, and a summary reading "Cost: unknown" beside "Output tokens: 0" is
+     * two answers to the same question.
+     */
+    outputTokens: number | null;
+    costUsd: number | null;
+    durationMs: number | null;
+    /** Null where the log carries no denial list at all, which is not evidence nothing was refused. */
+    refusals: number | null;
+    /** Each refusal as the log wrote it, for the report that names what a lens could not run. */
+    denials: Record<string, unknown>[];
+}
+
+/**
+ * The numbers a run reports, out of its last result message.
+ *
+ * The result's own `usage` counts the orchestrator's last turn and nothing else. Only
+ * `modelUsage` covers the subagents, which is where a lens run spends everything: over a full
+ * set of lenses the two differ by a factor of sixty.
+ */
+export function runNumbers(last: Record<string, unknown>): RunNumbers {
+    const models = record(last.modelUsage);
+
+    const perModel: ModelSpend[] = Object.entries(models ?? {}).map(([model, usage]) => {
+        const narrowed = record(usage);
+
+        return {
+            model,
+            outputTokens: number(narrowed?.outputTokens) ?? 0,
+            costUSD: number(narrowed?.costUSD) ?? 0,
+        };
+    });
+
+    const summed = perModel.reduce((total, spend) => total + spend.costUSD, 0);
+
+    // Narrowed element by element, not just as a container. This list is read by the report at
+    // the end of a run, after the findings file is on disk, and a null or a string in it would
+    // turn a complete run into a stack trace over the one report saying what a lens was refused.
+    const refused = Array.isArray(last.permission_denials) ? last.permission_denials : null;
+
+    // Narrowed element by element, not just as a container. This list is read by the report at
+    // the end of a run, after the findings file is on disk, and a null or a string in it would
+    // turn a complete run into a stack trace over the one report saying what a lens was refused.
+    const denials = (refused ?? []).map(record).filter((entry) => entry !== null);
+
+    return {
+        perModel,
+        outputTokens: perModel.length === 0 ? null : perModel.reduce((total, spend) => total + spend.outputTokens, 0),
+        costUsd: totalCost(number(last.total_cost_usd), summed, perModel.length),
+        durationMs: number(last.duration_ms),
+        // The whole list, not the entries this file could read. An entry it could not read is
+        // still a refusal, and counting the survivors under-reports the number `summary.ts`
+        // raises its refusal warning off, which is the direction that hides a narrowed review.
+        refusals: refused?.length ?? null,
+        denials,
+    };
+}
+
+/**
+ * Those numbers as the run files carry them, one line each.
+ *
+ * The set is the contract, not any one name, so the whole record is built here and the caller
+ * writes what it is given. To every reader an absent file is indistinguishable from a zero, and
+ * `unknown` is what a killed session writes, so a file added on one path and forgotten on the
+ * other is taken for a killed session on a run that worked.
+ */
+export function reportedNumbers(numbers: RunNumbers, findings: unknown[] | null): Record<RunNumberFile, string> {
+    const said = (value: number | null): string => (value === null ? "unknown" : String(value));
+
+    return {
+        [RUN_FILES.findingsCount]: findings === null ? "none reported" : String(findings.length),
+        [RUN_FILES.cost]: numbers.costUsd === null ? "unknown" : numbers.costUsd.toFixed(2),
+        [RUN_FILES.outputTokens]: said(numbers.outputTokens),
+        [RUN_FILES.durationMs]: said(numbers.durationMs),
+        [RUN_FILES.permissionDenials]: said(numbers.refusals),
+    };
 }

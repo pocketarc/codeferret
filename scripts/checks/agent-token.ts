@@ -87,5 +87,12 @@ export async function checkAgentToken(): Promise<Failures> {
         }
     }
 
+    if (list.length === 0) {
+        console.log(
+            `OK agent-token: ${steps.length} step(s) run ${STARTS_THE_AGENT}, each calling ${SCRUBS_THE_INPUTS}` +
+                " and naming no GitHub credential in its env:",
+        );
+    }
+
     return list;
 }

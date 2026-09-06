@@ -30,7 +30,7 @@ export const RUN_FILES = {
 export const RUN_FILE_NAMES: readonly string[] = Object.values(RUN_FILES);
 
 /** Every run file a run's numbers go in. `findingsChecked` is the marker and is not one. */
-export type Reported = Exclude<(typeof RUN_FILES)[keyof typeof RUN_FILES], typeof RUN_FILES.findingsChecked>;
+export type RunNumberFile = Exclude<(typeof RUN_FILES)[keyof typeof RUN_FILES], typeof RUN_FILES.findingsChecked>;
 
 /**
  * What each of those files says about a run that never reported a number.
@@ -48,7 +48,7 @@ export type Reported = Exclude<(typeof RUN_FILES)[keyof typeof RUN_FILES], typeo
  * saying `unknown` where the other says `not measured` is two answers to the same question with
  * every gate green.
  */
-export const UNREPORTED: Record<Reported, string> = {
+export const UNREPORTED: Record<RunNumberFile, string> = {
     [RUN_FILES.findingsCount]: "none reported",
     [RUN_FILES.cost]: "unknown",
     [RUN_FILES.outputTokens]: "unknown",
