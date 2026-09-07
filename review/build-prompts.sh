@@ -61,6 +61,11 @@ if ! verify_ref "$WORKSPACE" "$BASE"; then
     exit 1
 fi
 
+if ! BASE=$(git -C "$WORKSPACE" rev-parse --verify "$BASE^{commit}"); then
+    echo "could not pin base ref in $WORKSPACE" >&2
+    exit 1
+fi
+
 # The namespace every `<namespace>:<lens>` dispatch is written under, out of the file
 # scripts/build-defaults.ts generates from the plugin manifest.
 NAMESPACE_FILE="$ACTION/review/defaults/namespace.txt"
@@ -241,6 +246,21 @@ case ${INCLUDE_WORKING_TREE:-0} in
     ;;
 esac
 
+case ${REVIEW_ENGINE:-claude} in
+claude)
+    DISPATCH_STEP_FILE="$ACTION/review/orchestrator-dispatch.md"
+    LENS_REPORTS=""
+    ;;
+codex)
+    DISPATCH_STEP_FILE="$ACTION/review/orchestrator-codex-dispatch.md"
+    LENS_REPORTS="CODEFERRET_LENS_REPORTS"
+    ;;
+*)
+    echo "REVIEW_ENGINE must be claude or codex." >&2
+    exit 1
+    ;;
+esac
+
 # The pathspec runs to several hundred characters. Handing it to the orchestrator as
 # text means it retypes the whole thing once per lens, and a copy that loses an entry
 # puts lockfiles and build output back into the diff without anything noticing. The
@@ -288,6 +308,14 @@ fi
 (
     cd "$BUILD" &&
         $PREFIX bun --config=/dev/null "$ACTION/scripts/render-prompt.ts" \
+            "$DISPATCH_STEP_FILE" "$BUILD/dispatch-step.txt" \
+            "__LENS_LIST__@$BUILD/lens-list.txt" \
+            "__DISPATCH__@$BUILD/dispatch.txt"
+)
+
+(
+    cd "$BUILD" &&
+        $PREFIX bun --config=/dev/null "$ACTION/scripts/render-prompt.ts" \
             "$ACTION/review/orchestrator.md" "$BUILD/orchestrator.txt" \
             "__BASE__=$BASE" \
             "__HEAD__=$HEAD_SHA" \
@@ -295,6 +323,8 @@ fi
             "__PREVIOUS__=$SESSION/previous.json" \
             "__LENS_LIST__@$BUILD/lens-list.txt" \
             "__DISPATCH__@$BUILD/dispatch.txt" \
+            "__DISPATCH_STEP__@$BUILD/dispatch-step.txt" \
+            "__LENS_REPORTS__=$LENS_REPORTS" \
             "__RESOLVE__@$RESOLVE_FILE"
 )
 

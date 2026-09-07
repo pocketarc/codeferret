@@ -155,6 +155,27 @@ describe("vetSuppression: who may settle a finding", () => {
         };
     }
 
+    function existingWithPermission(permission: string) {
+        return {
+            threads: [
+                {
+                    resolved: false,
+                    file: "a.ts",
+                    url: "https://github.com/o/r/pull/1#discussion_r1",
+                    comments: [
+                        { association: "NONE", url: "https://github.com/o/r/pull/1#discussion_r1", body: "raised" },
+                        {
+                            association: "MEMBER",
+                            repository_permission: permission,
+                            url: "https://github.com/o/r/pull/1#discussion_r2",
+                            body: "intentional",
+                        },
+                    ],
+                },
+            ],
+        };
+    }
+
     for (const association of ["OWNER", "COLLABORATOR"]) {
         test(`a reply from ${association} may decline`, () => {
             const out = vet([declined("https://github.com/o/r/pull/1#discussion_r2")], existing(association));
@@ -164,15 +185,24 @@ describe("vetSuppression: who may settle a finding", () => {
         });
     }
 
-    // `MEMBER` sits with the refusals rather than the acceptances: GitHub answers it for anybody
-    // in the organisation that owns the repository, whether or not they hold a permission on
-    // this one, so it is not evidence that somebody who could push settled anything.
     for (const association of ["MEMBER", "NONE", "CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "MANNEQUIN", ""]) {
         test(`a reply from ${association || "no association"} may not`, () => {
             const out = vet([declined("https://github.com/o/r/pull/1#discussion_r2")], existing(association));
 
             expect(out.untraceable).toBe(1);
             expect(out.findings[0]?.status).toBe("new");
+        });
+    }
+
+    for (const permission of ["admin", "maintain", "push"]) {
+        test(`a finding is suppressed when an organization member with ${permission} permission on the repository declines it`, () => {
+            const out = vet(
+                [declined("https://github.com/o/r/pull/1#discussion_r2")],
+                existingWithPermission(permission),
+            );
+
+            expect([out.untraceable, out.unrelated]).toEqual([0, 0]);
+            expect(out.findings[0]?.status).toBe("declined");
         });
     }
 

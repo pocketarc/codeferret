@@ -111,10 +111,34 @@ function boundedList<T>(
     separator: number,
     omission: (missing: number, kept: T[]) => string,
 ): { kept: T[]; lines: string[] } {
-    const { kept, lines } = cutToFit(items, render, limit - OMISSION_RESERVE, separator);
-    const missing = items.length - kept.length;
+    const initial = cutToFit(items, render, limit - OMISSION_RESERVE, separator);
+    const kept = initial.kept;
+    const lines = initial.lines;
+    let used = lines.reduce((total, line) => total + line.length + separator, 0);
+    let missing = items.length - kept.length;
 
-    return { kept, lines: missing === 0 ? lines : [...lines, `- _${omission(missing, kept)}_`] };
+    const omissionLine = (): string => {
+        const text = omission(missing, kept);
+        const full = `- _${text}_`;
+        const available = limit - used - separator;
+        if (full.length <= available) return full;
+        if (available < 5) return "";
+
+        const innerLimit = available - 4;
+        const inner = text.length <= innerLimit ? text : `${text.slice(0, innerLimit - 1)}…`;
+
+        return `- _${inner}_`;
+    };
+
+    let line = missing === 0 ? "" : omissionLine();
+    while (missing > 0 && line === "" && kept.length > 0) {
+        kept.pop();
+        used -= (lines.pop() ?? "").length + separator;
+        missing = items.length - kept.length;
+        line = omissionLine();
+    }
+
+    return { kept, lines: missing === 0 || line === "" ? lines : [...lines, line] };
 }
 
 /** A list of rendered lines from the head or the tail, cut to a character budget. */

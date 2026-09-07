@@ -9,6 +9,7 @@
  */
 
 import type { Located, Survey } from "./existing.ts";
+import { record } from "./json.ts";
 import { meetsThreshold, score, TIER_NAMES, tierOf as bandOf, tierRank, unratedAxes } from "./risk.ts";
 import type { Risk, Tier } from "./risk.ts";
 
@@ -181,37 +182,16 @@ export interface Partitioned {
     declined: Finding[];
 }
 
-/**
- * GitHub's `authorAssociation` values that may settle a finding for good.
- *
- * The same values `orchestrator.md` names, so the model's rule and this one are one rule. What
- * `MEMBER` admits is wider than the other two: GitHub answers it for anybody in the
- * organisation that owns the repository, whether or not they hold a permission on the
- * repository itself, so on a public repository owned by a large organisation this accepts a
- * comment from someone who could not push to it. `OWNER` and `COLLABORATOR` are the two that
- * do imply a permission here.
- *
- * So `MEMBER` came out, here and in `orchestrator.md` together. Narrowed in one place only, the
- * model would go on declining on a rule this overturns every run, and the reopening would name
- * a comment a maintainer can see is from a colleague.
- *
- * What that costs is a decline from an organisation colleague with no permission here, which
- * comes back as `new` and has to be said again by someone who has one. What it buys is that a
- * dismissal lasting the life of the pull request takes a permission on the pull request.
- *
- * `authorAssociation` is still an approximation of the question. Asking GitHub for the
- * commenter's permission on the repository would answer it outright, at an API call per
- * commenter and a new way for the fetch to fail; `fetch-existing.ts` is where that would go.
- *
- * Exported because the sentences a reader gets when a suppression is reopened name these
- * associations, and `ENTITLED_NAMED` in `caveats.ts` builds that phrase from this set rather
- * than spelling the rule out a fourth time.
- */
+// GitHub's MEMBER association indicates organization membership, not repository permission.
 export const MAY_DECLINE: ReadonlySet<string> = new Set(["OWNER", "COLLABORATOR"]);
+export const MAY_DECLINE_PERMISSIONS: ReadonlySet<string> = new Set(["admin", "maintain", "push"]);
 
 /** Whether whoever wrote a comment has standing in the repository. */
 function entitled(comment: Located): boolean {
-    return MAY_DECLINE.has(comment.association);
+    return (
+        MAY_DECLINE.has(comment.association) ||
+        (comment.association === "MEMBER" && MAY_DECLINE_PERMISSIONS.has(comment.repositoryPermission?.toLowerCase() ?? ""))
+    );
 }
 
 /**
@@ -361,11 +341,11 @@ function vetDecline(f: Finding, cited: Located | undefined, printed: boolean): R
  * rests on is there and is about the same file: a comment where it cites one, and otherwise the
  * previous review, which is where the orchestrator is told to take the status from.
  *
- * A finding the body prints in full is the exception, and takes a comment from someone
- * `MAY_DECLINE` admits, whether or not one is cited. The lower bar rests on the finding keeping
- * its line either way, and for these that is not the whole of it: the body prints them whole and
- * everything else as one line in a collapsed block, so demoting one is the difference between a
- * reader seeing the defect and seeing its title.
+ * An authorized reviewer may decline a finding in an uncited comment. Check those comments too
+ * before suppressing a finding included in full in the review body. The lower bar rests on the
+ * finding keeping its line either way, and for these that is not the whole of it: the body prints
+ * them whole and everything else as one line in a collapsed block, so demoting one is the
+ * difference between a reader seeing the defect and seeing its title.
  *
  * `printed` rather than a test spelled out here: when each side named its own set, a finding
  * graded `blocker` took the whole page and the low bar at once. `vetDecline` above takes a
@@ -464,8 +444,28 @@ export function vetSuppression(
 }
 
 /** Whether a parsed file is something this module can read as a run's output. */
+function isFinding(value: unknown): value is Finding {
+    const finding = record(value);
+    const statuses = new Set(["new", "already-reported", "declined"]);
+
+    if (!finding || typeof finding.file !== "string" || typeof finding.title !== "string" || typeof finding.body !== "string") {
+        return false;
+    }
+
+    if (finding.found_by !== undefined && (!Array.isArray(finding.found_by) || finding.found_by.some((name) => typeof name !== "string"))) {
+        return false;
+    }
+
+    if (finding.risk !== undefined && record(finding.risk) === null) return false;
+    if (finding.status !== undefined && (typeof finding.status !== "string" || !statuses.has(finding.status))) return false;
+
+    return true;
+}
+
 export function isMerged(value: unknown): value is Merged {
-    return typeof value === "object" && value !== null && Array.isArray((value as Merged).findings);
+    const merged = record(value);
+
+    return merged !== null && Array.isArray(merged.findings) && merged.findings.every(isFinding);
 }
 
 /**

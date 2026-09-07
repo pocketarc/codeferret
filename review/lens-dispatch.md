@@ -1,6 +1,6 @@
 Review this repository's diff against `__BASE__`:
 
-    bash __DIFF_SCRIPT__
+    bash "__DIFF_SCRIPT__"
     git log __BASE__..__HEAD__ --oneline
 
 The first prints the diff under review. Its arguments are the NUL-separated list in

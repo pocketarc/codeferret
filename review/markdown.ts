@@ -83,7 +83,30 @@ function opens(fence: string, info: string): boolean {
  * prose the rewriter may edit or delete. Vendored skills nest fences that way.
  */
 function closes(fence: string, info: string, open: string): boolean {
-    return fence[0] === open[0] && fence.length >= open.length && info.trim() === "";
+    return fence[0] === open[0] && fence.length >= open.length && /^[ \t]*$/.test(info);
+}
+
+function indentation(line: string): number {
+    return line.match(/^ */)?.[0].length ?? 0;
+}
+
+function listMarkerIndent(line: string): number | null {
+    const marker = line.match(/^( *)(?:[-+*]|\d+[.)])(?:[ \t]+|$)/);
+
+    return marker ? (marker[1] ?? "").length : null;
+}
+
+function listContainerIndent(lines: string[], at: number, fenceIndent: number): number | null {
+    for (let before = at - 1; before >= 0; before -= 1) {
+        const line = lines[before] ?? "";
+        if (blank(line)) continue;
+
+        const markerIndent = listMarkerIndent(line);
+        if (markerIndent !== null && markerIndent < fenceIndent) return markerIndent;
+        if (indentation(line) < fenceIndent) return null;
+    }
+
+    return null;
 }
 
 /**
@@ -93,21 +116,32 @@ function closes(fence: string, info: string, open: string): boolean {
 function scan(lines: string[]): { inside: boolean[]; open: string | null } {
     const inside: boolean[] = [];
     let open: string | null = null;
+    let listIndent: number | null = null;
 
-    for (const line of lines) {
+    for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index] ?? "";
         const match = line.match(FENCE);
         const fence = match?.[1];
         const info = match?.[2] ?? "";
 
         if (fence && open === null && opens(fence, info)) {
             open = fence;
+            listIndent = listContainerIndent(lines, index, indentation(line));
             inside.push(true);
             continue;
         }
 
         if (fence && open !== null && closes(fence, info, open)) {
             open = null;
+            listIndent = null;
             inside.push(true);
+            continue;
+        }
+
+        if (open !== null && listIndent !== null && !blank(line) && indentation(line) <= listIndent) {
+            open = null;
+            listIndent = null;
+            inside.push(false);
             continue;
         }
 

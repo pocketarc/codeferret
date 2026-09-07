@@ -189,7 +189,7 @@ scrub_urls() {
             git config --local --add "$key" "$value"
         done
 
-        echo "rewrote $key in $(pwd) without the credential embedded in it"
+        echo "rewrote $(redact "$key") in $(redact "$(pwd)") without the credential embedded in it"
         found=0
     done < <(git config --local --name-only --get-regexp "$URLS" || true)
 
@@ -212,7 +212,7 @@ scrub_repo() {
     while IFS= read -r key; do
         [ -n "$key" ] || continue
         git config --local --unset-all "$key" || true
-        echo "removed $key from $(pwd)"
+        echo "removed $(redact "$key") from $(redact "$(pwd)")"
     done < <(git config --local --name-only --get-regexp "$HEADER" || true)
 
     while IFS= read -r key; do
@@ -227,12 +227,12 @@ scrub_repo() {
             # container's, so a path that is not there is the ordinary case rather than a fault.
             if [ -f "$path" ]; then
                 rm -f "$path" || true
-                echo "removed the credentials file $path"
+                echo "removed the credentials file $(redact "$path")"
             fi
         fi
 
         git config --local --unset-all "$key" || true
-        echo "removed $key from $(pwd)"
+        echo "removed $(redact "$key") from $(redact "$(pwd)")"
     done < <(git config --local --name-only --get-regexp "$INCLUDES" || true)
 
     # A rewrite rule keeps the credential in its own key, so there is no value to clean and the

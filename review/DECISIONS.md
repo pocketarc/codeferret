@@ -45,20 +45,11 @@ A suppression does not rest on the orchestrator's word alone. `vetSuppression` r
 each one cites back out of `existing.json` or `previous.json`, and reopens whatever those
 files do not bear out.
 
-A decline needs an owner or a collaborator, or, for a finding the body prints as one line, a
-thread somebody closed. `MEMBER` is not enough, though `authorAssociation` groups it with the
-other two: GitHub answers it for anybody in the organisation that owns the repository, whether
-or not they can push to this one. GitHub resolves a conversation for anyone with repository
-write, and for whoever opened the pull request, so closure is not on its own the word of
-somebody with standing: on a branch from an outside contributor, the only person who can close
-a thread is the person under review. The findings that take a reader off the page are held to
-the author association instead, and `isPrinted` decides which those are, on the same test the
-body applies: the finding's tier against a threshold, and whether this run has an artifact to
-leave the rest to. The second half matters because a run that keeps none prints every finding,
-so a tier alone described the page only where there was an artifact. The same function decides
-both, so neither can drift from the other about which findings the comment prints in full. When
-each side named its own set, back when those sets were severities written out by hand, a
-finding graded `blocker` was printed in full and settled by a stranger.
+A finding may be suppressed after a decline from an `OWNER` or `COLLABORATOR`. For a decline from
+a `MEMBER`, that member's fetched repository permission must be `admin`, `maintain`, or `push`.
+Without an authorized decline, a finding may be suppressed through thread resolution only if the
+finding is not printed in full. The `isPrinted` function determines whether a finding is printed
+in full.
 
 The bar is not the same value on both sides. `post-review.ts` hands the body the
 `print-threshold` input and hands `vetSuppression` whichever of that input and the

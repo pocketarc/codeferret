@@ -53,9 +53,11 @@ scrub_inputs "$0" "$@"
 
 PREFIX=${PREFIX:-}
 
-# The one measurement of trading capability for price went the wrong way: Sonnet spent
-# 574k output tokens to find 29 things where Opus spent 412k to find 90.
-MODEL=${MODEL:-opus}
+if [ "${REVIEW_ENGINE:-claude}" = codex ]; then
+    MODEL=${MODEL:-}
+else
+    MODEL=${MODEL:-opus}
+fi
 
 EFFORT=${EFFORT:-}
 PERMISSION_MODE=${PERMISSION_MODE:-bypassPermissions}
@@ -83,6 +85,14 @@ fi
 # left a plaintext token behind on every exit they took. Every guard is still ahead of
 # build-prompts, both fetches and the session, which is what keeps a misspelt input from
 # being found by a CLI usage error twenty minutes in.
+case ${REVIEW_ENGINE:-claude} in
+claude | codex) ;;
+*)
+    echo "REVIEW_ENGINE must be claude or codex." >&2
+    exit 1
+    ;;
+esac
+
 case ${EFFORT:-} in
 "" | low | medium | high | xhigh | max) ;;
 *)
@@ -282,17 +292,17 @@ exec 8<"$LOG_DIR/run.json"
 rm -f "$LOG_DIR/run.json"
 rmdir "$LOG_DIR"
 
-# WebFetch and WebSearch are denied for the reason scripts/build-lens-agents.ts gives for
-# leaving them off every lens. Agent has to stay: STEP 1 of the orchestrator prompt
-# dispatches every lens with it, and denying it leaves the run with nothing to merge.
+# Exclude web tools for the reasons in scripts/build-lens-agents.ts.
 #
-# `--setting-sources user` keeps the reviewed tree out of the session's own configuration.
-# The session starts in that tree, and a SessionStart hook declared there runs even under
-# bypassPermissions. Plugins passed with --plugin-dir still load, so the lens agents are
-# unaffected. "The reviewed tree does not configure the session" in review/DECISIONS.md has
-# what was measured and how.
+# Claude starts in the repository, so ignore project settings to avoid its SessionStart hooks.
+# Explicitly supplied plugins still load. See "The reviewed tree does not configure the
+# session" in review/DECISIONS.md for the measurements.
 (
-    cd "$WORKSPACE" &&
+    if [ "${REVIEW_ENGINE:-claude}" = codex ]; then
+        $PREFIX env MODEL="$MODEL" EFFORT="$EFFORT" bun --config=/dev/null \
+            "$ACTION/review/codex-run.ts" "$ACTION" "$OUT" "$WORKSPACE"
+    else
+        cd "$WORKSPACE" &&
         $PREFIX claude -p "$(cat "$BUILD/orchestrator.txt")" \
             --model "$MODEL" \
             ${EFFORT:+--effort "$EFFORT"} \
@@ -304,6 +314,7 @@ rmdir "$LOG_DIR"
             --no-session-persistence \
             --disallowed-tools Edit Write NotebookEdit WebFetch WebSearch \
             --plugin-dir "$OUT"
+    fi
 ) >&9 || SESSION_STATUS=$?
 
 exec 9>&-

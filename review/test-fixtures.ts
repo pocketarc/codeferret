@@ -12,7 +12,7 @@
  * express, so `rawFinding` returns a plain record and its callers put what they like in it.
  */
 
-import { AXIS_NAMES, NOT_APPLICABLE, score, tierOf } from "./risk.ts";
+import { AXES, AXIS_NAMES, NOT_APPLICABLE, score, tierOf } from "./risk.ts";
 import type { Risk, Tier } from "./risk.ts";
 import type { Finding } from "./findings.ts";
 
@@ -114,8 +114,9 @@ export function riskFor(tier: Tier): Partial<Risk> {
     return shape;
 }
 
-/** Every axis answered `not-applicable`, for a case about a finding that rated nothing. */
-export const NO_RISK: Partial<Risk> = Object.fromEntries(AXIS_NAMES.map((axis) => [axis, NOT_APPLICABLE]));
+export const NO_RISK: Partial<Risk> = Object.fromEntries(
+    AXIS_NAMES.map((axis) => [axis, AXES[axis].levels[AXES[axis].levels.length - 1]?.value ?? NOT_APPLICABLE]),
+);
 
 /** A valid finding, for the code that reads one. */
 export function finding(over: Partial<Finding> = {}): Finding {

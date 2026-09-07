@@ -25,19 +25,9 @@ function orList(items: string[]): string {
     return items.length < 2 ? last : `${items.slice(0, -1).join(", ")} or ${last}`;
 }
 
-/** The associations `MAY_DECLINE` admits, as the nouns a sentence about them uses. */
-const ENTITLED = [...MAY_DECLINE].map((association) => association.toLowerCase());
-
-/**
- * Who a reopening sentence says a comment had to come from, read off the rule itself.
- *
- * `MEMBER` was taken out of `MAY_DECLINE`, out of `orchestrator.md` and out of the decision
- * record in one commit, and these two sentences went on naming it, because they were the
- * fourth place the rule was written out and the only one nothing compiles against. A maintainer
- * whose organisation colleague had written "working as intended" was told the decline "cited no
- * comment from an owner, member or collaborator" when it had cited exactly that, and went
- * looking for a broken citation rather than learning that the rule had moved.
- */
+const ENTITLED = [...MAY_DECLINE]
+    .map((association) => association.toLowerCase())
+    .concat("organization member with admin, maintain, or push permission on the repository");
 const ENTITLED_NAMED = orList(ENTITLED.map((noun) => `${"aeiou".includes(noun[0] ?? "") ? "an" : "a"} ${noun}`));
 
 /** The same list where the sentence supplies the article: "no owner or collaborator". */
@@ -75,7 +65,7 @@ const REOPENING: Record<Reopening, (n: number) => string> = {
 /**
  * `REOPENING`'s own keys, read once rather than on every call.
  *
- * `COVERAGE_ORDER` and `POSTING_ORDER` are hand-written tuples because they are each the one
+ * `COVERAGE_KEYS` and `POSTING_ORDER` are hand-written tuples because they are each the one
  * place their alert union is defined. `Reopening` is not defined here (it is
  * `Exclude<keyof Vetted, "findings">` in findings.ts), so a hand-written tuple here would be a
  * second list a counter added to `Vetted` could fall out of step with, silently dropping its
@@ -254,26 +244,12 @@ export interface Notice<T> {
     say: (subject: T, escape: Escape) => string;
 }
 
-/**
- * Every notice there is, in the order a reader meets them.
- *
- * The union comes from this list rather than the other way round, so a notice added here has
- * a place on the page before it has a sentence, and `COVERAGE_NOTICES` below fails to compile
- * until it gets one. The other half was already keyed and the rendering was not: a run could
- * raise a warning, `warned` could decide the review was worth posting on the strength of it,
- * and the body it posted said nothing about why.
- */
-const COVERAGE_ORDER = ["unread", "changed", "unrated", "unaccounted", "silent", "broken", "limited"] as const;
+/** The names known to the coverage notice table. */
+const COVERAGE_KEYS = ["unread", "changed", "unrated", "unaccounted", "silent", "broken", "limited"] as const;
 
-export type CoverageAlert = (typeof COVERAGE_ORDER)[number];
+export type CoverageAlert = (typeof COVERAGE_KEYS)[number];
 
-/**
- * What each notice says, keyed by name and read in `COVERAGE_ORDER`'s order.
- *
- * The entries are declared in that same order, because each carries a comment arguing where it
- * sits on the page, and a reader takes the order they are declared in for the order they appear
- * in. Nothing checks it.
- */
+/** What each notice says, keyed by name. */
 export const COVERAGE_NOTICES: Record<CoverageAlert, Notice<Coverage>> = {
     // First, because it is about the counts a reader has just read rather than about coverage
     // of the diff: a finding this review repeats is one whose answer went unread, and without
@@ -357,6 +333,10 @@ export const COVERAGE_NOTICES: Record<CoverageAlert, Notice<Coverage>> = {
             " The list below has each in its own words.",
     },
 };
+
+// COVERAGE_ORDER is derived from the keys of COVERAGE_NOTICES in declaration order.
+// Add or move a notice in COVERAGE_NOTICES to change its position in noticesFor output.
+const COVERAGE_ORDER = Object.keys(COVERAGE_NOTICES) as CoverageAlert[];
 
 /**
  * The names in `order` whose notice `table` raises against `subject`, in `order`'s order.

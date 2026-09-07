@@ -200,23 +200,12 @@ if (foreign.length > 0) {
     );
 }
 
-const resolved: Array<{ reason: string }> = [];
-let resolveDenied = false;
+const plannedResolved = toResolve.map(({ reason: why }) => ({ reason: why }));
 
-// Threads are closed before the review is posted, because the body reports how many were closed.
-// What that costs: the post below exits 1 on a 502 with the threads already shut. The next run
-// reads them back as resolved, the orchestrator marks the matching findings `declined`,
-// `vetSuppression` accepts a closed thread for anything the body would not have printed in full,
-// and `previousOf` holds that for the life of the pull request. That is a suppression resting on
-// a review nobody ever saw, which is what the `posted` record exists to prevent.
-// `resolve-threads` is off unless a caller sets it, so only the migration path reaches this.
+async function resolveThreads(): Promise<{ resolved: Array<{ reason: string }>; denied: boolean }> {
+    const resolved: Array<{ reason: string }> = [];
+    let denied = false;
 
-// Resolving is a write, so a dry run decides which threads to close and closes none. The
-// entries still go in: `DRY_RUN=1` is documented as printing the review instead of posting it,
-// and a body missing the `N threads resolved` block is not the body that would have gone out.
-if (dryRun) {
-    for (const { reason: why } of toResolve) resolved.push({ reason: why });
-} else if (toResolve.length > 0) {
     for (const { thread_id, reason: why } of toResolve) {
         const result = await graphql(
             token,
@@ -227,10 +216,7 @@ if (dryRun) {
         const failure = graphqlFailure(result);
 
         if (failure?.includes("not accessible by integration")) {
-            // resolveReviewThread requires repository write, which pull-requests: write
-            // does not grant. The rest would fail the same way, so the loop stops here and
-            // `leftOpen` below counts the threads it never reached.
-            resolveDenied = true;
+            denied = true;
             break;
         }
 
@@ -241,15 +227,8 @@ if (dryRun) {
 
         resolved.push({ reason: why });
     }
-}
 
-const leftOpen = toResolve.length - resolved.length;
-
-if (resolveDenied) {
-    console.error(
-        `cannot resolve threads: the token lacks contents: write.` +
-            ` ${plural(leftOpen, "thread")} judged finished could not be resolved.`,
-    );
+    return { resolved, denied };
 }
 
 const {
@@ -259,9 +238,9 @@ const {
 } = composeReview(
     merged,
     {
-        resolved,
-        resolveDenied,
-        leftOpen,
+        resolved: plannedResolved,
+        resolveDenied: false,
+        leftOpen: 0,
         to,
         threshold,
         linkable: new Set(vetted.survey.comments.keys()),
@@ -272,7 +251,7 @@ const {
 
 console.log(
     `total=${allFindings.length} new=${findings.length} suppressed=${suppressed.length}` +
-        ` declined=${declined.length} listed=${listed.length} resolved=${resolved.length}/${asked.length}`,
+        ` declined=${declined.length} listed=${listed.length} resolved=${plannedResolved.length}/${asked.length}`,
 );
 
 // A run where every lens died also produces no findings, and posting nothing leaves the pull
@@ -286,12 +265,18 @@ if (findings.length === 0 && !warned && !dryRun) {
             ? `no new findings. ${suppressed.length} already commented on, ${declined.length} declined`
             : "no findings",
     );
-    if (resolved.length > 0) console.log(`resolved ${plural(resolved.length, "thread")}`);
-
     // Nothing new to post is this run's whole review, and the record has to carry forward
     // or the chain of artifacts breaks. The cases the `posted` rule exists for all fail
     // before this branch or instead of it.
     await markPosted(null);
+    const outcome = await resolveThreads();
+    if (outcome.denied) {
+        console.error(
+            `cannot resolve threads: the token lacks contents: write.` +
+                ` ${plural(toResolve.length - outcome.resolved.length, "thread")} judged finished could not be resolved.`,
+        );
+    }
+    if (outcome.resolved.length > 0) console.log(`resolved ${plural(outcome.resolved.length, "thread")}`);
     process.exit(0);
 }
 
@@ -327,5 +312,13 @@ try {
 // The action uploads on its last step, after this one, so the record is in the file by the
 // time it is packed.
 await markPosted(created.html_url ?? null);
+
+const outcome = await resolveThreads();
+if (outcome.denied) {
+    console.error(
+        `cannot resolve threads: the token lacks contents: write.` +
+            ` ${plural(toResolve.length - outcome.resolved.length, "thread")} judged finished could not be resolved.`,
+    );
+}
 
 console.log(`posted: ${created.html_url ?? "(no url returned)"}`);

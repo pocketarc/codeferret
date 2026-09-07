@@ -6,10 +6,10 @@ tools: Read, Bash, Skill
 
 Review this change.
 
-The repository is the current working directory. Your instruction gives the diff under
-review and the ref it is taken against. Run the diff commands in that instruction as
-written. Their pathspec has already taken out what is not worth reviewing, such as
-lockfiles and build output, so anything still in the diff is in scope, generated or not.
+The repository is the current working directory. The review instructions include the diff and its base ref.
+Run the diff commands exactly as written in those instructions.
+Files outside the review scope, such as lockfiles and build output, are excluded through the pathspec.
+Review everything still in the diff, including generated files.
 
 The base ref is already decided. You are a subagent, so there is nobody to answer a
 question. Do not ask one.

@@ -19,8 +19,8 @@ import { record } from "./json.ts";
 /** One comment, whoever wrote it. */
 export interface Commenter {
     author?: string;
-    /** GitHub's `authorAssociation`, which is what says whether they may settle anything. */
     association?: string;
+    repository_permission?: string;
     url?: string;
     body?: string;
 }
@@ -46,6 +46,7 @@ export interface Existing {
     error?: string;
     /** The same for the comments outside a thread. */
     conversation_error?: string;
+    permission_error?: string;
 }
 
 /**
@@ -70,6 +71,7 @@ export function asExisting(value: unknown): Surveyed {
         conversation: Array.isArray(parsed?.conversation) ? parsed.conversation : [],
         ...(typeof parsed?.error === "string" ? { error: parsed.error } : {}),
         ...(typeof parsed?.conversation_error === "string" ? { conversation_error: parsed.conversation_error } : {}),
+        ...(typeof parsed?.permission_error === "string" ? { permission_error: parsed.permission_error } : {}),
     };
 }
 
@@ -95,6 +97,7 @@ export interface Located {
     text: string;
     /** GitHub's `authorAssociation` for whoever wrote it. */
     association: string;
+    repositoryPermission?: string;
     /** Whether it sits on a thread somebody closed. */
     onClosedThread: boolean;
 }
@@ -128,6 +131,7 @@ export function survey(existing: Surveyed): Survey {
             file,
             text: c.body ?? "",
             association: c.association ?? "",
+            ...(c.repository_permission ? { repositoryPermission: c.repository_permission } : {}),
             onClosedThread,
         });
     };
@@ -154,7 +158,7 @@ export function survey(existing: Surveyed): Survey {
  * answered with nothing on the page saying the discussion was half read.
  */
 export function unreadOf(existing: Surveyed): string[] {
-    return [existing.error, existing.conversation_error].filter((line): line is string => Boolean(line));
+    return [existing.error, existing.conversation_error, existing.permission_error].filter((line): line is string => Boolean(line));
 }
 
 /** The threads an earlier run of this tool opened, which are the only ones it may resolve. */

@@ -1,14 +1,3 @@
-/**
- * A Claude Code run log, and the questions a run's own numbers are read out of it.
- *
- * The shape of the log is upstream's, so each answer is narrowed rather than asserted: a
- * renamed field would otherwise come back as a confident zero with nothing saying the number
- * was not found, and a run that died is the one those numbers matter most for.
- *
- * Here rather than inside extract-findings.ts, for the reason finding-rules.ts gives: a rule in
- * a module is asserted without spawning a process and reading `cost-usd` back off disk.
- */
-
 import { number, record, string } from "./json.ts";
 import { RUN_FILES, type RunNumberFile } from "./run-files.ts";
 
@@ -29,21 +18,8 @@ function isResult(message: unknown): boolean {
 }
 
 /**
- * Every message in a run log, read whole-file first and line by line where that fails.
- *
- * A killed or out-of-memory session leaves the last line half written, which fails the
- * whole-file parse, so each line gets a `try` of its own rather than the run losing its
- * numbers to one exception.
- *
- * Where the fallback parses more than one `result`, none of them is used and every other message
- * goes with them, so `lastResult` answers null and the run ends with nothing extracted. That
- * rests on run.sh writing the log through `--output-format json`, which is one object: a complete
- * log parses in one piece, so the fallback only ever sees a file that was cut off, and a cut-off
- * file cannot hold two complete results. Under a streaming format the fallback would be the
- * ordinary path and this check would have to go with it. More than one result is bytes appended
- * past the end of a finished log, and the last of them is what `lastResult` would otherwise take
- * for the posted review. run.sh keeps that log on an unlinked descriptor for the length of the
- * session, so this backs that up rather than standing on its own.
+ * Both runners emit a complete JSON document. Multiple result lines in an unparseable
+ * document indicate appended content; accepting the last could replace the posted review.
  */
 export function messagesOf(text: string): RunLog {
     try {
@@ -81,10 +57,7 @@ export function messagesOf(text: string): RunLog {
 }
 
 /**
- * The last `result` message, which is the only complete one.
- *
- * The orchestrator emits a fresh structured output each time a lens reports back, so the log
- * holds several of these and every one before the last is a partial review.
+ * Claude can emit partial results as lenses report back; only the last is complete.
  */
 export function lastResult(messages: unknown[]): Record<string, unknown> | null {
     const results = messages.map(record).filter((m) => m !== null && m.type === "result");
@@ -158,11 +131,7 @@ export interface RunNumbers {
 }
 
 /**
- * The numbers a run reports, out of its last result message.
- *
- * The result's own `usage` counts the orchestrator's last turn and nothing else. Only
- * `modelUsage` covers the subagents, which is where a lens run spends everything: over a full
- * set of lenses the two differ by a factor of sixty.
+ * Claude's `usage` covers only the orchestrator's last turn; `modelUsage` includes subagents.
  */
 export function runNumbers(last: Record<string, unknown>): RunNumbers {
     const models = record(last.modelUsage);
@@ -188,7 +157,9 @@ export function runNumbers(last: Record<string, unknown>): RunNumbers {
 
     return {
         perModel,
-        outputTokens: perModel.length === 0 ? null : perModel.reduce((total, spend) => total + spend.outputTokens, 0),
+        outputTokens: last.engine === "codex"
+            ? number(record(last.usage)?.output_tokens)
+            : perModel.length === 0 ? null : perModel.reduce((total, spend) => total + spend.outputTokens, 0),
         costUsd: totalCost(number(last.total_cost_usd), summed, perModel.length),
         durationMs: number(last.duration_ms),
         // The whole list, not the entries this file could read. An entry it could not read is

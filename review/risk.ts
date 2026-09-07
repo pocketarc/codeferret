@@ -321,7 +321,10 @@ export function unratedAxes(risk: Partial<Risk> | undefined): AxisName[] {
     return AXIS_NAMES.filter((axis) => {
         const value = risk[axis];
 
-        return value === undefined || (value !== NOT_APPLICABLE && levelScore(axis, value) === null);
+        if (value === undefined) return true;
+        if (value === NOT_APPLICABLE) return !levelsOf(axis).some((level) => level.value === NOT_APPLICABLE);
+
+        return levelScore(axis, value) === null;
     });
 }
 

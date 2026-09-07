@@ -86,6 +86,16 @@ for (const w of checked.warnings) console.warn(`WARN ${w.label}: ${w.message}`);
 for (const p of checked.elsewhere) console.warn(`WARN ${p.label}: ${p.message}`);
 for (const p of checked.dropped) console.error(`DROP ${p.label}: ${p.message}`);
 
+const lost = checked.found - checked.kept;
+
+if (lost > 0 || checked.droppedEntries > 0) {
+    const warning =
+        `Warning: The validator removed ${lost} ${lost === 1 ? "finding" : "findings"} and ` +
+        `${checked.droppedEntries} other ${checked.droppedEntries === 1 ? "entry" : "entries"}. The posted review may be incomplete.`;
+    const notes = typeof checked.merged.notes === "string" ? checked.merged.notes : "";
+    checked.merged.notes = notes === "" ? warning : `${notes}\n\n${warning}`;
+}
+
 if (checked.changed) {
     await Bun.write(path, `${JSON.stringify(checked.merged, null, 2)}\n`);
 
@@ -97,8 +107,6 @@ if (checked.changed) {
 
     if (await count.exists()) await Bun.write(count, String(checked.kept));
 }
-
-const lost = checked.found - checked.kept;
 
 // A file with every finding gone is still worth posting, and 3 rather than 1 is what makes
 // the difference: run.sh writes the marker for 3 and the run still ends red. A run whose

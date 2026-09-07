@@ -251,10 +251,15 @@ runner_run_dir() {
     printf '%s/codeferret' "$RUNNER_TEMP"
 }
 
-# Where /codeferret:review puts a run: inside the git dir, so it is never in the tree under
-# review and never in a sibling worktree of it.
 session_run_dir() {
-    printf '%s/codeferret/run' "$(git rev-parse --absolute-git-dir)"
+    case ${REVIEW_ENGINE:-claude} in
+    claude) printf '%s/codeferret/run' "$(git rev-parse --absolute-git-dir)" ;;
+    codex) printf '%s/codeferret/codex-run' "$(git rev-parse --absolute-git-dir)" ;;
+    *)
+        echo "REVIEW_ENGINE must be claude or codex." >&2
+        return 1
+        ;;
+    esac
 }
 
 # Where a caller leaves the token run.sh's two GitHub fetches need, given the run directory.

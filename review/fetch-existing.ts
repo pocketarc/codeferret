@@ -19,10 +19,11 @@ import {
     graphql as request,
     requirePullNumber,
     requireRepository,
+    rest,
     restJson,
     tokenFromStdinOrEnv,
 } from "./github.ts";
-import { reason } from "./json.ts";
+import { reason, record } from "./json.ts";
 
 /**
  * The hidden marker on comments from the runs made while the plugin work was in progress,
@@ -167,8 +168,15 @@ async function restOfThread(id: string, from: string): Promise<GqlComment[]> {
 interface IssueComment {
     body: string;
     html_url: string;
-    user: { login: string };
+    user: { login: string } | null;
     author_association: string;
+}
+
+interface ReviewSummary {
+    body: string | null;
+    html_url: string;
+    user: { login: string } | null;
+    author_association: string | null;
 }
 
 /**
@@ -184,7 +192,8 @@ interface IssueComment {
  * leave that reading as a short conversation.
  */
 async function fetchConversation(): Promise<IssueComment[]> {
-    const all: IssueComment[] = [];
+    const comments: IssueComment[] = [];
+    const reviews: IssueComment[] = [];
 
     for (let page = 1; page <= MAX_PAGES; page += 1) {
         const batch = (await restJson(
@@ -192,11 +201,30 @@ async function fetchConversation(): Promise<IssueComment[]> {
             `/repos/${repo}/issues/${prNumber}/comments?per_page=100&page=${page}`,
         )) as IssueComment[];
 
-        all.push(...batch);
-        if (batch.length < 100) return all;
+        comments.push(...batch);
+        if (batch.length < 100) break;
+        if (page === MAX_PAGES) throw new Error(`the conversation is still going after ${MAX_PAGES} pages of 100 comments`);
     }
 
-    throw new Error(`the conversation is still going after ${MAX_PAGES} pages of 100 comments`);
+    for (let page = 1; page <= MAX_PAGES; page += 1) {
+        const batch = (await restJson(
+            token,
+            `/repos/${repo}/pulls/${prNumber}/reviews?per_page=100&page=${page}`,
+        )) as ReviewSummary[];
+
+        reviews.push(
+            ...batch.map((review) => ({
+                body: review.body ?? "",
+                html_url: review.html_url,
+                user: review.user,
+                author_association: review.author_association ?? "",
+            })),
+        );
+        if (batch.length < 100) break;
+        if (page === MAX_PAGES) throw new Error(`the reviews are still going after ${MAX_PAGES} pages of 100 reviews`);
+    }
+
+    return [...comments, ...reviews];
 }
 
 const raw: GqlThread[] = [];
@@ -228,21 +256,48 @@ try {
     console.error(`could not list review threads: ${threadError}`);
 }
 
-// Both halves of `mine` are required.
-//
-// The login: `github-actions[bot]` is the identity of every workflow posting with
-// `github.token`, so matching on it alone puts another workflow's threads on the list this
-// run may resolve, and resolving takes that workflow's words off the page.
-//
-// The marker: an HTML comment renders as nothing, so anyone who can open a review thread can
-// put it there and have this run adopt the thread. Resolving is the one non-model control on
-// what gets taken off the page, so it is not opened to whoever can comment.
-//
-// A trailing `<sub>` category line used to count as a second shape here, for the inline
-// threads `@v1.0.0` and earlier left. It was dropped on a measurement, not on a claim about
-// what has shipped: against a pull request carrying forty of this tool's own threads it
-// matched none of them, so it was buying nothing. Ordinary markup proves nothing about who
-// wrote a comment either, in a test whose whole job is to be narrow.
+let conversation: Commenter[] = [];
+let conversationComments: IssueComment[] = [];
+let conversationError: string | null = null;
+
+try {
+    conversationComments = await fetchConversation();
+} catch (error) {
+    conversationError = reason(error);
+    console.error(`could not list the conversation: ${conversationError}`);
+}
+
+const logins = new Set<string>();
+for (const thread of raw) {
+    for (const comment of thread.comments.nodes) {
+        if (comment.author?.login) logins.add(comment.author.login);
+    }
+}
+for (const comment of conversationComments) {
+    if (comment.user?.login) logins.add(comment.user.login);
+}
+
+const permissions = new Map<string, string>();
+let permissionError: string | null = null;
+
+async function repositoryPermission(login: string): Promise<string> {
+    const path = `/repos/${repo}/collaborators/${encodeURIComponent(login)}/permission`;
+    const response = await rest(token, path);
+
+    if (response.status === 404) return "";
+    if (!response.ok) throw new Error(`HTTP ${response.status} on ${path}: ${(await response.text()).slice(0, 200)}`);
+
+    const payload = record(await response.json());
+    return typeof payload?.permission === "string" ? payload.permission : "";
+}
+
+try {
+    for (const login of logins) permissions.set(login, await repositoryPermission(login));
+} catch (error) {
+    permissionError = reason(error);
+    console.error(`could not list repository permissions: ${permissionError}`);
+}
+
 const threads: Threaded[] = raw.map((t) => {
     const root = t.comments.nodes[0];
     const body = root?.body ?? "";
@@ -259,29 +314,24 @@ const threads: Threaded[] = raw.map((t) => {
         comments: t.comments.nodes.map((c) => ({
             author: c.author?.login ?? "unknown",
             association: c.authorAssociation,
-            // The reply's own url, not the thread's. A decline cites one comment, and
-            // post-review.ts reads that comment's association back to decide whether
-            // whoever wrote it may settle anything.
+            ...(c.author?.login && permissions.has(c.author.login)
+                ? { repository_permission: permissions.get(c.author.login) }
+                : {}),
             url: c.url ?? "",
             body: c.body,
         })),
     };
 });
 
-let conversation: Commenter[] = [];
-let conversationError: string | null = null;
-
-try {
-    conversation = (await fetchConversation()).map((c) => ({
-        author: c.user.login,
-        association: c.author_association,
-        body: c.body,
-        url: c.html_url,
-    }));
-} catch (error) {
-    conversationError = reason(error);
-    console.error(`could not list the conversation: ${conversationError}`);
-}
+conversation = conversationComments.map((c) => ({
+    author: c.user?.login ?? "unknown",
+    association: c.author_association,
+    ...(c.user?.login && permissions.has(c.user.login)
+        ? { repository_permission: permissions.get(c.user.login) }
+        : {}),
+    body: c.body,
+    url: c.html_url,
+}));
 
 // Typed as the shape every reader declares, so a field renamed here stops compiling rather
 // than reaching the vetting as an absence it cannot tell from "nobody said anything".
@@ -290,6 +340,7 @@ const written: Existing = {
     conversation,
     ...(threadError ? { error: threadError } : {}),
     ...(conversationError ? { conversation_error: conversationError } : {}),
+    ...(permissionError ? { permission_error: permissionError } : {}),
 };
 
 await Bun.write(outPath, `${JSON.stringify(written, null, 2)}\n`);
@@ -303,6 +354,6 @@ console.log(
         `  conversation comments: ${conversation.length}`,
 );
 
-if (threadError || conversationError) process.exit(1);
+if (threadError || conversationError || permissionError) process.exit(1);
 
 export {};

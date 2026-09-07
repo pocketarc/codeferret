@@ -16,8 +16,8 @@ one by one in each lens's own file under
 [`review/lens-extras/`](review/lens-extras/), and every review says what each lens could not
 check, in that lens's own words.
 
-There are two ways to run it: as a GitHub action on every pull request, or as a Claude
-Code plugin on the branch in front of you.
+Run CodeFerret as a GitHub action on pull requests, a Claude Code plugin, or a local
+Codex review on the branch you are working on.
 
 ## On a pull request
 
@@ -135,6 +135,70 @@ does. Three took about 15 minutes. An earlier run of 14 came to $36.00 in 20m46s
 and returned 97 findings. Budget between $2.50 and $2.70 a lens on Opus, and about 20
 minutes whatever the count. `/codeferret:review` says how many lenses it is about to
 dispatch, and waits; the action reports what each run cost in the job summary.
+
+## Local reviews with Codex
+
+Use the Codex CLI to review a checkout through the CodeFerret lenses. The CLI runs on your machine and sends review input to OpenAI-hosted models. Reviews use your ChatGPT subscription limits.
+
+Prerequisites:
+
+- Codex CLI (tested with 0.153.4).
+- Bun and git.
+- An existing Codex login through your ChatGPT subscription.
+
+In this checkout, invoke [`$codeferret-review`](.agents/skills/codeferret-review/SKILL.md) in Codex. For another checkout, use the commands below.
+
+1. Open a terminal in the checkout to review.
+2. Run the review against your base branch:
+
+   ```bash
+   bash /path/to/codeferret/review/codex.sh run origin/main
+   ```
+
+3. Print the checked results, including after any nonzero review exit status:
+
+   ```bash
+   bash /path/to/codeferret/review/codex.sh print
+   ```
+
+To select lenses, append their names:
+
+```bash
+bash /path/to/codeferret/review/codex.sh run origin/main comment-review writing-review
+```
+
+The default selection includes all default lenses. CodeFerret runs up to three lens processes at once, then starts a separate process to merge their reports.
+
+| Variable | Values and behavior |
+| --- | --- |
+| `CODEX_CONCURRENCY` | Maximum simultaneous lens processes. Default: `3`. Range: `1` through `16`. |
+| `CODEX_TIMEOUT_MS` | Timeout per Codex process in milliseconds. Default: `1800000`. Range: `1` through `43200000`. |
+| `MODEL` | Optional Codex model name. If unset, CodeFerret uses the Codex CLI default. CodeFerret ignores `config.toml`. |
+| `EFFORT` | Optional reasoning effort: `low`, `medium`, `high`, or `xhigh`. |
+| `INCLUDE_WORKING_TREE` | Set to `1` to include uncommitted tracked changes. Pass the merge-base commit explicitly as the base argument. |
+
+For a review that includes uncommitted changes, resolve the merge base first:
+
+```bash
+REVIEW_BASE=$(git merge-base origin/main HEAD)
+INCLUDE_WORKING_TREE=1 bash /path/to/codeferret/review/codex.sh run "$REVIEW_BASE"
+```
+
+Untracked files are absent from the diff. Use `git add -N` for each untracked file that you want to include.
+
+CodeFerret saves output under `<git-dir>/codeferret/codex-run/build`. Each process has a JSONL log under `<git-dir>/codeferret/codex-run/session`. The last Claude review remains separate. Codex does not supply a dollar price, so CodeFerret reports the cost as unknown.
+
+Each Codex process starts outside the repository with a read-only sandbox and `project_doc_max_bytes=0`. CodeFerret ignores `config.toml` and rules, and disables hooks, plugins, apps, memory, and browser tools. Global user `AGENTS.md` instructions and skills remain available to Codex. CodeFerret uses your existing login without copying `auth.json`.
+
+Tests with CLI 0.153.4 used a local synthetic Responses server. The target repository's `AGENTS.md` marker was absent, the sandbox denied a shell write, and CodeFerret parsed the JSON output. These tests did not run a live OpenAI review.
+
+Post results only when you explicitly choose to publish them:
+
+```bash
+bash /path/to/codeferret/review/codex.sh post PR_NUMBER
+```
+
+Posting requires an authenticated GitHub CLI and a matching pull request. Local Codex reviews do not change the CI workflow.
 
 ## Where things are
 

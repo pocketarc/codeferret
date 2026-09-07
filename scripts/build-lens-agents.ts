@@ -65,6 +65,7 @@ if (!namespace) {
 }
 
 const brief = await Bun.file("review/lens-brief.md").text();
+const repository = (await Bun.file("review/lens-repository.md").text()).trimEnd();
 const schema = (await Bun.file("review/lens-schema.json").text()).trim();
 
 /** What an extras file holds: the sentence a review prints for the lens, and the prose. */
@@ -115,6 +116,7 @@ function render(skillLine: string, extras: string): string {
     // replacement *string* as substitutions, and JSON Schema's whole vocabulary is
     // `$schema`, `$ref`, `$defs`.
     const out = brief
+        .replace("__REPOSITORY__", () => repository)
         .replace("__SKILL_LINE__", () => skillLine)
         .replace("__EXTRAS__", () => extras)
         .replace("__SCHEMA__", () => schema);
