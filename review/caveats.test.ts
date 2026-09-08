@@ -14,8 +14,8 @@ describe("the sentences a reader gets when a suppression is reopened", () => {
         const [unvouched] = reopenedReasons({ ...settled, unvouched: 1 });
 
         expect(untraceable).toContain("cited no comment from");
-        expect(untraceable).toContain("organization member with admin, maintain, or push permission on the repository");
-        expect(unvouched).toContain("organization member with admin, maintain, or push permission on the repository");
+        expect(untraceable).toContain("organization member with `admin`, `maintain`, `push`, or `write` repository permission");
+        expect(unvouched).toContain("organization member with `admin`, `maintain`, `push`, or `write` repository permission");
     });
 
     test("names every association the rule admits and none it refuses", () => {

@@ -16,7 +16,14 @@ PLUGIN=${1:?usage: local-print.sh PLUGIN_ROOT}
 # shellcheck source=review/lib.sh
 . "$PLUGIN/review/lib.sh"
 
-run_dirs "$(session_run_dir)"
+RUN_ROOT=$(session_run_dir)
+mkdir -p "$(dirname "$RUN_ROOT")"
+LOCK_DIR="${RUN_ROOT}.lock"
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+    exit 1
+fi
+trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT
+run_dirs "$RUN_ROOT"
 BUILD=$BUILD_DIR
 FINDINGS="$BUILD/findings.json"
 

@@ -267,14 +267,14 @@ try {
     console.error(`could not list the conversation: ${conversationError}`);
 }
 
-const logins = new Set<string>();
+const memberLogins = new Set<string>();
 for (const thread of raw) {
     for (const comment of thread.comments.nodes) {
-        if (comment.author?.login) logins.add(comment.author.login);
+        if (comment.author?.login && comment.authorAssociation === "MEMBER") memberLogins.add(comment.author.login);
     }
 }
 for (const comment of conversationComments) {
-    if (comment.user?.login) logins.add(comment.user.login);
+    if (comment.user?.login && comment.author_association === "MEMBER") memberLogins.add(comment.user.login);
 }
 
 const permissions = new Map<string, string>();
@@ -291,10 +291,22 @@ async function repositoryPermission(login: string): Promise<string> {
     return typeof payload?.permission === "string" ? payload.permission : "";
 }
 
-try {
-    for (const login of logins) permissions.set(login, await repositoryPermission(login));
-} catch (error) {
-    permissionError = reason(error);
+const PERMISSION_CONCURRENCY = 4;
+const permissionFailures: string[] = [];
+const permissionQueue = memberLogins.values();
+const permissionWorkers = Array.from({ length: Math.min(PERMISSION_CONCURRENCY, memberLogins.size) }, async () => {
+    for (const login of permissionQueue) {
+        try {
+            permissions.set(login, await repositoryPermission(login));
+        } catch (error) {
+            permissionFailures.push(`${login}: ${reason(error)}`);
+        }
+    }
+});
+
+await Promise.all(permissionWorkers);
+if (permissionFailures.length > 0) {
+    permissionError = permissionFailures.join("; ");
     console.error(`could not list repository permissions: ${permissionError}`);
 }
 

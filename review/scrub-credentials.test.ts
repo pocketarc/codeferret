@@ -177,6 +177,18 @@ describe("scrub-credentials.sh", () => {
 
             expect(scrub(dir).code).toBe(0);
         });
+
+        test("keeps an included file that contains no credentials", () => {
+            const dir = repo();
+            const config = join(realpathSync(mkdtempSync(join(tmpdir(), "gitconfig-"))), "config");
+
+            git(dir, "config", "--file", config, "user.name", "a caller");
+            git(dir, "config", "--local", `includeIf.gitdir:${join(dir, ".git")}.path`, config);
+
+            expect(scrub(dir).code).toBe(0);
+            expect(existsSync(config)).toBe(true);
+            expect(git(dir, "config", "--file", config, "user.name")).toBe("a caller");
+        });
     });
 
     describe("the mechanism an older checkout uses", () => {
@@ -522,6 +534,18 @@ describe("scrub-credentials.sh", () => {
             expect(scrub(dir).code).toBe(0);
             expect(reachable(join(dir, "vendor"))).toBe("");
             expect(existsSync(cred)).toBe(false);
+        });
+
+        test("scrubs credentials from an inactive submodule Git directory", () => {
+            const dir = withSubmodule();
+            git(dir, "submodule", "deinit", "-f", "--", "vendor");
+            const modules = git(dir, "rev-parse", "--git-path", "modules");
+            const moduleDir = modules.startsWith("/") ? join(modules, "vendor") : join(dir, modules, "vendor");
+
+            plantHeader(moduleDir);
+
+            expect(scrub(dir).code).toBe(0);
+            expect(reachable(moduleDir)).toBe("");
         });
     });
 

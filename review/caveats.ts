@@ -27,7 +27,7 @@ function orList(items: string[]): string {
 
 const ENTITLED = [...MAY_DECLINE]
     .map((association) => association.toLowerCase())
-    .concat("organization member with admin, maintain, or push permission on the repository");
+    .concat("organization member with `admin`, `maintain`, `push`, or `write` repository permission");
 const ENTITLED_NAMED = orList(ENTITLED.map((noun) => `${"aeiou".includes(noun[0] ?? "") ? "an" : "a"} ${noun}`));
 
 /** The same list where the sentence supplies the article: "no owner or collaborator". */

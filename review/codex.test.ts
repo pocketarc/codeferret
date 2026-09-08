@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { codexArgs, codexResult, concurrent, strictSchema, withoutNullProperties } from "./codex.ts";
+import { codexArgs, codexResult, concurrent, renderTemplate, strictSchema, withoutNullProperties } from "./codex.ts";
 import { reportedNumbers, runNumbers } from "./run-log.ts";
 import { record } from "./json.ts";
 
@@ -88,4 +88,11 @@ test("limits parallel work and retains dispatch order", async () => {
     });
     expect(result).toEqual([30, 20, 10, 1]);
     expect(peak).toBe(2);
+});
+
+test("replaces each template placeholder once", () => {
+    expect(renderTemplate("before __FIRST__ after __SECOND__", {
+        __FIRST__: "__SECOND__",
+        __SECOND__: "done",
+    })).toBe("before __SECOND__ after done");
 });

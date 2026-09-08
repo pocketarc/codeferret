@@ -184,7 +184,7 @@ export interface Partitioned {
 
 // GitHub's MEMBER association indicates organization membership, not repository permission.
 export const MAY_DECLINE: ReadonlySet<string> = new Set(["OWNER", "COLLABORATOR"]);
-export const MAY_DECLINE_PERMISSIONS: ReadonlySet<string> = new Set(["admin", "maintain", "push"]);
+export const MAY_DECLINE_PERMISSIONS: ReadonlySet<string> = new Set(["admin", "maintain", "push", "write"]);
 
 /** Whether whoever wrote a comment has standing in the repository. */
 function entitled(comment: Located): boolean {

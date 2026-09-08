@@ -95,18 +95,5 @@ if [ -n "$PR" ]; then
     printf '%s' "$GITHUB_TOKEN" | stage_token "$RUN_DIR"
 fi
 
-# Outside the branch above, because the reason holds whether or not this run staged a
-# credential. A developer with GITHUB_TOKEN or GH_TOKEN exported in their own shell hands it
-# to every process they start, and on a branch with no pull request nothing above runs, so
-# the value reached the environment run.sh was execve'd with and stayed readable in /proc for
-# the length of the review. Dropping them here covers both, and costs nothing when neither
-# was set: run.sh takes the token it needs from the file named above.
-unset -v GITHUB_TOKEN GH_TOKEN
-
-if bash "$PLUGIN/review/run.sh" "$BASE" "$PLUGIN" "$RUN_DIR" "$TOPLEVEL"; then
-    status=0
-else
-    status=$?
-fi
-
-exit "$status"
+exec env -u GITHUB_TOKEN -u GH_TOKEN bash "$PLUGIN/review/local-run-exec.sh" \
+    "$PLUGIN" "$BASE" "$RUN_DIR" "$TOPLEVEL" "$LOCK_DIR"

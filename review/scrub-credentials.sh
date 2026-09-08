@@ -77,6 +77,18 @@ REWRITES='^url\..*\.insteadof$'
 # lag detection, and a run that cannot clean what it found stops rather than certifying it.
 CREDENTIAL='(AUTHORIZATION:|://[^/[:space:]]*:[^/[:space:]]*@|gh[psour]_|github_pat_)'
 
+has_credential() {
+    local line
+
+    while IFS= read -r line; do
+        if [[ "$line" =~ $CREDENTIAL ]]; then
+            return 0
+        fi
+    done < <(git config --file "$1" --list 2>/dev/null || true)
+
+    return 1
+}
+
 # The authority alone, so a `@` anywhere in the path does not count. Only `http` and `https`, so
 # the `git@` of an ssh remote is left alone: it is a username with no secret behind it, and
 # stripping it would leave a remote that no longer resolves.
@@ -225,7 +237,7 @@ scrub_repo() {
 
             # A checkout writes one set of these for the runner's paths and another for the
             # container's, so a path that is not there is the ordinary case rather than a fault.
-            if [ -f "$path" ]; then
+            if [ -f "$path" ] && has_credential "$path"; then
                 rm -f "$path" || true
                 echo "removed the credentials file $(redact "$path")"
             fi
@@ -348,6 +360,12 @@ repositories() {
     # exactly like a workspace holding one repository.
     find "$WORKSPACE" -name node_modules -prune -o -name .git -print -prune 2>/dev/null |
         while IFS= read -r found; do dirname "$found"; done
+
+    local modules
+    modules=$(git rev-parse --git-path modules 2>/dev/null || true)
+    if [ -d "$modules" ]; then
+        while IFS= read -r found; do dirname "$found"; done < <(find "$modules" -type f -name config -print 2>/dev/null)
+    fi
 }
 
 each_repository() {

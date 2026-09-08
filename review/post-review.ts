@@ -238,7 +238,7 @@ const {
 } = composeReview(
     merged,
     {
-        resolved: plannedResolved,
+        resolved: dryRun ? plannedResolved : [],
         resolveDenied: false,
         leftOpen: 0,
         to,
@@ -251,7 +251,7 @@ const {
 
 console.log(
     `total=${allFindings.length} new=${findings.length} suppressed=${suppressed.length}` +
-        ` declined=${declined.length} listed=${listed.length} resolved=${plannedResolved.length}/${asked.length}`,
+        ` declined=${declined.length} listed=${listed.length} resolve-planned=${plannedResolved.length}/${asked.length}`,
 );
 
 // A run where every lens died also produces no findings, and posting nothing leaves the pull

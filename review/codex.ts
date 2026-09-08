@@ -11,6 +11,32 @@ export function validLensName(value: string): boolean {
         plainName(value.slice(0, separator)) && plainName(value.slice(separator + 1));
 }
 
+function escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\[\]\\]/g, "\\$&");
+}
+
+export function renderTemplate(template: string, replacements: Readonly<Record<string, string>>): string {
+    const keys = Object.keys(replacements);
+    const known = new Set(keys);
+    const markers = [...template.matchAll(/__[A-Z_]+__/g)].map((match) => match[0]);
+    const unknown = [...new Set(markers.filter((marker) => !known.has(marker)))];
+    if (unknown.length > 0) throw new Error(`The prompt has unfilled placeholders: ${unknown.join(", ")}`);
+
+    const seen = new Set<string>();
+    const pattern = keys.length > 0 ? new RegExp(keys.map(escapeRegExp).join("|"), "g") : null;
+    const rendered = pattern
+        ? template.replace(pattern, (placeholder) => {
+              if (seen.has(placeholder)) throw new Error(`The prompt must contain ${placeholder} exactly once.`);
+              seen.add(placeholder);
+              return replacements[placeholder] ?? "";
+          })
+        : template;
+    const missing = keys.filter((key) => !seen.has(key));
+    if (missing.length > 0) throw new Error(`The prompt must contain ${missing[0]} exactly once.`);
+
+    return rendered;
+}
+
 export function strictSchema(value: unknown): unknown {
     if (Array.isArray(value)) return value.map(strictSchema);
     const node = record(value);

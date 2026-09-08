@@ -23,7 +23,7 @@
 @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
         --ground: #141518; --surface: #1B1D21; --surface-2: #232529;
-        --ink: #E9E7E2; --ink-2: #B6B8BD; --muted: #878B93;
+        --ink: #E9E7E2; --ink-2: #B6B8BD; --muted: #9A9EA6;
         --line: #2C2F34; --line-2: #3A3E45;
         --accent: #6FB6BC; --accent-ink: #8FCED3; --accent-wash: #173134;
         --t-critical: #EE8880; --t-high: #E0736B; --t-medium: #D9974C; --t-low: #93A7C0; --t-nit: #9A9EA6;
@@ -35,7 +35,7 @@
 }
 :root[data-theme="dark"] {
     --ground: #141518; --surface: #1B1D21; --surface-2: #232529;
-    --ink: #E9E7E2; --ink-2: #B6B8BD; --muted: #878B93;
+    --ink: #E9E7E2; --ink-2: #B6B8BD; --muted: #9A9EA6;
     --line: #2C2F34; --line-2: #3A3E45;
     --accent: #6FB6BC; --accent-ink: #8FCED3; --accent-wash: #173134;
     --t-critical: #EE8880; --t-high: #E0736B; --t-medium: #D9974C; --t-low: #93A7C0; --t-nit: #9A9EA6;
@@ -105,7 +105,7 @@ main { padding: 34px 0 60px; }
 .finding h3 { flex: 1; margin: 0; font-size: 16px; font-weight: 600; letter-spacing: -.012em;
     line-height: 1.32; text-wrap: balance; }
 .tick { flex: none; width: 19px; height: 19px; margin-top: 2px; accent-color: var(--done); cursor: pointer; }
-.finding.done { opacity: .5; }
+.finding.done { border-color: var(--done); }
 .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 9px 0 0; }
 .score { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11px; font-weight: 700;
     letter-spacing: .06em; text-transform: uppercase; padding: 3px 8px; border-radius: 2px;
@@ -139,7 +139,8 @@ main { padding: 34px 0 60px; }
 .axis { min-width: 0; }
 .axis .n { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 10px;
     letter-spacing: .06em; color: var(--muted); display: flex; justify-content: space-between; gap: 8px; }
-.axis .n em { font-style: normal; color: var(--muted); opacity: .7; }
+.axis .n em { font-style: normal; color: var(--muted); }
+.axis .q { color: var(--ink-2); font-size: 12px; line-height: 1.4; margin: 5px 0 0; }
 .axis .v { font-size: 13px; font-weight: 600; margin: 2px 0 3px; overflow-wrap: anywhere; }
 .axis.na .v { color: var(--muted); font-weight: 500; }
 .track { height: 3px; background: var(--bar-off); border-radius: 2px; overflow: hidden; }
@@ -154,7 +155,7 @@ h2 { font-size: 12px; font-family: "JetBrains Mono", ui-monospace, monospace; fo
 .prose p { margin: 0 0 .85em; }
 .prose code { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: .84em;
     background: var(--surface-2); padding: .1em .35em; border-radius: 2px; overflow-wrap: anywhere; }
-.lenses { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1px;
+.lenses { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 1px;
     background: var(--line); border: 1px solid var(--line); }
 .lcell { background: var(--surface); padding: 12px 14px; }
 .lcell .nm { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12px; font-weight: 700;
@@ -301,15 +302,17 @@ footer { border-top: 1px solid var(--line); padding: 18px 0 40px;
         return null;
     }
     function ratingOf(f) {
-        var cells = Object.keys(D.axes).map(function (axis) {
+        var cells = Object.keys(D.axes).map(function (axis, axisIndex) {
             var value = f.risk[axis];
             var level = value === undefined ? null : levelOf(axis, value);
             var na = value === undefined || value === "not-applicable" || level === null;
             var pct = level && !na ? Math.round(level.s * 100) : 0;
             var shown = value === undefined ? "(unanswered)" : value;
+            var questionId = f.headingId + "-axis-" + axisIndex;
 
-            return '<div class="axis' + (na ? " na" : "") + '" title="' + esc(D.axes[axis].question) + '">' +
+            return '<div class="axis' + (na ? " na" : "") + '" aria-describedby="' + esc(questionId) + '">' +
                 '<p class="n"><span>' + esc(axis.replace(/_/g, " ")) + "</span><em>" + esc(D.axes[axis].kind) + "</em></p>" +
+                '<p class="q" id="' + esc(questionId) + '">' + esc(D.axes[axis].question) + "</p>" +
                 '<p class="v">' + esc(shown) + "</p>" +
                 '<div class="track"><i style="width:' + pct + '%"></i></div></div>';
         }).join("");

@@ -194,7 +194,7 @@ describe("vetSuppression: who may settle a finding", () => {
         });
     }
 
-    for (const permission of ["admin", "maintain", "push"]) {
+    for (const permission of ["admin", "maintain", "push", "write"]) {
         test(`a finding is suppressed when an organization member with ${permission} permission on the repository declines it`, () => {
             const out = vet(
                 [declined("https://github.com/o/r/pull/1#discussion_r2")],
