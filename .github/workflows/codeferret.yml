@@ -4,14 +4,24 @@ on:
     pull_request:
         types: [opened, synchronize, ready_for_review, reopened]
 
+concurrency:
+    group: codeferret-${{ github.event.pull_request.number }}
+    cancel-in-progress: true
+
 jobs:
     review:
-        if: contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
+        # The reason for each of these is in templates/workflow.yml, the same gate
+        # written out for people installing CodeFerret.
+        if: >-
+            github.event.pull_request.draft == false &&
+            github.event.pull_request.head.repo.full_name == github.repository &&
+            contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
         runs-on: ubuntu-latest
         timeout-minutes: 60
         permissions:
             contents: read
             pull-requests: write
+            actions: read
 
         steps:
             - name: Checkout the head commit
@@ -24,11 +34,64 @@ jobs:
               uses: ./
               with:
                   claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-
-            - name: Keep the run for inspection
-              if: always()
-              uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-              with:
-                  name: codeferret-run
-                  path: ${{ runner.temp }}/codeferret/build/
-                  retention-days: 14
+                  # This repository is public, so whatever is named here is downloadable by
+                  # anyone for 14 days, and an artifact's contents are not secret-masked the
+                  # way a step log is. What is named here is what a maintainer reads when a
+                  # review goes wrong: what it found, what the session said while finding it,
+                  # and which lenses were dispatched.
+                  #
+                  # It was `.`, which is the whole build directory: `existing.json` and
+                  # `previous.json` with it, and both carry other people's comment text.
+                  #
+                  # Do not read a shorter list as a bound on what leaves the runner. The
+                  # orchestrator ran with Bash under bypassPermissions, so every path below is
+                  # one it could have rewritten, and `upload-artifact` globs its `path` with
+                  # symbolic links followed, so an entry replaced with a link goes up as
+                  # whatever it points at. What bounds that is the job's `if:` above, which
+                  # runs no review for a fork or for anyone outside the repository. What this
+                  # list settles is what a maintainer opens.
+                  #
+                  # `cost-usd`, `duration-ms` and `permission-denials` are this run's own
+                  # measurements, and `extract-findings.ts` derives each from a field of
+                  # `run.json`. They are named so that reading one is a `cat` rather than a
+                  # walk through JSON, and `permission-denials` is the one a maintainer
+                  # reaches for when a review comes back thinner than it should.
+                  #
+                  # `findings-checked` is none of that. It is not in `run.json` and cannot be
+                  # derived from it: run.sh writes it from `check-findings.ts`'s exit code once
+                  # the session has ended, and the posting step posts nothing without it, so a
+                  # maintainer asking why a paid-for review was never posted reads it here.
+                  #
+                  # `session-changed.txt` is the one file below that says whether any of the
+                  # rest may be the session's own answer rather than what this run built. The
+                  # posted review already carries the warning it feeds; a maintainer reading
+                  # the artifact instead of the pull request gets it only if it is here too.
+                  artifact-path: |
+                      findings.json
+                      run.json
+                      lens-list.txt
+                      session-changed.txt
+                      cost-usd
+                      duration-ms
+                      permission-denials
+                      findings-checked
+                  # The two lenses below are run by hand against the working tree before a
+                  # push instead, because what they report is a function of how much prose the
+                  # last commit wrote: on the run that followed 42 of their findings being
+                  # fixed, comment-review came back with 31 more. Nothing is wrong with either
+                  # lens. This branch rewrites too much prose per round for a review to be the
+                  # place to catch it.
+                  #
+                  # Expires 2026-09-14: once that date has passed, `checkWorkflowLenses`
+                  # fails this repository's own lint until somebody turns the two back on or
+                  # writes down a new reason with a new date. Without it, "take this out once
+                  # the diffs are small" is a judgement nobody is scheduled to make, and a
+                  # lens that is off is a lens nobody is measuring.
+                  #
+                  # Subtracted rather than restated. `lenses` replaces the default, so the
+                  # list that used to sit here went stale the moment a lens was added to
+                  # action.yml, and a validator check and a map of the two names existed only
+                  # to reconcile the copy.
+                  exclude-lenses: |
+                      comment-review
+                      writing-review

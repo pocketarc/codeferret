@@ -1,8 +1,0 @@
-{
-    "name": "codeferret",
-    "version": "0.1.0",
-    "description": "Code review skills bundled as lenses for CodeFerret.",
-    "author": {
-        "name": "pocketarc"
-    }
-}

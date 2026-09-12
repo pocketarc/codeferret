@@ -1,0 +1,153 @@
+// The rules over a parsed value, with no process to spawn and no log to match on.
+// check-findings.test.ts covers the command around this: the exit codes and what it prints.
+
+import { describe, expect, test } from "bun:test";
+import { applyRules, readSchema, selfCheck } from "./finding-rules.ts";
+import { isMerged } from "./findings.ts";
+import { rawFinding as finding, riskFor } from "./test-fixtures.ts";
+
+const schema = await readSchema();
+
+const check = (merged: Record<string, unknown>, dispatched: string[] = []) =>
+    applyRules(schema, structuredClone(merged), dispatched);
+
+describe("selfCheck", () => {
+    test("every rule names a field the shipped schema has", () => {
+        const rules = selfCheck(schema);
+
+        expect(rules.stray).toEqual([]);
+        expect(rules.enumsLost).toEqual([]);
+        expect(rules.rules).toBeGreaterThan(0);
+    });
+
+    test("a schema with no status enum turns the status repair off", () => {
+        expect(selfCheck({ type: "object", properties: {} }).enumsLost).toEqual(["status"]);
+    });
+
+    test("ruleFor answers every axis under risk with the entry on risk itself", () => {
+        expect(selfCheck(schema).unruled).toEqual([]);
+    });
+});
+
+describe("applyRules", () => {
+    test("a file with nothing wrong is left alone", () => {
+        const out = check({ findings: [finding()] });
+
+        expect(out.changed).toBe(false);
+        expect(out.dropped).toEqual([]);
+        expect(out.kept).toBe(1);
+    });
+
+    test("a finding with no body is dropped and named, and the rest of the file survives", () => {
+        const bare = finding({ title: "Nothing to render" });
+        delete bare.body;
+
+        const out = check({ findings: [bare, finding()] });
+
+        expect(out.kept).toBe(1);
+        expect(out.dropped[0]?.label).toContain("Nothing to render");
+    });
+
+    test("a finding whose risk names a value the schema does not is kept and noted", () => {
+        const out = check({ findings: [finding({ risk: { ...riskFor("high"), impact: "apocalyptic" } })] });
+
+        expect(out.kept).toBe(1);
+        expect(out.dropped).toEqual([]);
+        expect(out.warnings[0]?.message).toContain("apocalyptic");
+    });
+
+    test("a finding with no risk at all is kept, and scores as a nit", () => {
+        const bare = finding();
+        delete bare.risk;
+
+        expect(check({ findings: [bare] }).kept).toBe(1);
+    });
+
+    test("normalizes optional metadata for the reader", () => {
+        const out = check({ findings: [finding({ found_by: ["caveman-review", 4], risk: "unknown" })] });
+        const kept = (out.merged.findings as Array<Record<string, unknown>>)[0];
+
+        expect(kept?.found_by).toEqual(["caveman-review"]);
+        expect(kept?.risk).toBeUndefined();
+        expect(isMerged(out.merged)).toBe(true);
+    });
+
+    test("a lens claiming health as a string reads as needing attention", () => {
+        const out = check({
+            findings: [finding()],
+            lens_health: [{ lens: "codeferret:a", findings_returned: 0, ok: "false" }],
+        });
+
+        const health = out.merged.lens_health as Array<{ ok?: unknown }>;
+
+        expect(health[0]?.ok).toBe(false);
+        expect(out.repairs.some((r) => r.includes("needing attention"))).toBe(true);
+    });
+
+    test("a negative finding count is repaired rather than rendered", () => {
+        const out = check({
+            findings: [finding()],
+            lens_health: [{ lens: "codeferret:a", findings_returned: -3, ok: true }],
+        });
+
+        const health = out.merged.lens_health as Array<{ findings_returned?: unknown }>;
+
+        expect(health[0]?.findings_returned).toBe(0);
+        expect(out.repairs.some((r) => r.includes("-3"))).toBe(true);
+    });
+
+    test("a lens that returned nothing keeps its zero", () => {
+        const out = check({
+            findings: [finding()],
+            lens_health: [{ lens: "codeferret:a", findings_returned: 0, ok: true }],
+        });
+
+        const health = out.merged.lens_health as Array<{ findings_returned?: unknown }>;
+
+        expect(health[0]?.findings_returned).toBe(0);
+        expect(out.repairs.some((r) => r.includes("is not a count"))).toBe(false);
+    });
+
+    test("a dispatched lens with no health of its own is named", () => {
+        const out = check(
+            { findings: [finding()], lens_health: [{ lens: "codeferret:a", findings_returned: 1, ok: true }] },
+            ["codeferret:a", "codeferret:b"],
+        );
+
+        expect(out.coverage[0]).toContain("b ran and reported no health");
+    });
+
+    test("a lens list and a health list spelled differently are the same lenses", () => {
+        const out = check(
+            { findings: [finding()], lens_health: [{ lens: "a", findings_returned: 1, ok: true }] },
+            ["codeferret:a"],
+        );
+
+        expect(out.coverage).toEqual([]);
+    });
+
+    test("a `posted` record nothing has posted is removed", () => {
+        const out = check({ findings: [finding()], posted: { at: "now", url: null, pr: "1" } });
+
+        expect(out.merged.posted).toBeUndefined();
+        expect(out.repairs[0]).toContain("posted");
+    });
+
+    // A blank title or file renders as debris (`****`, or an unbalanced code span from `` `` ``)
+    // rather than a claim a reader can act on. `title` and `file` are schema-typed strings with
+    // no `POLICY.tolerated` entry, so the walk's own "is empty" check is fatal for both and the
+    // finding is dropped whole before review-body.ts ever sees it.
+    test("a blank title is dropped rather than rendered as bare emphasis", () => {
+        const out = check({ findings: [finding({ title: "   " })] });
+
+        expect(out.kept).toBe(0);
+        expect(out.dropped[0]?.message).toBe("is empty");
+    });
+
+    test("a blank file is dropped rather than rendered as an unbalanced code span", () => {
+        const out = check({ findings: [finding({ file: "" })] });
+
+        expect(out.kept).toBe(0);
+        expect(out.dropped[0]?.message).toBe("is empty");
+    });
+});

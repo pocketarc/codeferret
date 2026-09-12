@@ -33,7 +33,7 @@ if [ ! -f "$DEST/SKILL.md" ]; then
     exit 1
 fi
 
-bun "$ROOT/scripts/prepare-skill.ts" "$DEST/SKILL.md" "$NAME"
+bun --config=/dev/null "$ROOT/scripts/prepare-skill.ts" "$DEST/SKILL.md" "$NAME"
 
 if [ ! -s "$PROVENANCE" ]; then
     printf 'local_name\trepo\tcommit\tsubdir\n' >"$PROVENANCE"

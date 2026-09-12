@@ -1,0 +1,64 @@
+name: CodeFerret
+
+# `pull_request` and never `pull_request_target`. That trigger runs with the secrets
+# available against a head sha that is the fork's commit, which is the usual way an action
+# holding a token comes to run somebody else's code. The action refuses to start under it, so
+# changing this line does not get external pull requests reviewed, and neither does dropping
+# the head-repo test from the gate below.
+on:
+    pull_request:
+        types: [opened, synchronize, ready_for_review, reopened]
+
+concurrency:
+    group: codeferret-${{ github.event.pull_request.number }}
+    cancel-in-progress: true
+
+jobs:
+    review:
+        # GitHub withholds the secret from a pull request whose branch lives on a fork,
+        # whoever opened it, so a fork's run would fail deep inside the review with an
+        # empty token rather than at the gate. Author association is no substitute: a
+        # collaborator working from their own fork gets no secret either.
+        #
+        # A draft is work its author has marked unfinished, and without the draft test
+        # every push to one costs a full review.
+        if: >-
+            github.event.pull_request.draft == false &&
+            github.event.pull_request.head.repo.full_name == github.repository &&
+            contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
+        runs-on: ubuntu-latest
+        # A full set of lenses on a small diff takes around 20 minutes.
+        timeout-minutes: 60
+        permissions:
+            # Every one of these is granted to a job that runs an agent with Bash on
+            # untrusted text, and the agent, the OAuth token and this job's token share one
+            # runner. A composite action has steps rather than jobs, so nothing about it
+            # separates the step that reviews from the step that posts. Read the list below
+            # as what a review talked into running a command could reach, not as what the
+            # action itself needs.
+            #
+            # One feature asks for `write` here, and it is `resolve-threads: 'true'`, which
+            # closes the inline threads CodeFerret's older versions left behind. Grant the
+            # pair only while an open pull request still carries one of those threads, and
+            # put this back to `read` once none does.
+            contents: read
+            # Granted unconditionally, and this is the one that writes to the pull request.
+            # Splitting the posting into a second job that never runs the agent is what would
+            # take it out of the agent's reach; this template does not, because the action
+            # posts for you.
+            pull-requests: write
+            # What lets a run read the findings the previous run kept, so a finding is
+            # posted once instead of on every push. It is used for that and nothing else,
+            # and it grants no more than reading this repository's own runs and their
+            # artifacts.
+            actions: read
+
+        steps:
+            # `v1` is a mutable tag, moved to each new release, so you get fixes without
+            # editing this file. Pin `@v1.1.0` or a commit SHA instead if you would rather
+            # read what runs before it runs: this job holds your OAuth token and
+            # `pull-requests: write`, and it runs an agent with Bash.
+            - name: CodeFerret
+              uses: pocketarc/codeferret@v1
+              with:
+                  claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

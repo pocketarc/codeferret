@@ -1,0 +1,719 @@
+/**
+ * Reading and neutralising markdown a model wrote.
+ *
+ * Two things here need to know where a fenced block starts and stops, and must not touch
+ * what is inside one: the review body escapes prose a model wrote, and
+ * `scripts/rewrite-markdown.ts` rewrites a vendored skill and can delete a line.
+ *
+ * The escaping below is the whole policy for what a model's prose may open in a posted
+ * review: what a character does mid-line and what it does at the start of one are decided
+ * here and nowhere else.
+ */
+
+/**
+ * The text with every line ending the renderer honours written as `\n`.
+ *
+ * CommonMark ends a line at `\n`, at `\r\n`, and at a lone `\r`, and GitHub's cmark-gfm does
+ * the same. Split on `\n` alone, a `\r` sits in the middle of what this module calls a line
+ * while the reader sees two: `FENCE` below stops matching a delimiter the renderer still
+ * closes a block on, because `.` does not match `\r` and `$` without `m` is the end of the
+ * input, and every line-start escape then misses the half of the line after it. Measured
+ * against `prose`: a closed fence whose closing delimiter carried a trailing carriage return
+ * left the scanner inside a block the renderer had already shut, and the `<img>`, the
+ * `<details>` and the `@` below it all reached the page unescaped.
+ *
+ * The input reaches here. `orchestrator.md` tells the orchestrator to copy attempted-injection
+ * text out of pull request comments into `notes`, and the GitHub API takes whatever line
+ * endings whoever wrote a comment chose.
+ */
+function normalised(text: string): string {
+    return text.replace(/\r\n?/g, "\n");
+}
+
+/**
+ * The text as the lines a renderer reads.
+ *
+ * Nothing in this module or its callers splits markdown for itself. This is the splitter, and
+ * every exported function below that takes a whole string normalises through it before
+ * anything looks at the text, so a line ending can be wrong in one place rather than in each
+ * of the escapes.
+ */
+export function splitLines(text: string): string[] {
+    return normalised(text).split("\n");
+}
+
+/**
+ * A fenced block's delimiter, at the indentation the renderer reads as one.
+ *
+ * CommonMark allows three spaces before an opening or closing fence and reads a fourth as an
+ * indented code block, which opens nothing. Matched at any indentation, a marker the renderer
+ * ignores would turn the escaping below off for every line after it: a `<details>` in the
+ * prose that follows hides the rest of the review, and a `@` notifies whoever owns that name.
+ * A tab is four columns, so it is outside the bound too.
+ */
+const FENCE = /^ {0,3}(```+|~~~+)(.*)$/;
+
+/**
+ * Whether a delimiter line opens a block, which is not the same question as whether it is a
+ * delimiter.
+ *
+ * CommonMark: "If the info string comes after a backtick fence, it may not contain any
+ * backtick characters." So ```` ```x`y ```` is a paragraph to GitHub and was an opening fence
+ * here, and the disagreement lands on the side that stops escaping: every line after it came
+ * back marked fenced, `escapeBlocks` skipped it, and a `<details>` and an `@` in a finding's
+ * body reached the page live. `closeOpenFence` then appended a delimiter the renderer reads
+ * as an *opening* one, which is the inversion `prose` warns about.
+ *
+ * A tilde fence keeps the current reading, because its info string may hold backticks.
+ */
+function opens(fence: string, info: string): boolean {
+    return fence[0] !== "`" || !info.includes("`");
+}
+
+/**
+ * Whether a run of delimiters closes a block the given run opened.
+ *
+ * The length is what lets one code block nest inside another: a four-backtick fence around
+ * three-backtick samples. Read as a single character, the inner ``` closes the outer ````,
+ * and every line after it is read as prose.
+ *
+ * The info string is the other half of that. CommonMark lets only an opening fence carry
+ * one, so ```` ```sql ```` can never close a block. Without the rule a nested ```` ```sql ````
+ * sample ends its parent block of the same length, and every line inside it comes back as
+ * prose the rewriter may edit or delete. Vendored skills nest fences that way.
+ */
+function closes(fence: string, info: string, open: string): boolean {
+    return fence[0] === open[0] && fence.length >= open.length && /^[ \t]*$/.test(info);
+}
+
+function indentation(line: string): number {
+    return line.match(/^ */)?.[0].length ?? 0;
+}
+
+function listMarker(line: string): { indent: number; contentIndent: number } | null {
+    const marker = line.match(/^( *)([-+*]|\d+[.)])([ \t]+|$)/);
+
+    if (!marker) return null;
+
+    const indent = (marker[1] ?? "").length;
+    const spacing = marker[3] ?? "";
+    const padding = spacing === "" ? 1 : Math.min(spacing.length, 4);
+
+    return { indent, contentIndent: indent + (marker[2] ?? "").length + padding };
+}
+
+function listContentIndent(lines: string[], at: number, fenceIndent: number): number | null {
+    for (let before = at - 1; before >= 0; before -= 1) {
+        const line = lines[before] ?? "";
+        if (blank(line)) continue;
+
+        const marker = listMarker(line);
+        if (marker && marker.indent < fenceIndent) return marker.contentIndent;
+        if (indentation(line) < fenceIndent) return null;
+    }
+
+    return null;
+}
+
+/**
+ * One walk over the lines, so the two answers below cannot disagree about where a block
+ * starts and stops.
+ */
+function scan(lines: string[]): { inside: boolean[]; open: string | null } {
+    const inside: boolean[] = [];
+    let open: string | null = null;
+    let listContent: number | null = null;
+
+    for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index] ?? "";
+        const match = line.match(FENCE);
+        const fence = match?.[1];
+        const info = match?.[2] ?? "";
+
+        if (fence && open === null && opens(fence, info)) {
+            open = fence;
+            listContent = listContentIndent(lines, index, indentation(line));
+            inside.push(true);
+            continue;
+        }
+
+        if (fence && open !== null && closes(fence, info, open)) {
+            open = null;
+            listContent = null;
+            inside.push(true);
+            continue;
+        }
+
+        if (open !== null && listContent !== null && !blank(line) && indentation(line) < listContent) {
+            open = null;
+            listContent = null;
+            inside.push(false);
+            continue;
+        }
+
+        inside.push(open !== null);
+    }
+
+    return { inside, open };
+}
+
+/**
+ * Whether each line falls inside a fenced code block, the opening and closing lines
+ * included. A caller that maps over the false lines therefore leaves a delimiter alone.
+ *
+ * The answer is one boolean per line given, so the lines have to be the renderer's: a `\r`
+ * inside one of them is two lines to a reader and one answer here, and there is no boolean
+ * that covers both. `splitLines` is what produces them.
+ */
+export function fenceMap(lines: string[]): boolean[] {
+    return scan(lines).inside;
+}
+
+/** Close a fence the text left open, so what follows it does not render as code. */
+export function closeOpenFence(text: string): string {
+    const lines = splitLines(text);
+    const { open } = scan(lines);
+    const kept = lines.join("\n");
+
+    return open === null ? kept : `${kept}\n${open}`;
+}
+
+/**
+ * Close every `<details>` the text left open, so what follows sits outside the block.
+ *
+ * The counterpart to `closeOpenFence`, and it exists for the review body's last-resort cut:
+ * a browser closes an unclosed `<details>` at the end of the comment, hiding everything
+ * after the cut inside a collapsed disclosure. `fit` in body-budget.ts has the rest.
+ *
+ * Counted over the view `escapeTags` leaves behind, which means line by line and outside
+ * every code span: a fenced line is a code sample, a span is one too, and a `\<` is prose
+ * that already came through the escaping. None of them opens a disclosure. Counting the
+ * raw string is wrong in both directions, and prose about markup is what these lenses write:
+ * a body naming the `<details>` element gets a closer it never needed, and one writing the
+ * closing tag inside a span cancels a real opener and seals the rest of the review inside it.
+ */
+export function closeOpenDetails(text: string): string {
+    const lines = splitLines(text);
+    const fenced = fenceMap(lines);
+    let open = 0;
+
+    for (const [i, line] of lines.entries()) {
+        if (fenced[i]) continue;
+
+        const prose = outsideCode(line);
+
+        open += (prose.match(/(?<!\\)<details\b/g) ?? []).length;
+        open -= (prose.match(/(?<!\\)<\/details>/g) ?? []).length;
+    }
+
+    const kept = lines.join("\n");
+
+    if (open <= 0) return kept;
+
+    return `${kept}\n${Array.from({ length: open }, () => "</details>").join("\n")}`;
+}
+
+/** A run of text, and whether the renderer reads it as a code span. */
+interface Segment {
+    kind: "prose" | "span" | "unclosed";
+    text: string;
+}
+
+/** How long the run of backticks starting at `at` is. Zero where none starts there. */
+function runAt(text: string, at: number): number {
+    let length = 0;
+    while (text[at + length] === "`") length += 1;
+
+    return length;
+}
+
+/**
+ * Where a run of `run` backticks closes, at or after `from`, or -1.
+ *
+ * CommonMark ends a code span at a backtick run of exactly the opener's length, and a run is
+ * the whole unbroken sequence, so a run of three does not close an opener of two. `indexOf`
+ * matched two backticks inside a run of three instead: the stretch came back as a span,
+ * `escapeOutsideCode` left it alone, `outsideCode` dropped it, and a `<details>` a lens
+ * quoted reached the page as live markup with nothing counting it.
+ */
+function closingRun(text: string, from: number, run: number): number {
+    for (let at = from; at < text.length; at += 1) {
+        const length = runAt(text, at);
+
+        if (length === 0) continue;
+        if (length === run) return at;
+
+        at += length - 1;
+    }
+
+    return -1;
+}
+
+/**
+ * The text split into what a code span covers and what it does not.
+ *
+ * One walk, so that escaping a character and counting a tag cannot disagree about which of
+ * the two a stretch of text is. A backtick run opens a span that ends at the next run of the
+ * same length, which is what lets a span hold a backtick of its own.
+ */
+function segments(text: string): Segment[] {
+    const out: Segment[] = [];
+    let prose = "";
+    let i = 0;
+
+    const flush = (): void => {
+        if (prose !== "") out.push({ kind: "prose", text: prose });
+        prose = "";
+    };
+
+    while (i < text.length) {
+        const char = text[i] ?? "";
+
+        if (char !== "`") {
+            prose += char;
+            i += 1;
+            continue;
+        }
+
+        const run = runAt(text, i);
+        const close = closingRun(text, i + run, run);
+
+        flush();
+
+        if (close !== -1) {
+            out.push({ kind: "span", text: text.slice(i, close + run) });
+            i = close + run;
+            continue;
+        }
+
+        out.push({ kind: "unclosed", text: "`".repeat(run) });
+        i += run;
+    }
+
+    flush();
+
+    return out;
+}
+
+/**
+ * Apply an escaping policy wherever the text falls outside a code span.
+ *
+ * Text inside a code span is left alone, because the orchestrator writes code spans
+ * deliberately and a backslash inside one lands on the page.
+ *
+ * One transform, not a character set plus an optional second pass. Those were two ways of
+ * saying the same thing, and only one caller passed the second, so a reader saw one escaping
+ * policy with an exception bolted on rather than the two policies there are. What either
+ * caller needs from this function is the walk: whatever a policy does, it runs over the same
+ * segmentation, so nothing can disagree about which stretch of text is a code span.
+ */
+function escapeOutsideCode(text: string, transform: (prose: string) => string): string {
+    return segments(text)
+        .map((segment) => {
+            if (segment.kind === "span") return segment.text;
+
+            // Nothing closes it, so this opens no code span. Left alone it pairs with the
+            // next backtick markdown finds, usually one in the finding's own body, and
+            // renders everything between the two as code.
+            if (segment.kind === "unclosed") return "\\`".repeat(segment.text.length);
+
+            return transform(segment.text);
+        })
+        .join("");
+}
+
+/**
+ * Backslash every character in `set`.
+ *
+ * The backslash is in every caller's set, because one already in the text cancels the escape
+ * put after it: `a\*b` would become `a\\*b`, a literal backslash followed by a live asterisk.
+ * Text ending in one is worse, since `bullet` wraps a title in `**`, and the trailing
+ * backslash then escapes the first closing asterisk and the emphasis runs on into the body.
+ * Windows paths, regexes and LaTeX fragments all reach a title.
+ */
+function escapeChars(set: string): (prose: string) => string {
+    return (prose) => [...prose].map((char) => (set.includes(char) ? `\\${char}` : char)).join("");
+}
+
+/** The text with every code span taken out, which is what `escapeOutsideCode` leaves alone. */
+function outsideCode(text: string): string {
+    return segments(text)
+        .filter((segment) => segment.kind === "prose")
+        .map((segment) => segment.text)
+        .join("");
+}
+
+/**
+ * Escape the markdown a model did not mean to write, leaving the markdown it did.
+ *
+ * For a field that renders as part of a line: a title, a category, a lens's one-line
+ * caveat. A title naming a glob is the case that bites: a doubled asterisk opens strong
+ * emphasis, so a bare `build` exclusion glob renders as emphasis debris rather than as a
+ * path.
+ *
+ * `@` is in the set because a review quotes identifiers back out of a diff, and GitHub
+ * turns `@types/bun`, a `@param` line or a CODEOWNERS entry into a mention that notifies
+ * whoever owns that name, from the account that posts the review, on every push. Anyone who
+ * wants that only has to put a handle where a lens will quote it. GitHub renders `\@name`
+ * as the text it is.
+ *
+ * `#` is in the set for the same reason and the same mechanism. A quoted `#123` is a live
+ * issue reference: GitHub links it and records a cross-reference on whatever issue that number
+ * names, attributed to the account the review posts under, once per push for as long as the
+ * fragment stays in the diff.
+ *
+ * Flattened here rather than at each caller. This escapes what a character does mid-line and
+ * says nothing about the start of one, so a line ending that survives into the result puts
+ * the rest of the field where `#` opens a heading and `**` never closes. A caller handing over
+ * a joined list rather than a model's own field flattened nothing, and one of those lists is
+ * lens names read out of a file the review session can write.
+ */
+export function escapeInline(text: string): string {
+    return escapeOutsideCode(flatten(text), escapeChars("\\*_[]<~@#"));
+}
+
+/**
+ * Escape the raw HTML and the mentions in a line of a model's prose, leaving its markdown
+ * alone.
+ *
+ * For a block of prose, where the emphasis and the lists are the model's own and worth keeping
+ * but a tag is not. GitHub renders `<details>` and `<div>` wherever they sit on a line, not
+ * only at column zero, and one left unclosed hides everything after it: the suppressed
+ * list, the declined list and the caveats included, which are where a reader learns how
+ * much of the review to trust. Prose about markup is exactly what these lenses write.
+ *
+ * `@` and `#` for the reasons `escapeInline` takes them: a finding body quoting a scoped
+ * package name would otherwise notify an account on every push, and one quoting `#123` would
+ * cross-reference that issue from the review's own account just as often.
+ *
+ * The brackets go for the destination a reader cannot see. A model's own url is not worth
+ * bounding, because GFM autolinks a bare `https://` run and the same destination reaches the
+ * same page with no link syntax at all. An autolink shows the url, though, where `[label](url)`
+ * hides it behind words the writer chose, which is the reason `mention` in review-body.ts is
+ * bounded to the urls the pull request carries. The text is reachable: the orchestrator is asked,
+ * in `orchestrator.md`, to copy attempted-injection lines out of pull request comments into
+ * `notes`, so on a public repository anyone who can comment can supply one. With `[` and `]`
+ * escaped, the label renders as the literal text it is and the url beside it autolinks as itself.
+ *
+ * The same escape covers an image, which is the case that could not wait for a click at all:
+ * GitHub loads one on sight, from a url the model chose, into a comment posted under the account
+ * this review goes out as. `<img>` is escaped above, `![](…)` is the other spelling of the same
+ * element, and escaping the brackets closes that spelling too.
+ *
+ * `escapeInline` escapes both brackets too. The two policies differ about emphasis and about
+ * `~`, which are the model's own and worth keeping in a paragraph, and about nothing else.
+ */
+function escapeTags(text: string): string {
+    return escapeOutsideCode(text, escapeChars("\\<@#[]"));
+}
+
+/**
+ * Whether a line is a GFM table's delimiter row.
+ *
+ * The delimiter row is what makes a table: without it the line above is prose, and with it
+ * that line becomes a header. So this is the line to defuse, and matching the header
+ * instead would defuse ordinary prose holding a pipe.
+ *
+ * Split rather than matched whole. A one-column table's row is `| --- |`, and a pattern
+ * reading the pipes as separators alone counts one cell too few and lets it through.
+ */
+function tableDelimiter(line: string): boolean {
+    if (!line.includes("|")) return false;
+
+    const cells = line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|");
+
+    return cells.every((cell) => /^\s*:?-+:?\s*$/.test(cell));
+}
+
+/**
+ * Escape the block a line would otherwise open on its own.
+ *
+ * The review's own headings are an h2 and h3s below it, so a model's line opening with `#`
+ * emits an h1 into the middle of the body, and heading level is what a screen reader
+ * navigates by. `>` at the start of a line inside a list item opens a blockquote. A line
+ * that is nothing but a run of `-`, `=`, `*` or `_` is a thematic break, and one directly
+ * under a line of prose turns that prose into a heading instead.
+ *
+ * A table is the last of them. `review/lens-brief.md` tells a lens to write none in these
+ * fields, for the reason `headOf` gives against tables in the review's own markup. Several
+ * vendored skills write their output template as a table, so a body arrives as one anyway,
+ * and `bullet` indents it to the list item's content column where it renders as a real grid
+ * among prose bullets.
+ *
+ * The thematic-break test runs first either way, so a bare `---` keeps the handling it had.
+ */
+export function escapeBlockStart(line: string): string {
+    const escaped = line.replace(/^(\s*)([#>])/, "$1\\$2");
+    const opens = /^\s*(=+|-+|\*{3,}|_{3,})\s*$/.test(escaped) || tableDelimiter(escaped);
+
+    return opens ? escaped.replace(/^(\s*)(.)/, "$1\\$2") : escaped;
+}
+
+/** Whether a line is blank, which is what starts and ends an indented code block. */
+function blank(line: string): boolean {
+    return line.trim() === "";
+}
+
+/**
+ * A model's indented code block, rewritten as a fenced one so the escaping below skips it.
+ *
+ * `fenceMap` knows only about fences, so a sample a lens wrote as an indented block came out
+ * the other side escaped as prose — and an indented block renders its content literally, so
+ * the backslashes were on the page, inside the very sample the finding was about. `bullet`
+ * makes it worse by adding its own two columns, but `prose` has it at column zero too.
+ *
+ * Leaving those lines unescaped instead is the wrong way round. An indented code block
+ * cannot interrupt a paragraph, so a four-space line under a line of prose is a lazy
+ * continuation and its `<div>` really is live markup. That is what the blank-line test
+ * below is for: without it, this would turn prose into code and let a tag through.
+ *
+ * The residual is the other direction, and it is the safe one. Four spaces after a blank
+ * line inside a list item is that item's own continuation paragraph rather than code,
+ * because the item's content column is already two or three in; this fences it, and the
+ * paragraph renders as a code sample. Telling the two apart takes the block-container state
+ * a fence scanner does not keep, and being wrong this way costs a reader one oddly rendered
+ * paragraph where being wrong the other way costs them a live tag.
+ */
+function fenceIndented(lines: string[]): string[] {
+    const fenced = fenceMap(lines);
+    const out: string[] = [];
+
+    for (let i = 0; i < lines.length; ) {
+        const starts = !fenced[i] && /^(\t| {4})/.test(lines[i] ?? "") && (i === 0 || blank(lines[i - 1] ?? ""));
+
+        if (!starts) {
+            out.push(lines[i] ?? "");
+            i += 1;
+            continue;
+        }
+
+        let end = i;
+
+        while (end < lines.length && !fenced[end] && (blank(lines[end] ?? "") || /^(\t| {4})/.test(lines[end] ?? ""))) {
+            end += 1;
+        }
+
+        // A code block does not keep the blank lines that trail it, and swallowing them
+        // would put a blank line inside the fence and take the paragraph break out.
+        while (end > i && blank(lines[end - 1] ?? "")) end -= 1;
+
+        // An indented run that is nothing but whitespace trims back to where it started, and
+        // `i = end` below then makes no progress: four spaces on their own line after a blank
+        // one hung every path that renders a review body, for ever, after a review had been
+        // paid for. There is nothing to fence in a line with no content, so it goes out as
+        // itself and the scan moves on.
+        if (end === i) {
+            out.push(lines[i] ?? "");
+            i += 1;
+            continue;
+        }
+
+        const body = lines.slice(i, end).map((line) => line.replace(/^(\t| {4})/, ""));
+        const longest = Math.max(0, ...body.flatMap((line) => [...line.matchAll(/`+/g)].map((m) => m[0].length)));
+        const fence = "`".repeat(Math.max(3, longest + 1));
+
+        out.push(fence, ...body, fence);
+        i = end;
+    }
+
+    return out;
+}
+
+/**
+ * A model's block of prose, with everything it would open on its own escaped and everything
+ * inside a fence left alone.
+ */
+export function escapeBlocks(lines: string[]): string[] {
+    // Split again rather than trusting the caller's split. Unlike `fenceMap` this hands back
+    // its own array, so a line the caller left a `\r` inside can come out as the two lines
+    // the renderer reads, each escaped on its own.
+    const source = lines.flatMap(splitLines);
+    const indented = fenceIndented(source);
+    const fenced = fenceMap(indented);
+
+    return indented.map((line, i) => (fenced[i] ? line : escapeBlockStart(escapeTags(line))));
+}
+
+/**
+ * A model's one-line field on one line.
+ *
+ * A field asked for as one line is not checked to be one. A newline inside a list item ends
+ * the item, so the rest of a suppressed or declined list renders outside the `<details>`
+ * block it belongs to, and inside `bullet` the same newline closes the strong emphasis and
+ * leaves a literal `**` on the page.
+ */
+export function flatten(text: string): string {
+    return normalised(text).replace(/\s*\n+\s*/g, " ").trim();
+}
+
+/**
+ * A path inside a code span, with a delimiter long enough to hold it.
+ *
+ * A backtick is legal in a POSIX filename, and a one-backtick span closes at the first
+ * backtick inside it, so the rest of the bullet renders as prose and the leftover delimiter
+ * pairs with the next backtick in the review.
+ */
+export function code(text: string): string {
+    const flat = flatten(text);
+
+    let longest = 0;
+    for (const run of flat.match(/`+/g) ?? []) longest = Math.max(longest, run.length);
+
+    const fence = "`".repeat(longest + 1);
+    // A span whose content starts or ends with a backtick needs a space, which markdown
+    // then strips back off.
+    const pad = flat.startsWith("`") || flat.endsWith("`") ? " " : "";
+
+    return `${fence}${pad}${flat}${pad}${fence}`;
+}
+
+/**
+ * A link target, or null when the string is not one.
+ *
+ * The url arrives from a model and survives a round trip through the previous run's
+ * artifact. A space or a `)` in it ends the link target early and spills the rest of the
+ * line into the body, so a url that does not parse becomes no link rather than a broken
+ * one. The brackets are encoded because `URL` leaves them alone and markdown does not.
+ */
+export function linkTarget(url: string | undefined): string | null {
+    if (!url) return null;
+
+    try {
+        const parsed = new URL(url);
+
+        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+
+        return parsed.href.replace(/\(/g, "%28").replace(/\)/g, "%29");
+    } catch {
+        return null;
+    }
+}
+
+/** What survived a cut, and the line that says one happened. */
+export interface Clamped {
+    kept: string;
+    /** Empty where nothing was cut. Markdown of its own, so a caller must not escape it. */
+    marker: string;
+}
+
+/** What a cut is called, wherever one is announced. */
+const CUT_WORDS = "(cut for length)";
+
+const CUT_MARKER = `\n\n_${CUT_WORDS}_`;
+
+/**
+ * The same announcement for a caller whose text is one line.
+ *
+ * `CUT_MARKER` opens a paragraph of its own, so a field rendered inline gets this instead. Both
+ * are here so that two notices on one page cannot word the same cut differently.
+ */
+export const CUT_INLINE = ` ${CUT_WORDS}`;
+
+/**
+ * Text a model wrote, cut to a length the rest of the page can fit around, before the marker.
+ *
+ * Cut on the largest boundary inside the window. A cut at a character offset lands mid-span or
+ * mid-fence, and an unbalanced fence renders everything below it as one code block. The
+ * paragraph is not always there to cut on: a lens's list of what it could not check is often
+ * one paragraph or a run of single-newline lines, and that is the field where a cut mid-word
+ * does the most damage.
+ *
+ * Split from `clamp` for the one-line fields, which have to escape after the cut rather than
+ * before it. `escapeInline` balances a code span the model left open, and cutting the balanced
+ * string reopens one: measured against this module, a title holding
+ * `` `git rev-parse --verify -- $ref` `` came back with an odd number of backticks, the stray
+ * opener paired with the next finding's path span, and the cut marker, the closing emphasis,
+ * the body and the category all rendered as one code span. Escaping the cut text instead puts
+ * that dangling run through the branch that already handles one, and the marker is appended
+ * afterwards, which is what the old order was for.
+ */
+export function clampTo(text: string, limit: number): Clamped {
+    const source = normalised(text);
+
+    if (source.length <= limit) return { kept: source, marker: "" };
+
+    const window = source.slice(0, limit);
+    const cut = (kept: string): Clamped => ({ kept, marker: CUT_MARKER });
+
+    const paragraph = window.lastIndexOf("\n\n");
+    if (paragraph > 0) return cut(window.slice(0, paragraph));
+
+    // The full stop is kept; the space after it is what the index names.
+    const sentence = window.lastIndexOf(". ");
+    if (sentence > 0) return cut(window.slice(0, sentence + 1));
+
+    const word = window.lastIndexOf(" ");
+    if (word > 0) return cut(window.slice(0, word));
+
+    return cut(window);
+}
+
+/**
+ * Text a model wrote, cut to `limit`, escaped, and followed by the words saying a cut happened.
+ *
+ * For a sentence a run writes about itself, where the quoted stretch sits mid-line. `escape` is
+ * whatever the destination needs: a page passes the escaping GitHub's renderer takes, and a
+ * terminal passes the text through.
+ *
+ * The clamp comes before the escape, for the reason `clampTo` gives, and `CUT_INLINE` stands in
+ * for the marker `clampTo` returns, which is a paragraph and would break the line in two.
+ */
+export function clampedInline(text: string, limit: number, escape: (text: string) => string): string {
+    const { kept, marker } = clampTo(text, limit);
+
+    return `${escape(kept)}${marker === "" ? "" : CUT_INLINE}`;
+}
+
+/** The cut, with whatever fence it left open closed and the marker on the end. */
+export function clamp(text: string, limit: number): string {
+    const { kept, marker } = clampTo(text, limit);
+
+    return marker === "" ? kept : `${closeOpenFence(kept)}${marker}`;
+}
+
+/**
+ * Prose a model wrote, cut to length, with the blocks and tags it would open escaped.
+ *
+ * The fence is closed for the reason `bullet` in review-body.ts closes one, and for a second
+ * reason of its own. Each section of the body is escaped against its own `fenceMap`, and
+ * GitHub parses the sections joined: a fence left open at the end of one is closed by the
+ * next delimiter below it, which is the opening fence of some finding's code sample. From
+ * there the two readings are inverted, and the lines this function skipped as fenced reach
+ * the page as live markdown. Balancing every section before the join is what stops the two
+ * readings disagreeing. `clamp` has already closed the fence on the truncating path, and
+ * closing a closed fence adds nothing.
+ */
+export function prose(text: string, limit: number): string {
+    return escapeBlocks(splitLines(closeOpenFence(clamp(text, limit)))).join("\n");
+}
+
+/**
+ * A summary line, encoded for the one place in this file that is not markdown.
+ *
+ * `<details>` at column zero opens a CommonMark HTML block, and the block runs to the next
+ * blank line: the `<summary>` line is inside it. Content there is passed through as raw
+ * HTML, with no inline parsing, so a backslash escape is not an escape. `escapeInline`
+ * would leave `\<img src=...>` on the page as a literal backslash in front of a live tag,
+ * which GitHub's sanitiser passes.
+ *
+ * Entities are what that region still decodes, so `&`, `<` and `>` become entities. `&` goes
+ * first, or the ampersands this writes would be encoded again.
+ */
+function encodeSummary(text: string): string {
+    return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
+/**
+ * A collapsed block. GitHub renders nothing at all if the markup is a line out.
+ *
+ * The summary is encoded here. Every caller today builds one out of counts, but nothing in
+ * the signature says so, and an unbalanced tag in a `<summary>` swallows the rest of the
+ * disclosure with no sign of it in the review. The body is the caller's to escape, because
+ * each one is a different shape of model prose, and it sits past the blank line below,
+ * which is where markdown starts again.
+ */
+export function details(summary: string, body: string, open = false): string {
+    const heading = encodeSummary(flatten(summary));
+
+    return `<details${open ? " open" : ""}>\n<summary>${heading}</summary>\n\n${body}\n</details>`;
+}

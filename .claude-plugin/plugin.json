@@ -1,0 +1,13 @@
+{
+    "name": "codeferret",
+    "version": "1.1.0",
+    "description": "Like CodeRabbit, but it uses your Claude subscription, and goes even deeper.",
+    "author": {
+        "name": "pocketarc",
+        "url": "https://pocketarc.com"
+    },
+    "homepage": "https://github.com/pocketarc/codeferret",
+    "repository": "https://github.com/pocketarc/codeferret",
+    "keywords": ["code-review", "security-review", "accessibility", "diff", "pull-request"],
+    "skills": "./lenses/skills"
+}

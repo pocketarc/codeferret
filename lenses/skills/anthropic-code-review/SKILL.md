@@ -1,12 +1,9 @@
 ---
 name: anthropic-code-review
-description: Review code changes for security, performance, and correctness. Trigger with a PR URL or diff, "review this before I merge", "is this code safe?", or when checking a change for N+1 queries, injection risks, missing edge cases, or error handling gaps.
-argument-hint: "<PR URL, diff, or file path>"
+description: "CodeFerret review lens anthropic-code-review. A CodeFerret lens agent loads this during a multi-lens code review; it is not a general-purpose skill and is no use outside one."
 ---
 
 # /code-review
-
-> If you see unfamiliar placeholders or need to check which tools are connected, see [CONNECTORS.md](../../CONNECTORS.md).
 
 Review code changes with a structured lens on security, performance, correctness, and maintainability.
 
@@ -16,7 +13,7 @@ Review code changes with a structured lens on security, performance, correctness
 /code-review <PR URL or file path>
 ```
 
-Review the provided code changes: @$1
+Review the provided code changes: the diff under review
 
 If no specific file or URL is provided, ask what to review.
 
@@ -97,19 +94,6 @@ If no specific file or URL is provided, ask what to review.
 ### Verdict
 [Approve / Request Changes / Needs Discussion]
 ```
-
-## If Connectors Available
-
-If **~~source control** is connected:
-- Pull the PR diff automatically from the URL
-- Check CI status and test results
-
-If **~~project tracker** is connected:
-- Link findings to related tickets
-- Verify the PR addresses the stated requirements
-
-If **~~knowledge base** is connected:
-- Check changes against team coding standards and style guides
 
 ## Tips
 

@@ -1,0 +1,12 @@
+caveman-review
+anthropic-code-review
+wshobson-code-review-excellence
+cursor-thermo-nuclear-review
+sentry-security-review
+copilot-security-review
+vercel-next-best-practices
+copilot-web-design-reviewer
+copilot-sql-code-review
+anthropic-accessibility-review
+comment-review
+writing-review

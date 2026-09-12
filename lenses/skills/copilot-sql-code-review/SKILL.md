@@ -1,11 +1,11 @@
 ---
 name: copilot-sql-code-review
-description: 'Universal SQL code review assistant that performs comprehensive security, maintainability, and code quality analysis across all SQL databases (MySQL, PostgreSQL, SQL Server, Oracle). Focuses on SQL injection prevention, access control, code standards, and anti-pattern detection. Complements SQL optimization prompt for complete development coverage.'
+description: "CodeFerret review lens copilot-sql-code-review. A CodeFerret lens agent loads this during a multi-lens code review; it is not a general-purpose skill and is no use outside one."
 ---
 
 # SQL Code Review
 
-Perform a thorough SQL code review of ${selection} (or entire project if no selection) focusing on security, performance, maintainability, and database best practices.
+Perform a thorough SQL code review of the diff under review focusing on security, performance, maintainability, and database best practices.
 
 ## 🔒 Security Analysis
 
@@ -265,7 +265,7 @@ WHERE order_date >= '2024-01-01'
 ## 🎯 Review Output Format
 
 ### Issue Template
-```
+````
 ## [PRIORITY] [CATEGORY]: [Brief Description]
 
 **Location**: [Table/View/Procedure name and line number if applicable]
@@ -285,7 +285,7 @@ WHERE order_date >= '2024-01-01'
 ```
 
 **Expected Improvement**: [Performance gain, security benefit]
-```
+````
 
 ### Summary Assessment
 - **Security Score**: [1-10] - SQL injection protection, access controls

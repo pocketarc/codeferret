@@ -1,6 +1,6 @@
 ---
 name: sentry-security-review
-description: Security code review for vulnerabilities. Use when asked to "security review", "find vulnerabilities", "check for security issues", "audit security", "OWASP review", or review code for injection, XSS, authentication, authorization, cryptography issues. Provides systematic review with confidence-based reporting.
+description: "CodeFerret review lens sentry-security-review. A CodeFerret lens agent loads this during a multi-lens code review; it is not a general-purpose skill and is no use outside one."
 allowed-tools: Read, Grep, Glob, Bash, Task
 license: LICENSE
 ---
@@ -242,7 +242,7 @@ random.random() for token            # FLAG: Security tokens need secrets module
 
 ## Output Format
 
-```markdown
+````markdown
 ## Security Review: [File/Component Name]
 
 ### Summary
@@ -268,7 +268,7 @@ random.random() for token            # FLAG: Security tokens need secrets module
 #### [VERIFY-001] [Potential Issue]
 - **Location**: `file.py:456`
 - **Question**: [What needs to be verified]
-```
+````
 
 If no vulnerabilities found, state: "No high-confidence vulnerabilities identified."
 

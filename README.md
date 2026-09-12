@@ -1,16 +1,35 @@
 # CodeFerret
 
-Many lenses. One review.
+Like CodeRabbit, but it uses your Claude subscription, and goes even deeper.
 
-CodeFerret reviews a pull request through several independent code review skills at
-once, then merges their findings into a single review with inline comments. Each
-finding records which lenses found it, so agreement between them is visible rather
-than collapsed.
+CodeFerret reviews a diff through several independent code review skills at once, then
+merges their findings into a single review comment. `findings.json` records which lenses found
+each one, so whoever fixes the review can see where they agreed. It is left out of the comment on
+purpose: how many lenses spotted a defect tracks how conspicuous it is rather than how much it
+matters.
+
+Every lens reads source. The accessibility, web design and Next.js lenses have no browser,
+no running application and no rendered page, so any criterion that needs one of those goes
+unchecked: focus order, whether a layout still works at 375px, and contrast wherever the source
+does not settle what is painted behind the text. Which criteria those are is written out
+one by one in each lens's own file under
+[`review/lens-extras/`](review/lens-extras/), and every review says what each lens could not
+check, in that lens's own words.
+
+Run CodeFerret as a GitHub action on pull requests, a Claude Code plugin, or a local
+Codex review on the branch you are working on.
+
+## On a pull request
+
+[`templates/workflow.yml`](templates/workflow.yml) is the workflow to copy, and
+`/codeferret:install-workflow` writes it into a repository for you. What it comes down
+to:
 
 ```yaml
 permissions:
-    contents: write # resolveReviewThread needs it; contents: read disables thread resolution
+    contents: read
     pull-requests: write
+    actions: read # so a finding is not raised again on every push
 
 steps:
     - uses: pocketarc/codeferret@v1
@@ -18,17 +37,182 @@ steps:
           claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 ```
 
-That is the whole setup. The action checks the repository out and installs what it needs.
+That is the whole job. The action keeps its own `codeferret-run` artifact holding
+`findings.json`, so there is no upload step to write and no name to get right. The comment
+prints in full every finding rated at `print-threshold` or above, which is `medium` unless you
+set it otherwise, and points at that file for the rest. That file is also what the next run
+reads to know what was said before.
 
-`@v1` moves with each 1.x release. Pin a full version, `@v1.0.0`, to hold a revision.
+Weigh all three together, because the agent and the tokens share a runner. A composite
+action has steps rather than jobs, so the step that reviews and the step that posts run side
+by side as one user, and a review talked into running a command can reach whatever the job
+was granted. Posting from a second job that never runs the agent is what would keep the two
+apart, and that is a change to make in the workflow.
 
-See [`review/README.md`](review/README.md) for the inputs, how to add a lens, and why
-each part is built the way it is.
+`contents: write` adds one thing, and only for a while. A review is one body and opens no
+thread of its own, and nothing outside this repository reads the action, so every thread left
+to close is one a CodeFerret run posted on a pull request in this repository before
+`v1.1.0`. A repository adopting it now has none. `resolve-threads: 'true'` and
+`contents: write` together close those. The review runs an agent with Bash, so a token that
+can write contents is a token that can push; on `read`, everything else works and nothing
+tries to close a thread.
+
+`actions: read` costs little and the review is worse without it. It is used for one thing:
+reading the previous run's `findings.json` back out of the artifact. Drop it and every finding
+is posted again on every push. Keeping it quiets the findings the comment leaves to that file;
+anything it prints in full comes back on every push until an owner or a collaborator answers it,
+which is deliberate — a finding somebody is looking at should not go away on the strength of the
+last run having mentioned it.
+
+The rest of that file is:
+
+- A concurrency group, so three pushes in a row do not start three full reviews.
+- An `if:` on the job with three conditions: the pull request is not a draft, so a push to
+  unfinished work starts nothing until the author marks it ready; its head branch is on
+  this repository, because GitHub withholds the secret from a fork's run no matter who
+  opened the pull request; and its author is an owner, a member or a collaborator, so only
+  those three roles can spend the budget.
+- A 60-minute timeout.
+
+The trigger is `pull_request`, and the action refuses to start under `pull_request_target`.
+That trigger runs with the secrets available against the fork's commit, which is how an
+action holding a token comes to run somebody else's code. Dropping the head-branch test from
+the `if:` reaches the same place, so the action refuses that too rather than reviewing a
+branch it does not own, and it tests a `workflow_run` the same way, which is the other
+trigger that pairs a fork's commit with your secrets. On a trigger that names no head
+repository at all, such as `issue_comment`, there is nothing for the action to test and it
+says so in the log: the job's `if:` is then the only gate.
+
+The action's own artifact is kept for 14 days, and whoever can read the repository's
+artifacts can read every finding in `findings.json`, the suppressed ones included.
+
+The action checks the repository out and installs what it needs.
+
+`@v1` moves with each 1.x release. Pin a full version, `@v1.1.0`, to hold a revision.
+
+## On the branch you are working on
 
 ```
-action.yml   the composite action
-lenses/      bundled review skills, packaged as a Claude Code plugin
-review/      prompts, schemas, and the scripts a run uses
+/plugin marketplace add pocketarc/codeferret
+/plugin install codeferret@pocketarc
+```
+
+It needs `bash` and `bun`, which on Windows means WSL or Git Bash. Without `gh` the
+review still runs and prints, but it cannot read what has already been said on a pull
+request and it cannot post.
+
+The plugin follows this repository's default branch rather than a tag, so `/plugin update`
+gives you whatever last landed on `main`. The action's `@v1` moves only on a release, so
+the two can be a release apart.
+
+Then, in any repository:
+
+```
+/codeferret:review
+```
+
+The command works out what to diff against (the base of your open pull request, or the
+default branch), dispatches the lenses, and prints what they found as `path:line` you can
+click. Ask, and it includes uncommitted work. It offers to post the review when the branch
+has an open pull request, `gh` is installed and authenticated, your commits are pushed, and
+your working tree is clean. Otherwise the findings stay in the terminal. Every line in a
+review belongs to the commit the lenses read, and a file you have edited since is a file
+whose lines have moved.
+
+Posting uses your `gh` credential, which is usually scoped to everything you can reach.
+Export a fine-grained token as `GITHUB_TOKEN` if you would rather it were not: `gh` takes
+that in preference to its own.
+
+A review posted this way leaves no record the action can read. The action works out what
+has already been said from the previous run's artifact, and a session leaves no artifact
+behind, so the next run on that pull request posts all of these findings again.
+
+`/codeferret:install-workflow` writes the action's workflow into the repository you are
+in, for when you would rather have this run on every pull request.
+
+Lenses run in parallel, so the bill grows with the number of lenses and the wait barely
+does. Three took about 15 minutes. An earlier run of 14 came to $36.00 in 20m46s on Opus
+and returned 97 findings. Budget between $2.50 and $2.70 a lens on Opus, and about 20
+minutes whatever the count. `/codeferret:review` says how many lenses it is about to
+dispatch, and waits; the action reports what each run cost in the job summary.
+
+## Local reviews with Codex
+
+Use the Codex CLI to review a checkout through the CodeFerret lenses. The CLI runs on your machine and sends review input to OpenAI-hosted models. Reviews use your ChatGPT subscription limits.
+
+Prerequisites:
+
+- Codex CLI (tested with 0.153.4).
+- Bun and git.
+- An existing Codex login through your ChatGPT subscription.
+
+In this checkout, invoke [`$codeferret-review`](.agents/skills/codeferret-review/SKILL.md) in Codex. For another checkout, use the commands below.
+
+1. Open a terminal in the checkout to review.
+2. Run the review against your base branch:
+
+   ```bash
+   bash /path/to/codeferret/review/codex.sh run origin/main
+   ```
+
+3. Print the checked results, including after any nonzero review exit status:
+
+   ```bash
+   bash /path/to/codeferret/review/codex.sh print
+   ```
+
+To select lenses, append their names:
+
+```bash
+bash /path/to/codeferret/review/codex.sh run origin/main comment-review writing-review
+```
+
+The default selection includes all default lenses. CodeFerret runs up to three lens processes at once, then starts a separate process to merge their reports.
+
+| Variable | Values and behavior |
+| --- | --- |
+| `CODEX_CONCURRENCY` | Maximum simultaneous lens processes. Default: `3`. Range: `1` through `16`. |
+| `CODEX_TIMEOUT_MS` | Timeout per Codex process in milliseconds. Default: `1800000`. Range: `1` through `43200000`. |
+| `MODEL` | Optional Codex model name. If unset, CodeFerret uses the Codex CLI default. CodeFerret ignores `config.toml`. |
+| `EFFORT` | Optional reasoning effort: `low`, `medium`, `high`, or `xhigh`. |
+| `INCLUDE_WORKING_TREE` | Set to `1` to include uncommitted tracked changes. Pass the merge-base commit explicitly as the base argument. |
+
+For a review that includes uncommitted changes, resolve the merge base first:
+
+```bash
+REVIEW_BASE=$(git merge-base origin/main HEAD)
+INCLUDE_WORKING_TREE=1 bash /path/to/codeferret/review/codex.sh run "$REVIEW_BASE"
+```
+
+Untracked files are absent from the diff. Use `git add -N` for each untracked file that you want to include.
+
+CodeFerret saves output under `<git-dir>/codeferret/codex-run/build`. Each process has a JSONL log under `<git-dir>/codeferret/codex-run/session`. The last Claude review remains separate. Codex does not supply a dollar price, so CodeFerret reports the cost as unknown.
+
+Each Codex process starts outside the repository with a read-only sandbox and `project_doc_max_bytes=0`. CodeFerret ignores `config.toml` and rules, and disables hooks, plugins, apps, memory, and browser tools. Global user `AGENTS.md` instructions and skills remain available to Codex. CodeFerret uses your existing login without copying `auth.json`.
+
+Tests with CLI 0.153.4 used a local synthetic Responses server. The target repository's `AGENTS.md` marker was absent, the sandbox denied a shell write, and CodeFerret parsed the JSON output. These tests did not run a live OpenAI review.
+
+Post results only when you explicitly choose to publish them:
+
+```bash
+bash /path/to/codeferret/review/codex.sh post PR_NUMBER
+```
+
+Posting requires an authenticated GitHub CLI and a matching pull request. Local Codex reviews do not change the CI workflow.
+
+## Where things are
+
+See [`review/README.md`](review/README.md) for the inputs and how to add a lens, and
+[`review/DECISIONS.md`](review/DECISIONS.md) for why each part is built the way it is.
+
+```
+action.yml       the composite action
+.claude-plugin/  the plugin and marketplace manifests
+commands/        the slash commands the plugin adds
+agents/          one agent per lens, generated from review/lens-brief.md
+lenses/skills/   the bundled review skills
+review/          prompts, schemas, and the scripts a run uses
+templates/       the workflow /codeferret:install-workflow writes
 ```
 
 ## Testing it against itself
@@ -44,8 +228,9 @@ merged:
 Two pull requests exercise different things:
 
 - `test/fixture-defects` against `test/fixture` is the realistic case. Its diff touches
-  7 files, and some findings root-cause into files the diff does not touch, which is
-  what exercises the out-of-diff anchoring path.
+  only some of the fixture's files, and some findings root-cause into files the diff does
+  not touch, which is what measures whether a lens follows a defect out of the changed
+  lines.
 - `test/fixture-defects` against `main` puts the whole fixture in one diff, so every
   lens reads every file.
 

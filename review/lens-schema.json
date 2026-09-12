@@ -40,6 +40,7 @@
                     },
                     "severity": {
                         "type": "string",
+                        "description": "Your judgement of how much this finding matters. The aggregator weighs it with the other lenses' gradings when it rates the merged finding, and no reader of the review is shown it.",
                         "enum": ["critical", "high", "medium", "low", "nit", "question"]
                     },
                     "category": {

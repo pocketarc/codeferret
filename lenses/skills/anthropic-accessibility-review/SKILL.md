@@ -1,12 +1,9 @@
 ---
 name: anthropic-accessibility-review
-description: Run a WCAG 2.1 AA accessibility audit on a design or page. Trigger with "audit accessibility", "check a11y", "is this accessible?", or when reviewing a design for color contrast, keyboard navigation, touch target size, or screen reader behavior before handoff.
-argument-hint: "<Figma URL, URL, or description>"
+description: "CodeFerret review lens anthropic-accessibility-review. A CodeFerret lens agent loads this during a multi-lens code review; it is not a general-purpose skill and is no use outside one."
 ---
 
 # /accessibility-review
-
-> If you see unfamiliar placeholders or need to check which tools are connected, see [CONNECTORS.md](../../CONNECTORS.md).
 
 Audit a design or page for WCAG 2.1 AA accessibility compliance.
 
@@ -16,7 +13,7 @@ Audit a design or page for WCAG 2.1 AA accessibility compliance.
 /accessibility-review $ARGUMENTS
 ```
 
-Audit for accessibility: @$1
+Audit for accessibility: the diff under review
 
 ## WCAG 2.1 AA Quick Reference
 
@@ -110,16 +107,6 @@ Audit for accessibility: @$1
 2. **[Major fix]** — Improves [what] for [who]
 3. **[Minor fix]** — Nice to have
 ```
-
-## If Connectors Available
-
-If **~~design tool** is connected:
-- Inspect color values, font sizes, and touch targets directly from Figma
-- Check component ARIA roles and keyboard behavior in the design spec
-
-If **~~project tracker** is connected:
-- Create tickets for each accessibility finding with severity and WCAG criterion
-- Link findings to existing accessibility remediation epics
 
 ## Tips
 
