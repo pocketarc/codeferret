@@ -329,7 +329,7 @@ footer { border-top: 1px solid var(--line); padding: 18px 0 40px;
         return '<article class="finding t-' + esc(f.tier) + (done[f.id] ? " done" : "") + '">' +
             '<div class="stripe"></div><div class="inner">' +
             '<div class="frow"><h3 id="' + esc(f.headingId) + '">' + esc(f.title) + "</h3>" +
-            '<input class="tick" type="checkbox" data-id="' + esc(f.id) + '"' + (done[f.id] ? " checked" : "") + ' aria-labelledby="' + esc(f.headingId) + '" aria-label="Mark handled"></div>' +
+            '<input class="tick" type="checkbox" data-id="' + esc(f.id) + '"' + (done[f.id] ? " checked" : "") + ' aria-label="Mark handled: ' + esc(f.title) + '"></div>' +
             '<div class="meta"><span class="score">' + f.score + " " + esc(f.tier) + "</span>" +
             '<span class="tag">' + esc(f.category || "uncategorised") + "</span>" +
             '<span class="tag">' + esc(f.status) + "</span>" +
@@ -367,8 +367,12 @@ footer { border-top: 1px solid var(--line); padding: 18px 0 40px;
         var art = t.closest(".finding");
         if (art) art.classList.toggle("done", t.checked);
         if (hideDone) {
+            var boxes = Array.prototype.slice.call(list.querySelectorAll(".tick"));
+            var index = boxes.indexOf(t);
+            var candidate = t.checked ? (boxes[index + 1] || boxes[index - 1]) : t;
+            var focusId = candidate ? candidate.dataset.id : null;
             render();
-            var next = Array.prototype.find.call(list.querySelectorAll(".tick"), function (box) { return box.dataset.id === t.dataset.id; });
+            var next = Array.prototype.find.call(list.querySelectorAll(".tick"), function (box) { return box.dataset.id === focusId; });
             (next || document.getElementById("hide-done")).focus();
         }
     });

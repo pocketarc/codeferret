@@ -47,4 +47,6 @@ cd "$BUILD"
 # and gives the reason.
 unset -v GITHUB_TOKEN GH_TOKEN
 
-exec bun --config=/dev/null "$PLUGIN/review/print-findings.ts" "$FINDINGS"
+status=0
+bun --config=/dev/null "$PLUGIN/review/print-findings.ts" "$FINDINGS" || status=$?
+exit "$status"

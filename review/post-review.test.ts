@@ -19,7 +19,25 @@ const real = globalThis.fetch;
 globalThis.fetch = async (input, init) => {
     const url = String(input instanceof Request ? input.url : input);
     if (url.startsWith("https://api.github.com")) {
-        return new Response(JSON.stringify({ html_url: ${JSON.stringify(REVIEW_URL)} }), {
+        if (url.endsWith("/graphql")) {
+            if (process.env.BLOCK_RESOLVE === "1") {
+                return new Response(JSON.stringify({ errors: [{ message: "not accessible by integration" }] }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            return new Response(JSON.stringify({ data: { resolveReviewThread: { thread: { isResolved: true } } } }), {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+            });
+        }
+
+        if (init?.method === "PUT" && process.env.UPDATE_FILE) {
+            await Bun.write(process.env.UPDATE_FILE, String(init.body ?? ""));
+        }
+
+        return new Response(JSON.stringify({ id: 42, html_url: ${JSON.stringify(REVIEW_URL)} }), {
             status: 200,
             headers: { "Content-Type": "application/json" },
         });
@@ -52,9 +70,10 @@ async function post(
     over: Record<string, unknown> = {},
     env: Record<string, string> = {},
     dispatched: string[] = [],
-): Promise<{ written: Written; stderr: string }> {
+): Promise<{ written: Written; stderr: string; updatedBody: string | null }> {
     const findingsPath = join(dir, "findings.json");
     const preloadPath = join(dir, "stub-fetch.js");
+    const updatePath = join(dir, "updated-review.json");
 
     await Bun.write(findingsPath, `${JSON.stringify({ summary: "a run", findings, ...over }, null, 2)}\n`);
     await Bun.write(join(dir, "existing.json"), `${JSON.stringify(existing, null, 2)}\n`);
@@ -68,6 +87,7 @@ async function post(
             GITHUB_REPOSITORY: "o/r",
             DRY_RUN: "",
             RESOLVE_THREADS: "",
+            UPDATE_FILE: updatePath,
             ...env,
         },
         stdin: "ignore",
@@ -76,6 +96,7 @@ async function post(
     return {
         written: (await Bun.file(findingsPath).json()) as Written,
         stderr: run.stderr.toString(),
+        updatedBody: (await Bun.file(updatePath).exists()) ? await Bun.file(updatePath).text() : null,
     };
 }
 
@@ -155,8 +176,18 @@ describe("post-review: what resolve-threads gates", () => {
     });
 
     test("closes what it opened when the input is on", async () => {
-        const { stderr } = await post([finding({})], ours, asked, { RESOLVE_THREADS: "1" });
+        const { stderr, updatedBody } = await post([finding({})], ours, asked, { RESOLVE_THREADS: "1" });
 
         expect(stderr).not.toContain("resolve-threads is off");
+        expect(updatedBody).toContain("1 thread resolved");
+    });
+
+    test("reports unresolved threads when the GitHub API rejects the resolution request", async () => {
+        const { updatedBody } = await post([finding({})], ours, asked, {
+            RESOLVE_THREADS: "1",
+            BLOCK_RESOLVE: "1",
+        });
+
+        expect(updatedBody).toContain("1 thread judged finished could not be resolved");
     });
 });

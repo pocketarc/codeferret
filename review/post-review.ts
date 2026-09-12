@@ -202,7 +202,12 @@ if (foreign.length > 0) {
 
 const plannedResolved = toResolve.map(({ reason: why }) => ({ reason: why }));
 
-async function resolveThreads(): Promise<{ resolved: Array<{ reason: string }>; denied: boolean }> {
+interface ResolutionOutcome {
+    resolved: Array<{ reason: string }>;
+    denied: boolean;
+}
+
+async function resolveThreads(): Promise<ResolutionOutcome> {
     const resolved: Array<{ reason: string }> = [];
     let denied = false;
 
@@ -231,23 +236,29 @@ async function resolveThreads(): Promise<{ resolved: Array<{ reason: string }>; 
     return { resolved, denied };
 }
 
-const {
-    body: reviewBody,
-    listed,
-    warned,
-} = composeReview(
-    merged,
-    {
-        resolved: dryRun ? plannedResolved : [],
-        resolveDenied: false,
-        leftOpen: 0,
-        to,
-        threshold,
-        linkable: new Set(vetted.survey.comments.keys()),
-        ...(await runFacts(buildDir, existing)),
-    },
-    parts,
-);
+const facts = await runFacts(buildDir, existing);
+const linkable = new Set(vetted.survey.comments.keys());
+
+function composeFor(outcome: ResolutionOutcome | null) {
+    return composeReview(
+        merged,
+        {
+            resolved: dryRun ? plannedResolved : outcome?.resolved ?? [],
+            resolveDenied: dryRun ? false : outcome?.denied ?? false,
+            leftOpen: dryRun || outcome === null ? 0 : toResolve.length - outcome.resolved.length,
+            to,
+            threshold,
+            linkable,
+            ...facts,
+        },
+        parts,
+    );
+}
+
+const initial = composeFor(null);
+const reviewBody = initial.body;
+const listed = initial.listed;
+const warned = initial.warned;
 
 console.log(
     `total=${allFindings.length} new=${findings.length} suppressed=${suppressed.length}` +
@@ -302,7 +313,7 @@ if (!response.ok) {
 
 // The review is posted by this point, so a body that is not the JSON we expect costs a
 // URL in the log and nothing else. Throwing here would turn a landed review into a red job.
-let created: { html_url?: string } = {};
+let created: { id?: number; html_url?: string } = {};
 try {
     created = JSON.parse(detail);
 } catch {
@@ -319,6 +330,30 @@ if (outcome.denied) {
         `cannot resolve threads: the token lacks contents: write.` +
             ` ${plural(toResolve.length - outcome.resolved.length, "thread")} judged finished could not be resolved.`,
     );
+}
+
+if (outcome.resolved.length > 0) console.log(`resolved ${plural(outcome.resolved.length, "thread")}`);
+
+const finalBody = composeFor(outcome).body;
+
+if (finalBody !== reviewBody) {
+    if (typeof created.id !== "number") {
+        console.error("the review posted without an id, so its thread-resolution outcome could not be added to the body.");
+    } else {
+        try {
+            const updated = await rest(token, `/repos/${repo}/pulls/${prNumber}/reviews/${created.id}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ body: finalBody }),
+            });
+
+            if (!updated.ok) {
+                console.error(`review outcome update failed (${updated.status}): ${(await updated.text()).slice(0, 200)}`);
+            }
+        } catch (error) {
+            console.error(`review outcome update failed: ${reason(error)}`);
+        }
+    }
 }
 
 console.log(`posted: ${created.html_url ?? "(no url returned)"}`);

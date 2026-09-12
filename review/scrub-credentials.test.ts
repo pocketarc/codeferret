@@ -153,6 +153,20 @@ describe("scrub-credentials.sh", () => {
             expect(existsSync(cred)).toBe(false);
         });
 
+        test("deletes an included credential file when the authorization header name is lowercase", () => {
+            const dir = repo();
+            const cred = join(realpathSync(mkdtempSync(join(tmpdir(), "runner-temp-"))), "git-credentials-lowercase.config");
+            const gitdir = git(dir, "rev-parse", "--absolute-git-dir");
+
+            git(dir, "config", "--file", cred, HEADER, VALUE.replace("AUTHORIZATION", "authorization"));
+            git(dir, "config", "--local", `includeIf.gitdir:${gitdir}.path`, cred);
+
+            expect(reachable(dir)).toContain("extraheader");
+            expect(scrub(dir).code).toBe(0);
+            expect(existsSync(cred)).toBe(false);
+            expect(reachable(dir)).toBe("");
+        });
+
         test("removes the includeIf key as well as the file", () => {
             const dir = repo();
 

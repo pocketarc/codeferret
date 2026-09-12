@@ -75,7 +75,7 @@ REWRITES='^url\..*\.insteadof$'
 # what a credential looks like rather than on where one is kept. A shape nobody has thought of
 # still fails the step, and fails it loudly, which is the direction to be wrong in: removal can
 # lag detection, and a run that cannot clean what it found stops rather than certifying it.
-CREDENTIAL='(AUTHORIZATION:|://[^/[:space:]]*:[^/[:space:]]*@|gh[psour]_|github_pat_)'
+CREDENTIAL='([Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]:|://[^/[:space:]]*:[^/[:space:]]*@|gh[psour]_|github_pat_)'
 
 has_credential() {
     local line

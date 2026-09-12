@@ -90,19 +90,25 @@ function indentation(line: string): number {
     return line.match(/^ */)?.[0].length ?? 0;
 }
 
-function listMarkerIndent(line: string): number | null {
-    const marker = line.match(/^( *)(?:[-+*]|\d+[.)])(?:[ \t]+|$)/);
+function listMarker(line: string): { indent: number; contentIndent: number } | null {
+    const marker = line.match(/^( *)([-+*]|\d+[.)])([ \t]+|$)/);
 
-    return marker ? (marker[1] ?? "").length : null;
+    if (!marker) return null;
+
+    const indent = (marker[1] ?? "").length;
+    const spacing = marker[3] ?? "";
+    const padding = spacing === "" ? 1 : Math.min(spacing.length, 4);
+
+    return { indent, contentIndent: indent + (marker[2] ?? "").length + padding };
 }
 
-function listContainerIndent(lines: string[], at: number, fenceIndent: number): number | null {
+function listContentIndent(lines: string[], at: number, fenceIndent: number): number | null {
     for (let before = at - 1; before >= 0; before -= 1) {
         const line = lines[before] ?? "";
         if (blank(line)) continue;
 
-        const markerIndent = listMarkerIndent(line);
-        if (markerIndent !== null && markerIndent < fenceIndent) return markerIndent;
+        const marker = listMarker(line);
+        if (marker && marker.indent < fenceIndent) return marker.contentIndent;
         if (indentation(line) < fenceIndent) return null;
     }
 
@@ -116,7 +122,7 @@ function listContainerIndent(lines: string[], at: number, fenceIndent: number): 
 function scan(lines: string[]): { inside: boolean[]; open: string | null } {
     const inside: boolean[] = [];
     let open: string | null = null;
-    let listIndent: number | null = null;
+    let listContent: number | null = null;
 
     for (let index = 0; index < lines.length; index += 1) {
         const line = lines[index] ?? "";
@@ -126,21 +132,21 @@ function scan(lines: string[]): { inside: boolean[]; open: string | null } {
 
         if (fence && open === null && opens(fence, info)) {
             open = fence;
-            listIndent = listContainerIndent(lines, index, indentation(line));
+            listContent = listContentIndent(lines, index, indentation(line));
             inside.push(true);
             continue;
         }
 
         if (fence && open !== null && closes(fence, info, open)) {
             open = null;
-            listIndent = null;
+            listContent = null;
             inside.push(true);
             continue;
         }
 
-        if (open !== null && listIndent !== null && !blank(line) && indentation(line) <= listIndent) {
+        if (open !== null && listContent !== null && !blank(line) && indentation(line) < listContent) {
             open = null;
-            listIndent = null;
+            listContent = null;
             inside.push(false);
             continue;
         }

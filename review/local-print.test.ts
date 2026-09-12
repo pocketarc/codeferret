@@ -7,7 +7,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -55,7 +55,7 @@ afterAll(() => {
 });
 
 describe("local-print.sh: what the printer is started with", () => {
-    test("keeps the developer's own gh token out of the printer's environment", () => {
+    test("releases the lock when the printer exits", () => {
         const ran = Bun.spawnSync(["bash", join(PLUGIN, "review", "local-print.sh"), PLUGIN], {
             cwd: root,
             env: {
@@ -67,5 +67,6 @@ describe("local-print.sh: what the printer is started with", () => {
 
         expect(ran.exitCode).toBe(0);
         expect(readFileSync(env, "utf8")).not.toContain(TOKEN);
+        expect(existsSync(join(root, ".git", "codeferret", "run.lock"))).toBe(false);
     });
 });

@@ -46,6 +46,16 @@ describe("fenceMap", () => {
     test("still opens on the three spaces the renderer allows", () => {
         expect(fenceMap(["a", "   ```", "x"])).toEqual([false, true, true]);
     });
+
+    test("ends a fence when content is dedented inside a list item", () => {
+        expect(fenceMap(["- item", "  ```", " <img>", " <details>", " hidden"])).toEqual([
+            false,
+            true,
+            false,
+            false,
+            false,
+        ]);
+    });
 });
 
 describe("closeOpenFence", () => {
