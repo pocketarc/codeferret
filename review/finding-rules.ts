@@ -81,9 +81,9 @@ interface Enums {
  * `tolerated` is the wide case. A dropped finding is in neither the comment, nor the
  * findings file, nor the next run's `previous.json`, so nothing records that it existed.
  * Only the fields that leave nothing to render are fatal, and `FATAL_FIELDS` names them.
- * `found_by` and `in_diff` are never read; a finding with no usable `line` is listed under
- * its file alone; a risk nothing can score sinks to the bottom of the review rather than
- * out of it; and a missing `category` costs the italic line under the body and nothing else.
+ * A finding with no usable `line` is listed under its file alone; a risk nothing can score sinks
+ * to the bottom of the review rather than out of it; and a missing `category` costs the italic
+ * line under the body and nothing else.
  * A key this table does not name is ignored by everything downstream, which reads the fields
  * it needs by name.
  *
@@ -95,14 +95,14 @@ interface Enums {
 const POLICY: Record<string, Policy> = {
     summary: { repair: proseOrNothing },
     notes: { repair: proseOrNothing },
-    "findings[].found_by": { tolerated: true },
+    "findings[].found_by": { repair: stringsOrNothing },
     "findings[].found_by[]": { tolerated: true },
     "findings[].in_diff": { tolerated: true },
     "findings[].line": { check: positive, tolerated: true },
     "findings[].end_line": { check: positive, tolerated: true },
     "findings[].file": { repair: repoRelative },
     "findings[].status": { repair: knownStatus, tolerated: true },
-    "findings[].risk": { tolerated: true },
+    "findings[].risk": { repair: objectOrNothing, tolerated: true },
     "findings[].category": { tolerated: true },
     // `mention` links this only when the pull request carries the url, so a bad one costs
     // nothing but the link. Removed rather than tolerated, because the empty string a model
@@ -148,6 +148,19 @@ function proseOrNothing(value: unknown): Repaired | null {
     if (value === undefined || typeof value === "string") return null;
 
     return { note: `${JSON.stringify(value)} is not prose, so it was removed` };
+}
+
+function stringsOrNothing(value: unknown): Repaired | null {
+    if (value === undefined || (Array.isArray(value) && value.every((item) => typeof item === "string"))) return null;
+
+    const set = Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+    return { set, note: `${JSON.stringify(value)} is not a valid list of strings. Invalid entries were removed.` };
+}
+
+function objectOrNothing(value: unknown): Repaired | null {
+    if (value === undefined || record(value) !== null) return null;
+
+    return { note: `${JSON.stringify(value)} is not an object. The value was removed.` };
 }
 
 /**

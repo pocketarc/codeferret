@@ -37,6 +37,15 @@ export function renderTemplate(template: string, replacements: Readonly<Record<s
     return rendered;
 }
 
+export function replaceOnce(text: string, marker: string, replacement: string): string {
+    const at = text.indexOf(marker);
+    if (at === -1 || text.indexOf(marker, at + marker.length) !== -1) {
+        throw new Error(`The prompt must contain ${marker} exactly once.`);
+    }
+
+    return text.slice(0, at) + replacement + text.slice(at + marker.length);
+}
+
 export function strictSchema(value: unknown): unknown {
     if (Array.isArray(value)) return value.map(strictSchema);
     const node = record(value);

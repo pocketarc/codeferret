@@ -267,14 +267,15 @@ try {
     console.error(`could not list the conversation: ${conversationError}`);
 }
 
-const memberLogins = new Set<string>();
+const permissionLogins = new Set<string>();
+const permissionAssociations = new Set(["MEMBER", "COLLABORATOR"]);
 for (const thread of raw) {
     for (const comment of thread.comments.nodes) {
-        if (comment.author?.login && comment.authorAssociation === "MEMBER") memberLogins.add(comment.author.login);
+        if (comment.author?.login && permissionAssociations.has(comment.authorAssociation)) permissionLogins.add(comment.author.login);
     }
 }
 for (const comment of conversationComments) {
-    if (comment.user?.login && comment.author_association === "MEMBER") memberLogins.add(comment.user.login);
+    if (comment.user?.login && permissionAssociations.has(comment.author_association)) permissionLogins.add(comment.user.login);
 }
 
 const permissions = new Map<string, string>();
@@ -293,8 +294,8 @@ async function repositoryPermission(login: string): Promise<string> {
 
 const PERMISSION_CONCURRENCY = 4;
 const permissionFailures: string[] = [];
-const permissionQueue = memberLogins.values();
-const permissionWorkers = Array.from({ length: Math.min(PERMISSION_CONCURRENCY, memberLogins.size) }, async () => {
+const permissionQueue = permissionLogins.values();
+const permissionWorkers = Array.from({ length: Math.min(PERMISSION_CONCURRENCY, permissionLogins.size) }, async () => {
     for (const login of permissionQueue) {
         try {
             permissions.set(login, await repositoryPermission(login));
@@ -307,7 +308,7 @@ const permissionWorkers = Array.from({ length: Math.min(PERMISSION_CONCURRENCY, 
 await Promise.all(permissionWorkers);
 if (permissionFailures.length > 0) {
     permissionError = permissionFailures.join("; ");
-    console.error(`could not list repository permissions: ${permissionError}`);
+    console.error(`could not read repository permissions: ${permissionError}`);
 }
 
 const threads: Threaded[] = raw.map((t) => {

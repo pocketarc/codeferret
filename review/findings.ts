@@ -182,15 +182,17 @@ export interface Partitioned {
     declined: Finding[];
 }
 
-// GitHub's MEMBER association indicates organization membership, not repository permission.
-export const MAY_DECLINE: ReadonlySet<string> = new Set(["OWNER", "COLLABORATOR"]);
+// GitHub's member and collaborator associations do not establish repository permissions.
+export const MAY_DECLINE: ReadonlySet<string> = new Set(["OWNER"]);
+export const MAY_DECLINE_WITH_PERMISSION: ReadonlySet<string> = new Set(["MEMBER", "COLLABORATOR"]);
 export const MAY_DECLINE_PERMISSIONS: ReadonlySet<string> = new Set(["admin", "maintain", "push", "write"]);
 
 /** Whether whoever wrote a comment has standing in the repository. */
 function entitled(comment: Located): boolean {
     return (
         MAY_DECLINE.has(comment.association) ||
-        (comment.association === "MEMBER" && MAY_DECLINE_PERMISSIONS.has(comment.repositoryPermission?.toLowerCase() ?? ""))
+        (MAY_DECLINE_WITH_PERMISSION.has(comment.association) &&
+            MAY_DECLINE_PERMISSIONS.has(comment.repositoryPermission?.toLowerCase() ?? ""))
     );
 }
 

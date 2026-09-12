@@ -12,13 +12,18 @@
  * cut to fit is in `body-budget.ts`.
  */
 
-import { brokenLenses, lensLabel, MAY_DECLINE, silentLenses, unratedFindings } from "./findings.ts";
+import {
+    brokenLenses,
+    lensLabel,
+    MAY_DECLINE,
+    silentLenses,
+    unratedFindings,
+} from "./findings.ts";
 import type { Finding, LensHealth, Merged, Partitioned, Reopening, Vetted } from "./findings.ts";
 import { clampedInline } from "./markdown.ts";
 import { STANDING_DETAIL } from "./standing-detail.ts";
 import { lenses, plural } from "./words.ts";
 
-/** Items joined the way a sentence reads them: "an owner", or "an owner or a collaborator". */
 function orList(items: string[]): string {
     const last = items[items.length - 1] ?? "";
 
@@ -27,7 +32,7 @@ function orList(items: string[]): string {
 
 const ENTITLED = [...MAY_DECLINE]
     .map((association) => association.toLowerCase())
-    .concat("organization member with `admin`, `maintain`, `push`, or `write` repository permission");
+    .concat("organization member or collaborator with `admin`, `maintain`, `push`, or `write` repository permission");
 const ENTITLED_NAMED = orList(ENTITLED.map((noun) => `${"aeiou".includes(noun[0] ?? "") ? "an" : "a"} ${noun}`));
 
 /** The same list where the sentence supplies the article: "no owner or collaborator". */

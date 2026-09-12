@@ -91,7 +91,7 @@ const lost = checked.found - checked.kept;
 if (lost > 0 || checked.droppedEntries > 0) {
     const warning =
         `Warning: The validator removed ${lost} ${lost === 1 ? "finding" : "findings"} and ` +
-        `${checked.droppedEntries} other ${checked.droppedEntries === 1 ? "entry" : "entries"}. The posted review may be incomplete.`;
+        `${checked.droppedEntries} other ${checked.droppedEntries === 1 ? "entry" : "entries"}. The review may be incomplete.`;
     const notes = typeof checked.merged.notes === "string" ? checked.merged.notes : "";
     checked.merged.notes = notes === "" ? warning : `${notes}\n\n${warning}`;
 }

@@ -737,6 +737,10 @@ describe("composeReview", () => {
             ).toBe(false);
         });
 
+        test("includes a validator warning when all findings are removed", () => {
+            expect(warnedBy({ notes: "The review may be incomplete." })).toBe(true);
+        });
+
         test("an input the session changed under the run", () => {
             expect(
                 warnedBy({ lens_health: [healthy] }, { dispatched: ["codeferret:caveman-review"], sessionChanged: ["lenses.txt"] }),

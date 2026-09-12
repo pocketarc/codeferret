@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { codexArgs, codexResult, concurrent, renderTemplate, strictSchema, withoutNullProperties } from "./codex.ts";
+import { codexArgs, codexResult, concurrent, renderTemplate, replaceOnce, strictSchema, withoutNullProperties } from "./codex.ts";
 import { reportedNumbers, runNumbers } from "./run-log.ts";
 import { record } from "./json.ts";
 
@@ -95,4 +95,9 @@ test("replaces each template placeholder once", () => {
         __FIRST__: "__SECOND__",
         __SECOND__: "done",
     })).toBe("before __SECOND__ after done");
+});
+
+test("replaces only the template reports marker", () => {
+    expect(replaceOnce("/repo/__WORK__/orchestrator CODEFERRET_LENS_REPORTS", "CODEFERRET_LENS_REPORTS", "reports"))
+        .toBe("/repo/__WORK__/orchestrator reports");
 });

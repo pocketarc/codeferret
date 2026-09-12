@@ -155,7 +155,7 @@ describe("vetSuppression: who may settle a finding", () => {
         };
     }
 
-    function existingWithPermission(permission: string) {
+    function existingWithPermission(permission: string, association = "MEMBER") {
         return {
             threads: [
                 {
@@ -165,7 +165,7 @@ describe("vetSuppression: who may settle a finding", () => {
                     comments: [
                         { association: "NONE", url: "https://github.com/o/r/pull/1#discussion_r1", body: "raised" },
                         {
-                            association: "MEMBER",
+                            association,
                             repository_permission: permission,
                             url: "https://github.com/o/r/pull/1#discussion_r2",
                             body: "intentional",
@@ -176,7 +176,7 @@ describe("vetSuppression: who may settle a finding", () => {
         };
     }
 
-    for (const association of ["OWNER", "COLLABORATOR"]) {
+    for (const association of ["OWNER"]) {
         test(`a reply from ${association} may decline`, () => {
             const out = vet([declined("https://github.com/o/r/pull/1#discussion_r2")], existing(association));
 
@@ -185,7 +185,7 @@ describe("vetSuppression: who may settle a finding", () => {
         });
     }
 
-    for (const association of ["MEMBER", "NONE", "CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "MANNEQUIN", ""]) {
+    for (const association of ["COLLABORATOR", "MEMBER", "NONE", "CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "MANNEQUIN", ""]) {
         test(`a reply from ${association || "no association"} may not`, () => {
             const out = vet([declined("https://github.com/o/r/pull/1#discussion_r2")], existing(association));
 
@@ -193,6 +193,16 @@ describe("vetSuppression: who may settle a finding", () => {
             expect(out.findings[0]?.status).toBe("new");
         });
     }
+
+    test("rejects a finding decline from a read-only collaborator", () => {
+        const out = vet(
+            [declined("https://github.com/o/r/pull/1#discussion_r2")],
+            existingWithPermission("read", "COLLABORATOR"),
+        );
+
+        expect(out.untraceable).toBe(1);
+        expect(out.findings[0]?.status).toBe("new");
+    });
 
     for (const permission of ["admin", "maintain", "push", "write"]) {
         test(`a finding is suppressed when an organization member with ${permission} permission on the repository declines it`, () => {

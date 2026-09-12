@@ -401,7 +401,7 @@ export function composeReview(merged: Merged, posting: Posting, parts: Partition
     // back the quiet is saying the standing caveats only where no earlier review is still
     // carrying them, which needs a signal for that. "`lens_health` covers every lens dispatched"
     // in review/DECISIONS.md has the rest.
-    const warned = raised.length > 0 || aboutPosting.length > 0;
+    const warned = raised.length > 0 || aboutPosting.length > 0 || Boolean(merged.notes?.trim());
 
     return { body, listed: printed, warned };
 }

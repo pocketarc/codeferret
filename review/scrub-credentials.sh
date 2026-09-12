@@ -84,9 +84,32 @@ has_credential() {
         if [[ "$line" =~ $CREDENTIAL ]]; then
             return 0
         fi
-    done < <(git config --file "$1" --list 2>/dev/null || true)
+    done < <(git config --file "$1" --includes --list 2>/dev/null || true)
 
     return 1
+}
+
+scrub_included_files() {
+    local root=$1 line origin rest path
+
+    while IFS= read -r line; do
+        origin=${line%%$'\t'*}
+        rest=${line#*$'\t'}
+
+        if ! printf '%s' "$rest" | grep -Eqi "$CREDENTIAL"; then
+            continue
+        fi
+
+        case "$origin" in
+            file:*) path=${origin#file:} ;;
+            *) continue ;;
+        esac
+
+        if [ "$path" != "$root" ] && [ -f "$path" ]; then
+            rm -f "$path" || true
+            echo "removed the credentials file $(redact "$path")"
+        fi
+    done < <(git config --file "$root" --includes --show-origin --list 2>/dev/null || true)
 }
 
 # The authority alone, so a `@` anywhere in the path does not count. Only `http` and `https`, so
@@ -237,6 +260,10 @@ scrub_repo() {
 
             # A checkout writes one set of these for the runner's paths and another for the
             # container's, so a path that is not there is the ordinary case rather than a fault.
+            if [ -f "$path" ]; then
+                scrub_included_files "$path"
+            fi
+
             if [ -f "$path" ] && has_credential "$path"; then
                 rm -f "$path" || true
                 echo "removed the credentials file $(redact "$path")"
@@ -247,12 +274,22 @@ scrub_repo() {
         echo "removed $(redact "$key") from $(redact "$(pwd)")"
     done < <(git config --local --name-only --get-regexp "$INCLUDES" || true)
 
-    # A rewrite rule keeps the credential in its own key, so there is no value to clean and the
-    # key goes. `url.https://x-access-token:$TOKEN@github.com/.insteadOf = https://github.com/`
-    # is the documented recipe for cloning a private submodule, which is the same `checkout:
-    # skip` case action.yml sends a caller to.
     while IFS= read -r key; do
         [ -n "$key" ] || continue
+
+        dirty=0
+        if [[ "$key" =~ $CREDENTIAL ]]; then
+            dirty=1
+        else
+            while IFS= read -r value; do
+                if [[ "$value" =~ $CREDENTIAL ]]; then
+                    dirty=1
+                    break
+                fi
+            done < <(git config --local --get-all "$key" || true)
+        fi
+
+        [ "$dirty" = 1 ] || continue
         git config --local --unset-all "$key" || true
         echo "removed a rewrite rule carrying a credential from $(pwd)"
     done < <(git config --local --name-only --get-regexp "$REWRITES" || true)

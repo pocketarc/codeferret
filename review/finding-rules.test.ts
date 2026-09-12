@@ -3,6 +3,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { applyRules, readSchema, selfCheck } from "./finding-rules.ts";
+import { isMerged } from "./findings.ts";
 import { rawFinding as finding, riskFor } from "./test-fixtures.ts";
 
 const schema = await readSchema();
@@ -60,6 +61,15 @@ describe("applyRules", () => {
         delete bare.risk;
 
         expect(check({ findings: [bare] }).kept).toBe(1);
+    });
+
+    test("normalizes optional metadata for the reader", () => {
+        const out = check({ findings: [finding({ found_by: ["caveman-review", 4], risk: "unknown" })] });
+        const kept = (out.merged.findings as Array<Record<string, unknown>>)[0];
+
+        expect(kept?.found_by).toEqual(["caveman-review"]);
+        expect(kept?.risk).toBeUndefined();
+        expect(isMerged(out.merged)).toBe(true);
     });
 
     test("a lens claiming health as a string reads as needing attention", () => {

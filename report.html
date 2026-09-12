@@ -223,7 +223,7 @@ footer { border-top: 1px solid var(--line); padding: 18px 0 40px;
     var done = {};
     try { done = JSON.parse(localStorage.getItem(KEY) || "{}") || {}; } catch (e) { done = {}; }
     function save() { try { localStorage.setItem(KEY, JSON.stringify(done)); } catch (e) { /* private window */ } }
-    function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+    function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\"/g, "&quot;"); }
 
     // The bodies are model-written markdown: fences, inline code, bold, lists.
     function blocks(src) {

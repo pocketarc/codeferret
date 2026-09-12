@@ -167,6 +167,24 @@ describe("scrub-credentials.sh", () => {
             expect(reachable(dir)).toBe("");
         });
 
+        test("scrubs credentials in a nested Git config include", () => {
+            const dir = repo();
+            const configDir = realpathSync(mkdtempSync(join(tmpdir(), "gitconfig-")));
+            const outer = join(configDir, "outer.config");
+            const nested = join(configDir, "nested.config");
+            const gitdir = git(dir, "rev-parse", "--absolute-git-dir");
+
+            git(dir, "config", "--file", nested, HEADER, VALUE);
+            git(dir, "config", "--file", outer, "include.path", nested);
+            git(dir, "config", "--local", `includeIf.gitdir:${gitdir}.path`, outer);
+
+            expect(reachable(dir)).toContain("extraheader");
+            expect(scrub(dir).code).toBe(0);
+            expect(existsSync(nested)).toBe(false);
+            expect(existsSync(outer)).toBe(true);
+            expect(reachable(dir)).toBe("");
+        });
+
         test("removes the includeIf key as well as the file", () => {
             const dir = repo();
 
@@ -408,6 +426,17 @@ describe("scrub-credentials.sh", () => {
 
             expect(scrub(dir).code).toBe(0);
             expect(reachable(dir)).toBe("");
+        });
+
+        test("preserves a credential-free URL rewrite", () => {
+            const dir = repo();
+            const key = "url.ssh://git@example.com/.insteadOf";
+            const value = "https://github.com/";
+
+            git(dir, "config", "--local", key, value);
+
+            expect(scrub(dir).code).toBe(0);
+            expect(git(dir, "config", "--local", "--get-all", key)).toBe(value);
         });
 
         // The property the value scan buys, and the reason it is worth more than another
